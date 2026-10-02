@@ -1,0 +1,35 @@
+{
+  "name": "mesh",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Mesh ($MESH): trading fees -> hourly AI inference credits, served through an OpenAI-compatible gateway",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @mesh/gateway test",
+    "test:all": "pnpm --filter @mesh/chain-adapter --filter @mesh/gateway --filter @mesh/node-agent test",
+    "e2e": "pnpm --filter web e2e",
+    "loadtest": "node scripts/loadtest/relay.mjs",
+    "dev": "concurrently -k -n gateway,web -c blue,magenta \"pnpm --filter @mesh/gateway dev\" \"pnpm --filter web dev\"",
+    "dev:gateway": "pnpm --filter @mesh/gateway dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:mock": "pnpm --filter web dev:mock",
+    "demo": "bash scripts/demo.sh",
+    "screenshots": "pnpm --filter web screenshots",
+    "web:build": "pnpm --filter web build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4",
+    "typescript": "^5.6.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}

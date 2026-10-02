@@ -1,0 +1,13 @@
+{
+  "_comment": "Fallback prices in USD per 1M tokens, used only when the upstream does not report usage.cost",
+  "default": { "promptUsdPerM": 1.0, "completionUsdPerM": 3.0 },
+  "models": {
+    "openai/gpt-4o-mini": { "promptUsdPerM": 0.15, "completionUsdPerM": 0.6 },
+    "openai/gpt-4o": { "promptUsdPerM": 2.5, "completionUsdPerM": 10.0 },
+    "anthropic/claude-3.5-haiku": { "promptUsdPerM": 0.8, "completionUsdPerM": 4.0 },
+    "anthropic/claude-sonnet-4": { "promptUsdPerM": 3.0, "completionUsdPerM": 15.0 },
+    "meta-llama/llama-3.1-8b-instruct": { "promptUsdPerM": 0.05, "completionUsdPerM": 0.08 },
+    "qwen/qwen-2.5-7b-instruct": { "promptUsdPerM": 0.04, "completionUsdPerM": 0.1 },
+    "mesh/mock": { "promptUsdPerM": 0.0, "completionUsdPerM": 0.0 }
+  }
+}

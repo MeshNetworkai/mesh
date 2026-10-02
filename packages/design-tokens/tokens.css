@@ -1,0 +1,29 @@
+/* Mesh design tokens v1 — editorial, white, light-first. Mirrors docs/design-system.html. */
+:root {
+  --bg: #ffffff; --bg-2: #f6f7f9; --bg-3: #eef1f5; --line: #e6e9ee; --line-2: #cfd5dd;
+  --fg: #0b1220; --fg-2: #4b5563; --muted: #7b8798; --faint: #a4adb9;
+  --accent: #1f9d66; --accent-2: #167a4f; --accent-soft: rgba(31,157,102,.10); --accent-ink: #ffffff;
+  --ink: #050912; --ink-2: #0f172a; --on-ink: #f3f5f7; --on-ink-2: #aab4c3;
+  --warn: #d9962b; --bad: #d64545; --info: #2f6df6;
+  --display: 'Onest', system-ui, sans-serif;
+  --body: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --r: 12px; --r-lg: 24px; --r-pill: 999px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #070b12; --bg-2: #0d131c; --bg-3: #131b26; --line: #1b2432; --line-2: #2a3647;
+    --fg: #f3f5f7; --fg-2: #c2cad4; --muted: #8793a3; --faint: #5d6977;
+    --accent: #4fd394; --accent-2: #3ab57a; --accent-soft: rgba(79,211,148,.12); --accent-ink: #070b12;
+    --ink: #0d131c; --ink-2: #131b26; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #070b12; --bg-2: #0d131c; --bg-3: #131b26; --line: #1b2432; --line-2: #2a3647;
+  --fg: #f3f5f7; --fg-2: #c2cad4; --muted: #8793a3; --faint: #5d6977;
+  --accent: #4fd394; --accent-2: #3ab57a; --accent-soft: rgba(79,211,148,.12); --accent-ink: #070b12;
+  --ink: #0d131c; --ink-2: #131b26; color-scheme: dark;
+}
+/* Fonts: https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap
+   Display: Onest 300, letter-spacing -.035em, line-height .98. Centered hero with live readout card; floating pill nav; big-word rows; one ink block. */

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Mesh mark: the five dots from the design system, set as a quincunx so they read at 16px; the centre dot is the accent. -->
+  <style>
+    .d { fill: #0b1220; }
+    .a { fill: #1f9d66; }
+    @media (prefers-color-scheme: dark) { .d { fill: #f3f5f7; } .a { fill: #4fd394; } }
+  </style>
+  <circle class="d" cx="8" cy="8" r="3.4"/>
+  <circle class="d" cx="24" cy="8" r="3.4"/>
+  <circle class="a" cx="16" cy="16" r="3.4"/>
+  <circle class="d" cx="8" cy="24" r="3.4"/>
+  <circle class="d" cx="24" cy="24" r="3.4"/>
+</svg>

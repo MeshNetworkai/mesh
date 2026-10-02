@@ -1,0 +1,78 @@
+name: Docker (gateway image)
+
+# Builds apps/gateway/Dockerfile from the repo root on every version tag and pushes it to GHCR as
+#   ghcr.io/<owner>/mesh-gateway:<tag>  and  :latest
+# Manual runs (workflow_dispatch) build only, to check the Dockerfile still works.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mesh-gateway
+
+jobs:
+  build:
+    name: Build (and push on tag)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=sha
+
+      - name: Build / push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/gateway/Dockerfile
+          platforms: linux/amd64
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image (/health)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          docker build -f apps/gateway/Dockerfile -t mesh-gateway:smoke .
+          cid=$(docker run -d -p 8787:8787 \
+            -e JWT_SECRET=ci-smoke-ci-smoke-ci-smoke-ci-smoke-0123456789 \
+            -e ADMIN_TOKEN=ci-smoke-admin-token-0123456789 \
+            -e AUTH_DOMAIN=ci.example.com \
+            -e CORS_ORIGINS=https://ci.example.com \
+            -e EPOCH_CRON=off -e ALERTS_ENABLED=false \
+            mesh-gateway:smoke)
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then echo "healthy"; docker rm -f "$cid"; exit 0; fi
+            sleep 1
+          done
+          echo "gateway did not become healthy"; docker logs "$cid"; docker rm -f "$cid"; exit 1

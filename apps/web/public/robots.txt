@@ -1,0 +1,7 @@
+# Mesh web app. Replace app.example.com with the real host before deploying.
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /admin
+
+Sitemap: https://app.example.com/sitemap.xml

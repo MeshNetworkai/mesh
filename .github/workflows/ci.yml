@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  # Keep CI deterministic: no telemetry, no browser downloads during install.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  CI: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Typecheck + unit/integration tests for the TypeScript workspace.
+  # The gateway imports @mesh/config and @mesh/chain-adapter from their dist/,
+  # so those two are built before anything else runs.
+  # ---------------------------------------------------------------------------
+  typecheck-and-test:
+    name: Typecheck + tests (gateway, node-agent, chain-adapter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version is read from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (config, chain-adapter)
+        run: pnpm --filter @mesh/config --filter @mesh/chain-adapter build
+
+      - name: Typecheck (all workspaces)
+        run: pnpm -r typecheck
+
+      - name: Test chain-adapter
+        run: pnpm --filter @mesh/chain-adapter test
+
+      - name: Test gateway
+        run: pnpm --filter @mesh/gateway test
+
+      - name: Test node-agent
+        run: pnpm --filter @mesh/node-agent test
+
+  # ---------------------------------------------------------------------------
+  # Web: production build, then browser e2e against the real gateway
+  # (apps/web/playwright.config.ts boots both servers itself).
+  # ---------------------------------------------------------------------------
+  web:
+    name: Web build + Playwright e2e (chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (config, chain-adapter)
+        run: pnpm --filter @mesh/config --filter @mesh/chain-adapter build
+
+      - name: Build web
+        run: pnpm --filter web build
+
+      - name: Install Playwright chromium
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: E2E (desktop + phone projects)
+        env:
+          # playwright.config.ts falls back to Playwright's own chromium when PW_CHROMIUM is unset
+          # and the /opt/pw-browsers paths do not exist (they do not on hosted runners).
+          PW_CHROMIUM: ""
+        run: pnpm --filter web e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            apps/web/e2e/.tmp/results
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Solidity: forge tests. Foundry + solc come from npm via scripts/chain/evm-setup.sh
+  # (no reliance on foundry.paradigm.xyz / binaries.soliditylang.org being reachable).
+  # ---------------------------------------------------------------------------
+  contracts:
+    name: Foundry tests (contracts/evm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache foundry binaries + forge-std
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.foundry/bin
+            contracts/evm/lib/forge-std
+          key: foundry-npm-${{ runner.os }}-${{ hashFiles('scripts/chain/evm-setup.sh', 'contracts/evm/package.json') }}
+
+      - name: Setup foundry (npm) + deps
+        run: bash scripts/chain/evm-setup.sh
+
+      - name: forge test
+        working-directory: contracts/evm
+        env:
+          FOUNDRY_SOLC: tools/solc-js-wrapper.mjs
+        run: |
+          export PATH="$HOME/.foundry/bin:$PATH"
+          forge --version
+          forge test -vv

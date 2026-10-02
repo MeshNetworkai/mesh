@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>MeshNode</string>
+  <key>CFBundleIdentifier</key>
+  <string>__BUNDLE_ID__</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Mesh Node</string>
+  <key>CFBundleDisplayName</key>
+  <string>Mesh Node</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__BUILD__</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <!-- Menu-bar only: no Dock icon, no app menu. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSSupportsAutomaticTermination</key>
+  <false/>
+  <key>NSSupportsSuddenTermination</key>
+  <false/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Mesh</string>
+  <!--
+    App Transport Security. The default gateway for development is plain http://localhost:8787,
+    which NSAllowsLocalNetworking permits. A remote gateway must be https; if you really need a
+    remote http:// gateway during a demo, add NSAllowsArbitraryLoads=true here (not for release).
+  -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

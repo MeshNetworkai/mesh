@@ -1,0 +1,14 @@
+{
+  "name": "@mesh/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens.css"
+  },
+  "files": ["tokens.css"],
+  "scripts": {
+    "build": "echo 'design-tokens: nothing to build'",
+    "typecheck": "echo 'design-tokens: nothing to typecheck'"
+  }
+}
