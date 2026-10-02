@@ -1,0 +1,45 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview",
+    "dev:mock": "VITE_MOCK=1 vite",
+    "screenshots": "node scripts/screenshots.mjs",
+    "e2e": "node -e \"require('fs').rmSync('e2e/.tmp',{recursive:true,force:true})\" && playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/onest": "^5.3.1",
+    "@mesh/design-tokens": "workspace:*",
+    "@solana/wallet-adapter-base": "^0.9.28",
+    "@solana/wallet-adapter-phantom": "^0.9.30",
+    "@solana/wallet-adapter-solflare": "^0.6.34",
+    "@solana/web3.js": "^1.99.0",
+    "@tanstack/react-query": "^5.104.1",
+    "bs58": "^6.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "viem": "^2.57.2",
+    "wagmi": "^2.19.5",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@mesh/node-agent": "workspace:*",
+    "@playwright/test": "1.63.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "playwright-core": "1.63.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

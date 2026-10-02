@@ -1,0 +1,37 @@
+# Mesh gateway + persistent SQLite volume.
+#   cp .env.example .env   # then set JWT_SECRET, ADMIN_TOKEN, OPENROUTER_API_KEY, AUTH_DOMAIN
+#   docker compose up -d --build
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/gateway/Dockerfile
+    image: mesh-gateway:latest
+    container_name: mesh-gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8787
+      MESH_DB_PATH: /data/mesh.db
+    ports:
+      # bind to localhost only; Caddy (see scripts/deploy-vps.md) terminates TLS and proxies here
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - mesh-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  mesh-data:

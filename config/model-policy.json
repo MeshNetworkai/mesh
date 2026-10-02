@@ -1,0 +1,12 @@
+{
+  "_comment": "Per-request model policy. allow: [] means every upstream model is allowed. deny wins over allow. Patterns may end in '*' (prefix match). networkModels maps the client-facing model name to the Ollama tag Mesh nodes advertise; with routing.preferNetwork an online idle node offering that tag serves the request, otherwise it goes to OpenRouter.",
+  "allow": [],
+  "deny": [],
+  "networkModels": {
+    "llama-3.1-8b": "llama3.1:8b",
+    "meta-llama/llama-3.1-8b-instruct": "llama3.1:8b",
+    "qwen-2.5-7b": "qwen2.5:7b",
+    "qwen/qwen-2.5-7b-instruct": "qwen2.5:7b",
+    "mesh/mock": "mesh/mock"
+  }
+}

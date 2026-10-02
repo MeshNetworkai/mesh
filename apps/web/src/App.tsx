@@ -1,0 +1,90 @@
+import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react';
+import { Route, Routes, useLocation } from 'react-router-dom';
+import { ConnectModal } from './components/ConnectModal';
+import { Footer } from './components/Footer';
+import { TopNav } from './components/Nav';
+import { AdminPage } from './pages/Admin';
+import { ApiDocs } from './pages/ApiDocs';
+import { AppLayout } from './pages/AppLayout';
+import { Chat } from './pages/Chat';
+import { Dashboard } from './pages/Dashboard';
+import { Docs } from './pages/Docs';
+import { Keys } from './pages/Keys';
+import { Landing } from './pages/Landing';
+import { LeaderboardPage } from './pages/Leaderboard';
+import { Privacy, Risk, Terms } from './pages/Legal';
+import { NodePage } from './pages/Node';
+import { NotFound } from './pages/NotFound';
+import { ReportPage } from './pages/Report';
+import { StatsPage } from './pages/StatsPage';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="empty" role="alert" style={{ margin: '40px 0' }}>
+          <span className="t">Something broke</span>
+          <span className="mono small">{this.state.error.message}</span>
+          <button className="btn secondary sm" onClick={() => this.setState({ error: null })}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+  useEffect(() => {
+    if (!hash) window.scrollTo({ top: 0 });
+  }, [pathname, hash]);
+  return null;
+}
+
+export function App() {
+  return (
+    <>
+      <ScrollToTop />
+      <main className="page">
+        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', paddingTop: 16 }}>
+          <TopNav />
+        </div>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/docs" element={<Docs />} />
+            <Route path="/api" element={<ApiDocs />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/risk" element={<Risk />} />
+            <Route path="/report" element={<ReportPage />} />
+            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/app" element={<AppLayout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="keys" element={<Keys />} />
+              <Route path="chat" element={<Chat />} />
+              <Route path="stats" element={<StatsPage />} />
+              <Route path="node" element={<NodePage />} />
+            </Route>
+            <Route path="/404" element={<NotFound />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </ErrorBoundary>
+        <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 40 }}>
+          <Footer />
+        </div>
+      </main>
+      <ConnectModal />
+    </>
+  );
+}

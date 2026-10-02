@@ -1,0 +1,57 @@
+import cron from 'node-cron';
+import { recordError } from './db.js';
+import { runEpoch } from './jobs/distribute.js';
+import { microsToUsd } from './money.js';
+import { buildServer } from './server.js';
+
+async function main() {
+  const app = await buildServer();
+  const { env, config, adapter, upstream } = app.ctx;
+
+  if (env.EPOCH_CRON !== 'off') {
+    if (!cron.validate(env.EPOCH_CRON)) throw new Error(`invalid EPOCH_CRON: ${env.EPOCH_CRON}`);
+    cron.schedule(env.EPOCH_CRON, async () => {
+      try {
+        const r = await runEpoch(app.ctx);
+        app.log.info(
+          { epochStart: r.epochStart, status: r.status, feesUsd: microsToUsd(r.feesUsdMicros), holders: r.eligibleHolders },
+          'epoch run',
+        );
+      } catch (err) {
+        app.log.error({ err }, 'epoch run failed');
+        // alerts.ts watches for this code (failed_sweep).
+        recordError(app.ctx.db, { route: 'cron run-epoch', status: 500, code: 'epoch_failed', message: (err as Error).message ?? String(err) });
+      }
+    });
+  }
+
+  app.ctx.alerts?.start(env.ALERT_CHECK_INTERVAL_MS);
+
+  await app.listen({ port: env.PORT, host: env.HOST });
+  app.log.info(
+    {
+      token: `${config.name} (${config.ticker})`,
+      chain: config.chain,
+      adapter: env.MESH_ADAPTER,
+      upstream: upstream.name,
+      epochCron: env.EPOCH_CRON,
+      db: env.MESH_DB_PATH,
+      adapterChain: adapter.chain,
+      alerts: app.ctx.alerts ? app.ctx.alerts.sender.name : 'off',
+      nodesRequireSignature: env.NODES_REQUIRE_SIGNATURE ?? config.nodes.requireSignature,
+    },
+    'mesh gateway up',
+  );
+
+  const shutdown = async () => {
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

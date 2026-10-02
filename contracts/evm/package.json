@@ -1,0 +1,15 @@
+{
+  "name": "@mesh/contracts-evm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MeshToken / FeeVault / TeamLock Foundry project (deps via npm so no git submodules are needed)",
+  "scripts": {
+    "setup": "bash ../../scripts/chain/evm-setup.sh",
+    "test": "forge test -vv",
+    "build": "forge build"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "^5.1.0",
+    "solc": "0.8.28"
+  }
+}

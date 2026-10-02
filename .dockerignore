@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/data
+*.db
+*.db-*
+.env
+*.log
+docs
+apps/web/src
+apps/web/scripts
+apps/web/index.html

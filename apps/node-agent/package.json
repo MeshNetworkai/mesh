@@ -1,0 +1,24 @@
+{
+  "name": "@mesh/node-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "mesh-node: run a Mesh inference node on a Mac (Ollama) and earn for the replies it serves",
+  "bin": {
+    "mesh-node": "dist/mesh-node.js"
+  },
+  "scripts": {
+    "dev": "tsx src/bin.ts",
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/mesh-node.js start"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "esbuild": "^0.21.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

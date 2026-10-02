@@ -1,0 +1,6 @@
+{
+  "name": "mesh-chain-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Run via pnpm --filter @mesh/chain-adapter solana:create-mint | solana:smoke | evm:deploy (dependencies resolve through packages/chain-adapter)"
+}

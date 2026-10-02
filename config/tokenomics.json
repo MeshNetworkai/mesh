@@ -1,0 +1,73 @@
+{
+  "name": "Mesh",
+  "ticker": "MESH",
+  "chain": "solana",
+  "tradeFeeBps": 150,
+  "holderShareBps": 5000,
+  "treasuryShareBps": 5000,
+  "minHoldTokens": 1000,
+  "epochSeconds": 3600,
+  "creditUsdPerFeeUsd": 1.0,
+  "requestPricing": {
+    "mode": "passthrough",
+    "markupBps": 0,
+    "networkPricePerMTokens": 0.02,
+    "showSavings": true
+  },
+  "nodeRewards": {
+    "usdPerMTokens": 0.06
+  },
+  "stakeTiers": [
+    {
+      "name": "none",
+      "minStake": 0,
+      "multiplier": 1.0
+    },
+    {
+      "name": "silver",
+      "minStake": 10000,
+      "multiplier": 1.5
+    },
+    {
+      "name": "gold",
+      "minStake": 50000,
+      "lockDays": 30,
+      "multiplier": 2.0
+    }
+  ],
+  "distribution": {
+    "holdingAge": {
+      "enabled": false,
+      "maxDays": 30,
+      "minMultiplier": 1.0,
+      "maxMultiplier": 2.0
+    }
+  },
+  "geoBlock": [
+    "AE",
+    "US",
+    "GB"
+  ],
+  "routing": {
+    "preferNetwork": true,
+    "firstTokenTimeoutMs": 8000,
+    "stallTimeoutMs": 6000,
+    "jobTimeoutMs": 120000,
+    "defaultMaxTokens": 1024,
+    "minSuccessRate": 0.8,
+    "reputationMinJobs": 5
+  },
+  "points": {
+    "enabled": true,
+    "perUsdCredits": 100,
+    "perUsdSpent": 50,
+    "perNodeTokenK": 1,
+    "perReferralSignup": 500,
+    "referralShareBps": 1000,
+    "dailyCapPerWallet": 50000
+  },
+  "meta": {
+    "description": "Trading fees buy AI inference for holders, every hour.",
+    "website": "https://mesh.local"
+  }
+}

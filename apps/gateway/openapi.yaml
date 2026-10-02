@@ -1,0 +1,1458 @@
+openapi: 3.1.0
+info:
+  title: Mesh gateway
+  version: 0.1.0
+  summary: Trading fees become hourly AI inference credits, served through an OpenAI-compatible gateway.
+  description: |
+    Mesh is a token whose trading fees buy AI inference for the people holding it. A 1.5 % fee on every
+    $MESH trade is swept once an hour; half goes to the network treasury and half is split, pro rata, across
+    every wallet holding at least 1,000 tokens as credits denominated in US dollars. Holders spend those
+    credits through this gateway with their own API keys.
+
+    Three kinds of credentials appear below:
+
+    * **Session** — a 7-day JWT from `POST /auth/verify`, sent as `Authorization: Bearer <jwt>`. Used by the web app.
+    * **API key** — `mesh_sk_…` from `POST /keys`, sent as `Authorization: Bearer mesh_sk_…`. Used by OpenAI clients on `/v1`.
+    * **Node token** — `mesh_node_…` from `POST /nodes/register`, sent as a bearer by the node agent on `/nodes/{id}/*`.
+
+    Public endpoints need nothing. Nothing on this API stores prompts or replies; the gateway logs model, token
+    counts, cost and latency per request so it can bill you. Credits are a share of fees, not a promise.
+  contact:
+    name: Mesh
+    url: https://app.example.com/docs
+  license:
+    name: MIT
+servers:
+  - url: https://api.example.com
+    description: Production (replace before posting)
+  - url: http://localhost:8787
+    description: Local gateway (`pnpm dev`)
+tags:
+  - name: Public
+    description: No credentials. Everything a holder, a trader or a journalist can check.
+  - name: Auth
+    description: Wallet sign-in. The wallet signs a short message; the gateway returns a session JWT.
+  - name: Account
+    description: Session endpoints for the signed-in wallet.
+  - name: Keys
+    description: API keys for `/v1`. All keys spend from one wallet balance.
+  - name: Inference
+    description: OpenAI-compatible endpoints. Point any OpenAI SDK at `/v1`.
+  - name: Nodes
+    description: The Mac network. Registration, link codes, and the job protocol used by `mesh-node`.
+security: []
+paths:
+  /health:
+    get:
+      tags: [Public]
+      summary: Liveness and configuration summary
+      operationId: getHealth
+      responses:
+        '200':
+          description: Gateway is up and the database answers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example:
+                ok: true
+                db: ok
+                adapter: mock
+                chain: solana
+                upstream: openrouter
+                upstreamMode: live
+                epochCron: '0 * * * *'
+                lastEpoch: { epochStart: 1759485600, status: complete, ageSec: 1420 }
+                geoBlock: [AE, US, GB]
+                time: 1759487020
+        '503':
+          description: Database check failed. Same body with `ok: false`.
+  /stats:
+    get:
+      tags: [Public]
+      summary: Network totals, last epoch and 24 hourly buckets
+      description: Cached for `STATS_CACHE_MS` (10 s by default); `cache-control` and `x-cache-age-ms` say how old the body is.
+      operationId: getStats
+      responses:
+        '200':
+          description: Current stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+              example:
+                token: { name: Mesh, ticker: MESH, chain: solana, tradeFeeBps: 150, holderShareBps: 5000, treasuryShareBps: 5000, minHoldTokens: 1000, epochSeconds: 3600, description: 'Trading fees buy AI inference for holders, every hour.', website: 'https://mesh.local' }
+                totalFeesUsd: 1842.3
+                creditsDistributedUsd: 921.15
+                creditsUsedUsd: 412.08
+                epochsRun: 96
+                lastEpoch: { epochStart: 1759485600, epochEnd: 1759489200, eligibleHolders: 1284, feesUsd: 412.8, status: complete }
+                holdersEligibleLastEpoch: 1284
+                feesThisEpochUsd: 38.2
+                requestsLast24h: 5120
+                spendLast24hUsd: 4.26
+                nodesOnline: 37
+                servedByNetworkPercent: 71.2
+                servedByNetwork24h: 3645
+                jobs24h: 3702
+                networkTokens24h: 18200000
+                networkPricePerMTokens: 0.02
+                networkSavingsUsd24h: 9.87
+                showSavings: true
+                nodeRewardUsdPerMTokens: 0.06
+                series24h:
+                  - { hour: 1759402800, feesUsd: 14.2, creditsDistributedUsd: 7.1, requests: 210, spendUsd: 0.17 }
+                epochSeconds: 3600
+                upstream: openrouter
+                generatedAt: 1759487020
+  /epochs:
+    get:
+      tags: [Public]
+      summary: Epoch history, newest first
+      description: Every hour is listed, including hours with no trades. The fee transaction id is not exposed.
+      operationId: listEpochs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 48 }
+      responses:
+        '200':
+          description: Epochs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [epochs, total, limit, epochSeconds, generatedAt]
+                properties:
+                  epochs: { type: array, items: { $ref: '#/components/schemas/Epoch' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  epochSeconds: { type: integer }
+                  generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+              example:
+                epochs:
+                  - { epochStart: 1759485600, epochEnd: 1759489200, feesUsd: 412.8, holderPoolUsd: 206.4, treasuryUsd: 206.4, eligibleHolders: 1284, status: complete, createdAt: 1759489201 }
+                  - { epochStart: 1759482000, epochEnd: 1759485600, feesUsd: 0, holderPoolUsd: 0, treasuryUsd: 0, eligibleHolders: 1281, status: complete, createdAt: 1759485601 }
+                total: 96
+                limit: 48
+                epochSeconds: 3600
+                generatedAt: 1759487020
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /report:
+    get:
+      tags: [Public]
+      summary: Treasury report
+      description: Everything is derived from the ledgers and reproducible from the database. `method` explains the attribution rules.
+      operationId: getReport
+      responses:
+        '200':
+          description: Totals, 7d / 30d windows, twelve ISO weeks and the treasury balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+              example:
+                token: { name: Mesh, ticker: MESH, chain: solana, holderShareBps: 5000, treasuryShareBps: 5000 }
+                totals:
+                  feesInUsd: 1842.3
+                  creditsOutUsd: 921.15
+                  starterCreditsUsd: 25
+                  creditsUsedUsd: 412.08
+                  nodeRewardsUsd: 1.09
+                  treasuryInUsd: 921.15
+                  requests: 61200
+                  servedByNetwork: 43500
+                  servedByOpenRouter: 17700
+                  servedByNetworkPercent: 71.08
+                  epochs: 96
+                  completeEpochs: 96
+                  creditsOutstandingUsd: 534.07
+                  walletsWithCredits: 1312
+                  treasury: { feeShareUsd: 921.15, nodeRewardAccrualUsd: 1.09, buybackUsd: 0, opsUsd: 0, otherUsd: 0, balanceUsd: 920.06 }
+                last7d: { feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                last30d: { feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                byWeek:
+                  - { isoWeek: 2026-W40, start: 1759104000, end: 1759708800, current: true, feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                feesIn: 1842.3
+                creditsOut: 921.15
+                nodeRewards: 1.09
+                treasuryBalanceUsd: 920.06
+                servedByNetworkPercent: 71.08
+                epochsRun: 96
+                holdingAge: { enabled: false, maxDays: 30, minMultiplier: 1, maxMultiplier: 2 }
+                method:
+                  credits: Credits are a share of trading fees already collected, converted 1:1 to USD-denominated inference credits. They are not a yield, a promise, or a claim on future fees.
+                  attribution: Fees and the treasury share are booked to the ISO week (UTC) of the epoch window that earned them; credits out follow their epoch; usage, starter credits and node rewards follow the time they happened.
+                  treasury: treasuryBalanceUsd = treasury share received − node rewards accrued − buybacks − ops, from the treasury ledger.
+                  network: servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period.
+                lastUpdated: 1759489201
+                generatedAt: 1759487020
+  /report/weekly/{isoWeek}:
+    get:
+      tags: [Public]
+      summary: One ISO week in detail
+      operationId: getWeeklyReport
+      parameters:
+        - name: isoWeek
+          in: path
+          required: true
+          description: ISO 8601 week, Monday-based, UTC.
+          schema: { type: string, pattern: '^\d{4}-W\d{2}$', example: 2026-W40 }
+      responses:
+        '200':
+          description: Week totals, seven daily buckets and every epoch in the week.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeeklyReport' }
+              example:
+                isoWeek: 2026-W40
+                start: 1759104000
+                end: 1759708800
+                current: true
+                feesInUsd: 1842.3
+                creditsOutUsd: 921.15
+                starterCreditsUsd: 25
+                creditsUsedUsd: 412.08
+                nodeRewardsUsd: 1.09
+                treasuryInUsd: 921.15
+                requests: 61200
+                servedByNetwork: 43500
+                servedByOpenRouter: 17700
+                servedByNetworkPercent: 71.08
+                epochs: 96
+                completeEpochs: 96
+                days:
+                  - { day: '2026-09-28', start: 1759104000, end: 1759190400, feesInUsd: 240.1, creditsOutUsd: 120.05, starterCreditsUsd: 0, creditsUsedUsd: 51.2, nodeRewardsUsd: 0.14, treasuryInUsd: 120.05, requests: 8100, servedByNetwork: 5900, servedByOpenRouter: 2200, servedByNetworkPercent: 72.84, epochs: 24, completeEpochs: 24 }
+                epochDetails:
+                  - { epochStart: 1759104000, epochEnd: 1759107600, feesUsd: 9.8, holderPoolUsd: 4.9, treasuryUsd: 4.9, eligibleHolders: 1201, status: complete, createdAt: 1759107601 }
+                previous: 2026-W39
+                next: null
+                method: { credits: '…', attribution: '…', treasury: '…', network: '…' }
+                generatedAt: 1759487020
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /nodes:
+    get:
+      tags: [Public, Nodes]
+      summary: Network summary
+      description: Counts and model coverage of the Macs online right now. No wallets, no tokens, no node ids.
+      operationId: getNodesSummary
+      responses:
+        '200':
+          description: Summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodesSummary' }
+              example:
+                online: 37
+                total: 52
+                busy: 9
+                idle: 28
+                totalRamGb: 1184
+                chips: { M2 Pro: 12, M3 Max: 9, M1: 16 }
+                models: { 'llama3.1:8b': 37, 'qwen2.5:14b': 11 }
+                jobs24h: 3702
+                servedByNetwork24h: 3645
+                tokens24h: 18200000
+                servedByNetworkPercent: 71.2
+                offlineAfterSec: 60
+                heartbeatEverySec: 20
+  /openapi.json:
+    get:
+      tags: [Public]
+      summary: This document
+      operationId: getOpenApi
+      responses:
+        '200':
+          description: The OpenAPI 3.1 description of this gateway, as JSON.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /auth/nonce:
+    post:
+      tags: [Auth]
+      summary: Issue a sign-in message
+      description: |
+        Returns a SIWE / SIWS-style message for the wallet to sign. The nonce is single-use and expires in 5 minutes.
+        Sign `message` exactly as returned, then call `POST /auth/verify`. Rate limited per IP (20/min by default).
+      operationId: authNonce
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet]
+              properties:
+                wallet: { type: string, maxLength: 128, description: Base58 (Solana) or 0x address (EVM). }
+            example: { wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k }
+      responses:
+        '200':
+          description: Message to sign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallet, nonce, domain, issuedAt, expiresAt, expiresInSec, message]
+                properties:
+                  wallet: { type: string }
+                  nonce: { type: string }
+                  domain: { type: string }
+                  issuedAt: { type: string, format: date-time }
+                  expiresAt: { type: string, format: date-time }
+                  expiresInSec: { type: integer }
+                  message: { type: string, description: The exact text the wallet must sign. }
+              example:
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                nonce: 7f3a2c91e4b8d0f6
+                domain: app.example.com
+                issuedAt: '2026-10-03T09:00:00.000Z'
+                expiresAt: '2026-10-03T09:05:00.000Z'
+                expiresInSec: 300
+                message: "app.example.com wants you to sign in with your wallet:\n9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k\n\nSign in to Mesh.\n\nURI: https://app.example.com\nNonce: 7f3a2c91e4b8d0f6\nIssued At: 2026-10-03T09:00:00.000Z\nExpiration Time: 2026-10-03T09:05:00.000Z"
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/verify:
+    post:
+      tags: [Auth]
+      summary: Exchange a signature for a session
+      description: Verifies the ed25519 (Solana) or EIP-191 (EVM) signature over the issued message and returns a 7-day session JWT.
+      operationId: authVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet, signature]
+              properties:
+                wallet: { type: string }
+                signature: { type: string, description: Base58 (Solana) or 0x hex (EVM) signature over `message`. }
+                chain: { type: string, enum: [solana, evm], description: Defaults to the gateway's configured chain. }
+                nonce: { type: string, description: Optional; defaults to the newest live nonce for the wallet. }
+                message: { type: string, maxLength: 2000, description: Optional echo of the signed message for precise error messages. }
+            example:
+              wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+              signature: 3xT1…Qk9b
+              chain: solana
+              nonce: 7f3a2c91e4b8d0f6
+      responses:
+        '200':
+          description: Session token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+              example: { token: eyJhbGciOiJIUzI1NiJ9…, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, chain: solana, expiresIn: 7d, expiresInSec: 604800 }
+        '400':
+          description: '`nonce_missing` (expired, used or unknown), `domain_mismatch`, `wallet_mismatch`, `message_mismatch` or `bad_request`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: nonce_missing, message: 'nonce missing, expired (5 min) or already used; request a new one' }
+        '401':
+          description: '`bad_signature`: the signature does not match the issued message.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate a session
+      description: Exchange a valid, unexpired session for a fresh 7-day one.
+      operationId: authRefresh
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Fresh session token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /me:
+    get:
+      tags: [Account]
+      summary: Balance, recent ledger, keys and savings
+      operationId: getMe
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: The signed-in wallet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+              example:
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                chain: solana
+                balance: { usd: 29.999, usdMicros: 29999000 }
+                ledger:
+                  - { id: 912, kind: usage, deltaUsd: -0.001, deltaUsdMicros: -1000, ref: 'req:4411', created_at: 1759486442 }
+                  - { id: 911, kind: distribution, deltaUsd: 30, deltaUsdMicros: 30000000, ref: 'epoch:1759485600', created_at: 1759485601 }
+                apiKeys:
+                  - { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+                savings: { usd24h: 0.0211, usdTotal: 0.184, networkSharePercent: 71.2, multiplier: 8.1, networkSpendUsdTotal: 0.026, networkRequests: 312, requests: 438 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/nodes:
+    get:
+      tags: [Account, Nodes]
+      summary: Nodes registered under this wallet
+      operationId: getMyNodes
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Nodes with the same stats as `GET /nodes/{id}`, plus the wallet's total node earnings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallet, nodes, earnedUsdTotal, rewardUsdPerMTokens]
+                properties:
+                  wallet: { type: string }
+                  nodes: { type: array, items: { $ref: '#/components/schemas/NodeStats' } }
+                  earnedUsdTotal: { type: number }
+                  rewardUsdPerMTokens: { type: number, example: 0.06 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /keys:
+    post:
+      tags: [Keys]
+      summary: Create an API key
+      description: The secret is returned once. Store it; the gateway keeps only a prefix and a hash.
+      operationId: createKey
+      security: [{ session: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 64, description: Shown in the dashboard. }
+                spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: Lifetime cap in USD; null for none. }
+            example: { name: laptop, spendLimitUsd: 5 }
+      responses:
+        '201':
+          description: The new key.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, key, prefix, name, spendLimitUsd, note]
+                properties:
+                  id: { type: integer }
+                  key: { type: string, description: 'The secret, shown once.' }
+                  prefix: { type: string }
+                  name: { type: [string, 'null'] }
+                  spendLimitUsd: { type: [number, 'null'] }
+                  note: { type: string }
+              example: { id: 3, key: mesh_sk_7f3a2c91e4b8d0f6a5c3e9b1d7f2a8c4, prefix: mesh_sk_7f3a, name: laptop, spendLimitUsd: 5, note: 'Store this key now; it is not shown again.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      tags: [Keys]
+      summary: List keys
+      operationId: listKeys
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Masked keys, including revoked ones.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+              example:
+                keys:
+                  - { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /keys/{id}:
+    parameters:
+      - $ref: '#/components/parameters/KeyId'
+    patch:
+      tags: [Keys]
+      summary: Rename a key or change its spend limit
+      operationId: updateKey
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: [string, 'null'], maxLength: 64 }
+                spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: null clears the cap. }
+            example: { spendLimitUsd: 10 }
+      responses:
+        '200':
+          description: The updated key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Keys]
+      summary: Revoke a key
+      description: Requests using the key fail immediately with `401 invalid_api_key`.
+      operationId: revokeKey
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  revoked: { type: boolean, const: true }
+              example: { id: 3, revoked: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /keys/{id}/usage:
+    get:
+      tags: [Keys]
+      summary: Usage for one key
+      operationId: getKeyUsage
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          description: Requests, spend and tokens over 24 h, 7 d and all time, plus the top models of the last 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyUsage' }
+              example:
+                key: { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+                last24h: { requests: 120, spendUsd: 0.094, promptTokens: 61000, completionTokens: 22000 }
+                last7d: { requests: 438, spendUsd: 0.412, promptTokens: 240000, completionTokens: 88000 }
+                allTime: { requests: 438, spendUsd: 0.412, promptTokens: 240000, completionTokens: 88000, requestCount: 438 }
+                requestCount: 438
+                topModels:
+                  - { model: meta-llama/llama-3.1-8b-instruct, requests: 390, spendUsd: 0.21 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/models:
+    get:
+      tags: [Inference]
+      summary: Models your key can use
+      description: The upstream catalogue filtered by the model policy, plus network models served by Macs in the Mesh network (`mesh_network: true`).
+      operationId: listModels
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: OpenAI-shaped list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/Model' } }
+              example:
+                object: list
+                data:
+                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: 'meta-llama/llama-3.1-8b-instruct (Mesh network)', mesh_network: true }
+                  - { id: anthropic/claude-3.5-sonnet, object: model, created: 1718841600, owned_by: anthropic, mesh_network: false }
+        '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
+        '429': { $ref: '#/components/responses/OpenAIRateLimited' }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
+  /v1/chat/completions:
+    post:
+      tags: [Inference]
+      summary: Chat completion
+      description: |
+        Same request and response shape as OpenAI. Set `stream: true` for server-sent events.
+
+        * When an idle Mesh node advertises the model, it serves the request and you pay the flat network price
+          ($0.02 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
+        * Otherwise the request goes to the upstream provider at its list price and `x-mesh-route` names the upstream.
+          If a node failed before any output reached you, `x-mesh-fallback` carries the reason.
+        * Non-streamed replies set `x-mesh-cost-usd` and `x-mesh-balance-usd`. Streamed replies carry `usage.cost`
+          (USD) in the final chunk, plus `mesh: { route, nodeId, listCostUsd, savedUsd }` when a node served it.
+        * Failed requests are never charged. Rate limit: 120 requests per minute per key.
+      operationId: createChatCompletion
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+            examples:
+              simple:
+                summary: One message, no stream
+                value:
+                  model: meta-llama/llama-3.1-8b-instruct
+                  messages: [{ role: user, content: Summarise this clause. }]
+              stream:
+                summary: Streaming with usage
+                value:
+                  model: meta-llama/llama-3.1-8b-instruct
+                  messages: [{ role: user, content: Summarise this clause. }]
+                  stream: true
+                  stream_options: { include_usage: true }
+      responses:
+        '200':
+          description: Completion (JSON) or `text/event-stream` when `stream` is true.
+          headers:
+            x-mesh-route: { description: '`node:<nodeId>` or the upstream name.', schema: { type: string } }
+            x-mesh-cost-usd: { description: Charged for this request (non-stream only). schema: { type: string } }
+            x-mesh-balance-usd: { description: Balance after this request (non-stream only). schema: { type: string } }
+            x-mesh-saved-usd: { description: List price minus what you paid when a node served it (non-stream only). schema: { type: string } }
+            x-mesh-fallback: { description: Reason a node attempt was abandoned before output. schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatCompletion' }
+              example:
+                id: chatcmpl-mesh-m1x2y3
+                object: chat.completion
+                created: 1759487020
+                model: meta-llama/llama-3.1-8b-instruct
+                choices:
+                  - index: 0
+                    message: { role: assistant, content: "Either side can end the agreement with 30 days' notice, but fees already invoiced stay payable." }
+                    finish_reason: stop
+                usage: { prompt_tokens: 212, completion_tokens: 31, total_tokens: 243, cost: 0.0000049 }
+                mesh: { route: node, nodeId: node_7kd2pq9f, chip: M2 Pro, listCostUsd: 0.000039, savedUsd: 0.000034 }
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                data: {"id":"chatcmpl-mesh-m1x2y3","object":"chat.completion.chunk","created":1759487020,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":"Either"},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-mesh-m1x2y3","object":"chat.completion.chunk","created":1759487020,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":212,"completion_tokens":31,"total_tokens":243,"cost":0.0000049},"mesh":{"route":"node","nodeId":"node_7kd2pq9f","listCostUsd":0.000039,"savedUsd":0.000034}}
+
+                data: [DONE]
+        '400':
+          description: '`messages` empty or `model` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
+        '402':
+          description: '`insufficient_quota`: credit balance is zero. Hold $MESH through an hour to receive credits.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+              example: { error: { message: 'Insufficient Mesh credits (balance $0.000000). Hold $MESH to receive hourly credits.', type: insufficient_quota, code: insufficient_quota, param: null } }
+        '403':
+          description: '`model_not_allowed`: not in the model policy. `GET /v1/models` lists what is.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '429':
+          description: Per-key rate limit, or `key_spend_limit_reached` when the key's lifetime cap is used up.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+              example: { error: { message: 'This API key reached its spend limit ($5). Raise it with PATCH /keys/3.', type: insufficient_quota, code: key_spend_limit_reached, param: null } }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
+
+  /nodes/register/challenge:
+    post:
+      tags: [Nodes]
+      summary: Challenge to sign before registering
+      description: Step 1 of signed registration. The reward wallet signs `message`; single-use, 5 minutes. Rate limited per IP (10/hour).
+      operationId: nodeChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet]
+              properties:
+                wallet: { type: string }
+                nodeId: { type: string, pattern: '^[A-Za-z0-9_.:-]+$', description: Optional stable id to bind into the message. }
+            example: { wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k }
+      responses:
+        '200':
+          description: Challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wallet: { type: string }
+                  nonce: { type: string }
+                  nodeId: { type: [string, 'null'] }
+                  domain: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  message: { type: string }
+                  requireSignature: { type: boolean }
+                  hint: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /nodes/link:
+    post:
+      tags: [Nodes, Account]
+      summary: Mint a one-time link code
+      description: |
+        The browser flow. The signed-in wallet signs the registration challenge (from `POST /nodes/register/challenge`)
+        and receives a short code valid for 15 minutes. The Mac then runs `mesh-node setup --link <code>` and registers
+        with `{ linkCode }`, so no key or wallet ever has to be typed on the Mac. At most 5 unused codes per wallet.
+      operationId: nodeLink
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nonce, signature]
+              properties:
+                nonce: { type: string }
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+            example: { nonce: 7f3a2c91e4b8d0f6, signature: 3xT1…Qk9b, chain: solana }
+      responses:
+        '200':
+          description: Link code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, wallet, chain, expiresAt, expiresInSec, hint]
+                properties:
+                  code: { type: string }
+                  wallet: { type: string }
+                  chain: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  expiresInSec: { type: integer }
+                  hint: { type: string }
+              example: { code: K7Q2M9XD, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, chain: solana, expiresAt: '2026-10-03T09:15:00.000Z', expiresInSec: 900, hint: 'On the Mac: mesh-node setup --link K7Q2M9XD --gateway <gateway-url>' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Rate limited, or `too_many_link_codes`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /nodes/register:
+    post:
+      tags: [Nodes]
+      summary: Register a node
+      description: |
+        Called by `mesh-node`. Either `{ linkCode }` (browser flow) or `{ wallet, nonce, signature }` (signed challenge).
+        Returns the node token once; the gateway stores only its hash. Re-registering an existing `nodeId` requires its token.
+      operationId: nodeRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                linkCode: { type: string }
+                wallet: { type: string }
+                nonce: { type: string }
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+                nodeId: { type: string }
+                chip: { type: string, example: M2 Pro }
+                ramGb: { type: number, example: 32 }
+                models: { type: array, items: { type: string }, example: ['llama3.1:8b'] }
+                agentVersion: { type: string, example: 0.1.0 }
+            example: { linkCode: K7Q2M9XD, chip: M2 Pro, ramGb: 32, models: ['llama3.1:8b'], agentVersion: 0.1.0 }
+      responses:
+        '200':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodeId: { type: string }
+                  nodeToken: { type: string, description: 'Shown once.' }
+                  wallet: { type: string }
+                  registered: { type: boolean }
+                  walletVerified: { type: boolean }
+                  linked: { type: boolean }
+                  heartbeatEverySec: { type: integer }
+                  offlineAfterSec: { type: integer }
+                  pollMaxWaitMs: { type: integer }
+              example: { nodeId: node_7kd2pq9f, nodeToken: mesh_node_Qm3…, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, registered: true, walletVerified: true, linked: true, heartbeatEverySec: 20, offlineAfterSec: 60, pollMaxWaitMs: 25000 }
+        '400':
+          description: '`link_code_invalid`, `link_code_used`, `link_code_expired`, `nonce_missing` or `bad_request`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: '`signature_required` or `bad_signature`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`node_exists`: re-registering this `nodeId` needs its node token.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /nodes/{id}:
+    get:
+      tags: [Nodes]
+      summary: Stats for one node
+      description: Node token, or the session of the wallet that owns the node.
+      operationId: getNode
+      security: [{ nodeToken: [] }, { session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      responses:
+        '200':
+          description: Status, uptime, jobs, earnings and reputation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodeStats' }
+              example:
+                nodeId: node_7kd2pq9f
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                status: idle
+                online: true
+                busy: false
+                chip: M2 Pro
+                ramGb: 32
+                loadAvg: 1.2
+                agentVersion: 0.1.0
+                models: ['llama3.1:8b']
+                uptimePct24h: 97.4
+                jobs24h: 140
+                jobsDone24h: 138
+                jobsFailed24h: 2
+                tokens24h: 612000
+                earnedUsd24h: 0.0367
+                earnedUsdTotal: 0.412
+                reputation: { window: 100, jobs: 100, successRate: 0.98, avgFirstTokenMs: 640, eligible: true, minSuccessRate: 0.8 }
+                lastSeen: 1759487010
+                createdAt: 1759300000
+                offlineAfterSec: 60
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/heartbeat:
+    post:
+      tags: [Nodes]
+      summary: Heartbeat
+      description: Every 20 seconds. A node with no heartbeat for 60 seconds is offline and stops receiving jobs.
+      operationId: nodeHeartbeat
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                models: { type: array, items: { type: string } }
+                busy: { type: boolean }
+                loadAvg: { type: number }
+                ramGb: { type: number }
+                chip: { type: string }
+            example: { models: ['llama3.1:8b'], busy: false, loadAvg: 1.2 }
+      responses:
+        '200':
+          description: Acknowledged.
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/jobs/next:
+    get:
+      tags: [Nodes]
+      summary: Long-poll for the next job
+      description: Holds the connection up to `wait` ms (max 25 000) and returns `204` when nothing was claimed. The claim is atomic across nodes.
+      operationId: nodeNextJob
+      security: [{ nodeToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - name: wait
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 25000, default: 25000 }
+      responses:
+        '200':
+          description: A claimed job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                jobId: job_01hx…
+                model: meta-llama/llama-3.1-8b-instruct
+                tag: 'llama3.1:8b'
+                messages: [{ role: user, content: Summarise this clause. }]
+                params: { temperature: 0.2 }
+                maxTokens: 1024
+                deadlineMs: 1759487140000
+                attempt: 1
+        '204': { description: No job within `wait`. Poll again. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /nodes/{id}/jobs/{jobId}/chunk:
+    post:
+      tags: [Nodes]
+      summary: Stream a chunk of the reply
+      operationId: nodeJobChunk
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seq, delta]
+              properties:
+                seq: { type: integer, minimum: 0, description: Sequence number, starting at 0; retry with the same seq. }
+                delta: { type: string }
+            example: { seq: 0, delta: 'Either side can end ' }
+      responses:
+        '200': { description: Accepted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`: the client left or the job timed out. Stop generating.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /nodes/{id}/jobs/{jobId}/done:
+    post:
+      tags: [Nodes]
+      summary: Finish a job
+      description: Credits the node wallet $0.06 per million total tokens and bills the user the network price.
+      operationId: nodeJobDone
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                promptTokens: { type: integer, default: 0 }
+                completionTokens: { type: integer, default: 0 }
+                finishReason: { type: string, default: stop }
+            example: { promptTokens: 212, completionTokens: 31, finishReason: stop }
+      responses:
+        '200': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /nodes/{id}/jobs/{jobId}/fail:
+    post:
+      tags: [Nodes]
+      summary: Fail a job
+      description: The job is retried once on another node if nothing reached the client yet; otherwise the error is surfaced in-stream and nobody is charged.
+      operationId: nodeJobFail
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: { type: string, maxLength: 500 }
+            example: { error: 'ollama: model not loaded' }
+      responses:
+        '200': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 7-day session from `POST /auth/verify`.
+    apiKey:
+      type: http
+      scheme: bearer
+      description: '`mesh_sk_…` from `POST /keys`. Works wherever an OpenAI key works.'
+    nodeToken:
+      type: http
+      scheme: bearer
+      description: '`mesh_node_…` from `POST /nodes/register`.'
+  parameters:
+    KeyId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    NodeId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: node_7kd2pq9f }
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Validation failed. `issues` lists the fields.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: bad_request, issues: [{ path: [wallet], message: Required }] }
+    Unauthorized:
+      description: Missing or invalid bearer.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized, message: valid session token required }
+    NotFound:
+      description: No such resource for this wallet.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: not_found }
+    RateLimited:
+      description: Too many requests. `retry-after` says when to try again.
+      headers:
+        retry-after: { schema: { type: integer } }
+        x-ratelimit-limit: { schema: { type: integer } }
+        x-ratelimit-remaining: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: rate_limited, message: 'Too many auth requests; retry in a minute.', statusCode: 429 }
+    OpenAIUnauthorized:
+      description: '`invalid_api_key`. Create one with `POST /keys`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+          example: { error: { message: 'Invalid API key. Create one with POST /keys.', type: invalid_request_error, code: invalid_api_key, param: null } }
+    OpenAIRateLimited:
+      description: Per-key rate limit (120/min).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+    OpenAIUpstream:
+      description: The upstream provider failed or timed out. You were not charged.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+          example: { error: { message: 'Upstream (openrouter) timed out after 60000ms. You were not charged.', type: upstream_error, code: upstream_timeout, param: null } }
+  schemas:
+    UnixSeconds:
+      type: integer
+      description: Unix time in seconds (UTC).
+    Error:
+      type: object
+      description: Error shape outside `/v1`.
+      required: [error]
+      properties:
+        error: { type: string, description: Machine-readable code. }
+        message: { type: string }
+        statusCode: { type: integer }
+        requestId: { type: string }
+        issues: { type: array, items: { type: object } }
+    OpenAIError:
+      type: object
+      description: Error shape under `/v1`, parseable by OpenAI SDKs.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message: { type: string }
+            type: { type: string }
+            code: { type: [string, 'null'] }
+            param: { type: [string, 'null'] }
+    Health:
+      type: object
+      properties:
+        ok: { type: boolean }
+        db: { type: string, enum: [ok, error] }
+        adapter: { type: string, enum: [mock, chain] }
+        chain: { type: string }
+        upstream: { type: string }
+        upstreamMode: { type: string }
+        epochCron: { type: string }
+        lastEpoch:
+          type: [object, 'null']
+          properties:
+            epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+            status: { type: string }
+            ageSec: { type: integer }
+        geoBlock:
+          oneOf:
+            - { type: array, items: { type: string } }
+            - { type: string, const: 'off' }
+        time: { $ref: '#/components/schemas/UnixSeconds' }
+    TokenMeta:
+      type: object
+      properties:
+        name: { type: string }
+        ticker: { type: string }
+        chain: { type: string }
+        tradeFeeBps: { type: integer }
+        holderShareBps: { type: integer }
+        treasuryShareBps: { type: integer }
+        minHoldTokens: { type: number }
+        epochSeconds: { type: integer }
+        description: { type: string }
+        website: { type: string }
+    HourPoint:
+      type: object
+      properties:
+        hour: { $ref: '#/components/schemas/UnixSeconds' }
+        feesUsd: { type: number }
+        creditsDistributedUsd: { type: number }
+        requests: { type: integer }
+        spendUsd: { type: number }
+    Stats:
+      type: object
+      properties:
+        token: { $ref: '#/components/schemas/TokenMeta' }
+        totalFeesUsd: { type: number }
+        creditsDistributedUsd: { type: number }
+        creditsUsedUsd: { type: number }
+        epochsRun: { type: integer }
+        lastEpoch:
+          type: [object, 'null']
+          properties:
+            epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+            epochEnd: { $ref: '#/components/schemas/UnixSeconds' }
+            eligibleHolders: { type: integer }
+            feesUsd: { type: number }
+            status: { type: string }
+        holdersEligibleLastEpoch: { type: integer }
+        feesThisEpochUsd: { type: [number, 'null'], description: null when the chain adapter cannot read pending fees cheaply. }
+        requestsLast24h: { type: integer }
+        spendLast24hUsd: { type: number }
+        nodesOnline: { type: integer }
+        servedByNetworkPercent: { type: number }
+        servedByNetwork24h: { type: integer }
+        jobs24h: { type: integer }
+        networkTokens24h: { type: integer }
+        networkPricePerMTokens: { type: number }
+        networkSavingsUsd24h: { type: number }
+        showSavings: { type: boolean }
+        nodeRewardUsdPerMTokens: { type: number }
+        series24h: { type: array, items: { $ref: '#/components/schemas/HourPoint' } }
+        epochSeconds: { type: integer }
+        upstream: { type: string }
+        generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    Epoch:
+      type: object
+      properties:
+        epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+        epochEnd: { $ref: '#/components/schemas/UnixSeconds' }
+        feesUsd: { type: number }
+        holderPoolUsd: { type: number }
+        treasuryUsd: { type: number }
+        eligibleHolders: { type: integer }
+        status: { type: string, enum: [complete, partial, failed] }
+        createdAt: { $ref: '#/components/schemas/UnixSeconds' }
+    PeriodTotals:
+      type: object
+      properties:
+        feesInUsd: { type: number }
+        creditsOutUsd: { type: number }
+        starterCreditsUsd: { type: number }
+        creditsUsedUsd: { type: number }
+        nodeRewardsUsd: { type: number }
+        treasuryInUsd: { type: number }
+        requests: { type: integer }
+        servedByNetwork: { type: integer }
+        servedByOpenRouter: { type: integer }
+        servedByNetworkPercent: { type: number }
+        epochs: { type: integer }
+        completeEpochs: { type: integer }
+    WeekReport:
+      allOf:
+        - $ref: '#/components/schemas/PeriodTotals'
+        - type: object
+          properties:
+            isoWeek: { type: string }
+            start: { $ref: '#/components/schemas/UnixSeconds' }
+            end: { $ref: '#/components/schemas/UnixSeconds' }
+            current: { type: boolean }
+    Report:
+      type: object
+      properties:
+        token: { $ref: '#/components/schemas/TokenMeta' }
+        totals:
+          allOf:
+            - $ref: '#/components/schemas/PeriodTotals'
+            - type: object
+              properties:
+                creditsOutstandingUsd: { type: number }
+                walletsWithCredits: { type: integer }
+                treasury:
+                  type: object
+                  properties:
+                    feeShareUsd: { type: number }
+                    nodeRewardAccrualUsd: { type: number }
+                    buybackUsd: { type: number }
+                    opsUsd: { type: number }
+                    otherUsd: { type: number }
+                    balanceUsd: { type: number }
+        last7d: { $ref: '#/components/schemas/PeriodTotals' }
+        last30d: { $ref: '#/components/schemas/PeriodTotals' }
+        byWeek: { type: array, items: { $ref: '#/components/schemas/WeekReport' } }
+        feesIn: { type: number }
+        creditsOut: { type: number }
+        nodeRewards: { type: number }
+        treasuryBalanceUsd: { type: number }
+        servedByNetworkPercent: { type: number }
+        epochsRun: { type: integer }
+        holdingAge:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            maxDays: { type: integer }
+            minMultiplier: { type: number }
+            maxMultiplier: { type: number }
+        method:
+          type: object
+          additionalProperties: { type: string }
+        lastUpdated: { type: [integer, 'null'] }
+        generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    WeeklyReport:
+      allOf:
+        - $ref: '#/components/schemas/WeekReport'
+        - type: object
+          properties:
+            days:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/PeriodTotals'
+                  - type: object
+                    properties:
+                      day: { type: string, format: date }
+                      start: { $ref: '#/components/schemas/UnixSeconds' }
+                      end: { $ref: '#/components/schemas/UnixSeconds' }
+            epochDetails: { type: array, items: { $ref: '#/components/schemas/Epoch' } }
+            previous: { type: string }
+            next: { type: [string, 'null'] }
+            method: { type: object, additionalProperties: { type: string } }
+            generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    NodesSummary:
+      type: object
+      properties:
+        online: { type: integer }
+        total: { type: integer }
+        busy: { type: integer }
+        idle: { type: integer }
+        totalRamGb: { type: number }
+        chips: { type: object, additionalProperties: { type: integer } }
+        models: { type: object, additionalProperties: { type: integer } }
+        jobs24h: { type: integer }
+        servedByNetwork24h: { type: integer }
+        tokens24h: { type: integer }
+        servedByNetworkPercent: { type: number }
+        offlineAfterSec: { type: integer }
+        heartbeatEverySec: { type: integer }
+    Session:
+      type: object
+      required: [token, wallet, chain, expiresIn, expiresInSec]
+      properties:
+        token: { type: string, description: JWT. Send as `Authorization: Bearer <token>`. }
+        wallet: { type: string }
+        chain: { type: string, enum: [solana, evm] }
+        expiresIn: { type: string, example: 7d }
+        expiresInSec: { type: integer, example: 604800 }
+    LedgerEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [distribution, usage, starter, adjustment] }
+        deltaUsd: { type: number }
+        deltaUsdMicros: { type: integer }
+        ref: { type: [string, 'null'], description: '`epoch:<start>` or `req:<id>`.' }
+        created_at: { $ref: '#/components/schemas/UnixSeconds' }
+    Savings:
+      type: object
+      description: What this wallet saved because Mesh nodes served its requests at the network price.
+      properties:
+        usd24h: { type: number }
+        usdTotal: { type: number }
+        networkSharePercent: { type: number }
+        multiplier: { type: number, description: list ÷ paid across node-served requests. }
+        networkSpendUsdTotal: { type: number }
+        networkRequests: { type: integer }
+        requests: { type: integer }
+    Me:
+      type: object
+      properties:
+        wallet: { type: string }
+        chain: { type: string }
+        balance:
+          type: object
+          properties:
+            usd: { type: number }
+            usdMicros: { type: integer }
+        ledger: { type: array, items: { $ref: '#/components/schemas/LedgerEntry' }, description: Newest 20 rows. }
+        apiKeys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+        savings: { $ref: '#/components/schemas/Savings' }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: integer }
+        masked: { type: string, example: mesh_sk_7f3a… }
+        name: { type: [string, 'null'] }
+        label: { type: [string, 'null'], description: Legacy alias of `name`. }
+        spendLimitUsd: { type: [number, 'null'] }
+        spentUsd: { type: number }
+        created_at: { $ref: '#/components/schemas/UnixSeconds' }
+        revoked: { type: boolean }
+    UsageWindow:
+      type: object
+      properties:
+        requests: { type: integer }
+        spendUsd: { type: number }
+        promptTokens: { type: integer }
+        completionTokens: { type: integer }
+    KeyUsage:
+      type: object
+      properties:
+        key: { $ref: '#/components/schemas/ApiKey' }
+        last24h: { $ref: '#/components/schemas/UsageWindow' }
+        last7d: { $ref: '#/components/schemas/UsageWindow' }
+        allTime:
+          allOf:
+            - $ref: '#/components/schemas/UsageWindow'
+            - type: object
+              properties:
+                requestCount: { type: integer }
+        requestCount: { type: integer }
+        topModels:
+          type: array
+          items:
+            type: object
+            properties:
+              model: { type: string }
+              requests: { type: integer }
+              spendUsd: { type: number }
+    Model:
+      type: object
+      required: [id, object, mesh_network]
+      properties:
+        id: { type: string }
+        object: { type: string, const: model }
+        created: { type: integer }
+        owned_by: { type: string }
+        name: { type: string }
+        mesh_network: { type: boolean, description: true when Macs in the Mesh network can serve it at the network price. }
+      additionalProperties: true
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, user, assistant, tool] }
+        content: { type: string }
+    ChatRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        messages: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ChatMessage' } }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: object
+          properties:
+            include_usage: { type: boolean }
+        max_tokens: { type: integer, description: Defaults to 1024 on network-served requests. }
+        temperature: { type: number }
+        top_p: { type: number }
+        top_k: { type: integer }
+        stop: { oneOf: [{ type: string }, { type: array, items: { type: string } }] }
+        seed: { type: integer }
+        presence_penalty: { type: number }
+        frequency_penalty: { type: number }
+        response_format: { type: object }
+      additionalProperties: true
+    Usage:
+      type: object
+      properties:
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+        cost: { type: number, description: USD charged for this request. }
+    MeshRoute:
+      type: object
+      description: Present when a Mesh node served the request.
+      properties:
+        route: { type: string, enum: [node] }
+        nodeId: { type: string }
+        chip: { type: string }
+        listCostUsd: { type: number, description: What the upstream would have charged. }
+        savedUsd: { type: number, description: listCostUsd minus what you paid, never negative. }
+    ChatCompletion:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, const: chat.completion }
+        created: { $ref: '#/components/schemas/UnixSeconds' }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message: { $ref: '#/components/schemas/ChatMessage' }
+              finish_reason: { type: [string, 'null'] }
+        usage: { $ref: '#/components/schemas/Usage' }
+        mesh: { $ref: '#/components/schemas/MeshRoute' }
+      additionalProperties: true
+    NodeStats:
+      type: object
+      properties:
+        nodeId: { type: string }
+        wallet: { type: string }
+        status: { type: string, enum: [offline, busy, idle] }
+        online: { type: boolean }
+        busy: { type: boolean }
+        chip: { type: [string, 'null'] }
+        ramGb: { type: [number, 'null'] }
+        loadAvg: { type: [number, 'null'] }
+        agentVersion: { type: [string, 'null'] }
+        models: { type: array, items: { type: string } }
+        uptimePct24h: { type: number }
+        jobs24h: { type: integer }
+        jobsDone24h: { type: integer }
+        jobsFailed24h: { type: integer }
+        tokens24h: { type: integer }
+        earnedUsd24h: { type: number }
+        earnedUsdTotal: { type: number }
+        reputation:
+          type: object
+          properties:
+            window: { type: integer }
+            jobs: { type: integer }
+            successRate: { type: number }
+            avgFirstTokenMs: { type: [number, 'null'] }
+            eligible: { type: boolean }
+            minSuccessRate: { type: number }
+        lastSeen: { $ref: '#/components/schemas/UnixSeconds' }
+        createdAt: { $ref: '#/components/schemas/UnixSeconds' }
+        offlineAfterSec: { type: integer }
+    Job:
+      type: object
+      properties:
+        jobId: { type: string }
+        model: { type: string }
+        tag: { type: string, description: Ollama tag to run. }
+        messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } }
+        params: { type: object, additionalProperties: true }
+        maxTokens: { type: integer }
+        deadlineMs: { type: integer, description: Unix ms after which the job is failed. }
+        attempt: { type: integer }
