@@ -9,6 +9,7 @@ import { AppLayout } from './pages/AppLayout';
 import { Chat } from './pages/Chat';
 import { Dashboard } from './pages/Dashboard';
 import { Docs } from './pages/Docs';
+import { DownloadPage } from './pages/Download';
 import { Keys } from './pages/Keys';
 import { Landing } from './pages/Landing';
 import { LeaderboardPage } from './pages/Leaderboard';
@@ -73,6 +74,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/docs" element={<Docs />} />
+            <Route path="/download" element={<DownloadPage />} />
             <Route path="/api" element={<ApiDocs />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />

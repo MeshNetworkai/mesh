@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Empty, Modal, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
 import { MOCK, PUBLIC_API_URL, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
@@ -142,8 +143,9 @@ function LinkMac() {
       )}
       <p className="small muted" style={{ margin: 0 }}>
         Afterwards: <code className="mono">mesh-node status</code>, <code className="mono">mesh-node pause</code> /{' '}
-        <code className="mono">resume</code>, <code className="mono">mesh-node logs</code>,{' '}
-        <code className="mono">mesh-node service uninstall</code>.
+        <code className="mono">resume</code>, <code className="mono">mesh-node logs</code>, <code className="mono">mesh-node update</code>,{' '}
+        <code className="mono">mesh-node service uninstall</code>. Prefer Homebrew or a menu-bar app? See <Link to="/download">Download for Mac</Link>{' '}
+        (same agent, plus the checksums and the macOS “Open Anyway” steps).
       </p>
     </div>
   );

@@ -3,6 +3,7 @@ import { loadTokenomics, type TokenomicsConfig } from '@mesh/config';
 import type { AppContext } from '../src/context.js';
 import { openDb } from '../src/db.js';
 import type { Env } from '../src/env.js';
+import type { InstallOptions } from '../src/routes/install.js';
 import { buildServer } from '../src/server.js';
 import { MockUpstream } from '../src/upstream.js';
 
@@ -55,11 +56,13 @@ export async function testServer(
     config?: TokenomicsConfig;
     env?: Partial<Env>;
     context?: Partial<AppContext>;
+    install?: InstallOptions;
   } = {},
 ) {
   const adapter = new MockAdapter({ chain: 'solana', holders: opts.holders });
   const app = await buildServer({
     logger: false,
+    install: opts.install,
     env: { ...TEST_ENV, ...opts.env },
     context: { db: memDb(), adapter, config: opts.config ?? testConfig, upstream: new MockUpstream(0), ...opts.context },
   });

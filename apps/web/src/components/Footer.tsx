@@ -16,6 +16,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
       { label: 'Chat', to: '/app/chat' },
       { label: 'API keys', to: '/app/keys' },
       { label: 'Run a node', to: '/app/node' },
+      { label: 'Download for Mac', to: '/download' },
     ],
   },
   {

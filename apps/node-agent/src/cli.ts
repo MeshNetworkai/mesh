@@ -10,6 +10,7 @@ import { AGENT_VERSION, paths } from './paths.js';
 import { installService, serviceStatus, uninstallService } from './service.js';
 import { setup } from './setup.js';
 import { c, fmt, out, table } from './ui.js';
+import { applyUpdate, checkForUpdate, installChannel, runUpdateChecks, updateUrl } from './update.js';
 
 const HELP = `mesh-node ${AGENT_VERSION} - serve AI replies from this machine and earn for them
 
@@ -24,10 +25,13 @@ Usage
   mesh-node service uninstall     stop and remove the launchd agent
   mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating)
   mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
+  mesh-node update [--check]      install the latest release (sha256-verified) and restart the service;
+                                  --check only reports. 'start' checks daily and logs when one exists.
   mesh-node --version | --help
 
-Files   ~/.mesh/config.json (0600)  ~/.mesh/logs/  ~/.mesh/paused
+Files   ~/.mesh/config.json (0600)  ~/.mesh/logs/  ~/.mesh/paused  ~/.mesh/bin/mesh-node.js
 Env     GATEWAY_URL  MESH_LINK_CODE  MESH_HOME  OLLAMA_HOST_URL  NO_COLOR
+        MESH_UPDATE_URL (latest.json; default <gateway>/install/latest.json)  MESH_AUTO_UPDATE=1 (install from 'start')
 Privacy logs hold job ids, token counts and timings only; prompts and replies never touch disk (docs/PRIVACY.md)
 `;
 
@@ -98,11 +102,23 @@ async function cmdStart() {
     log,
     onReregister: (next) => saveConfig(next),
   });
+  // Daily update check (logs only; MESH_AUTO_UPDATE=1 installs). Brew installs are upgraded by brew.
+  const updateAc = new AbortController();
+  if (process.env.MESH_UPDATE_CHECK !== '0') {
+    const brew = installChannel() === 'brew';
+    void runUpdateChecks({
+      url: updateUrl(cfg.gateway),
+      log,
+      autoInstall: process.env.MESH_AUTO_UPDATE === '1' && !brew,
+      signal: updateAc.signal,
+    });
+  }
   let stopping = false;
   const stop = (sig: string) => {
     if (stopping) return;
     stopping = true;
     log.info(`received ${sig}`);
+    updateAc.abort();
     void handle.stop().then(() => {
       const s = handle.stats();
       log.info(`stopped after ${s.jobs} job(s), ${s.failed} failed`);
@@ -114,6 +130,33 @@ async function cmdStart() {
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
   await handle.done;
+}
+
+async function cmdUpdate(flags: Args['flags']) {
+  const cfg = loadConfig();
+  const url = process.env.MESH_UPDATE_URL?.trim() || (cfg ? updateUrl(cfg.gateway) : null);
+  if (!url) throw new Error('no node configured and MESH_UPDATE_URL unset; run `mesh-node setup` first or set MESH_UPDATE_URL=https://<web-host>/downloads/latest.json');
+  out.step(`checking ${url}`);
+  const res = await checkForUpdate({ url });
+  if (!res.available) {
+    out.ok(`mesh-node ${res.current} is up to date (latest ${res.latest.version})`);
+    return;
+  }
+  out.line(`   latest ${c.bold(res.latest.version)}${res.latest.publishedAt ? c.dim(`  published ${res.latest.publishedAt.slice(0, 10)}`) : ''}, running ${res.current}`);
+  if (flags.check) {
+    out.warn(`update available: run \`mesh-node update\` to install`);
+    process.exitCode = 2;
+    return;
+  }
+  if (installChannel() === 'brew') {
+    out.warn('this copy was installed with Homebrew; upgrade it with: brew upgrade mesh-network/tap/mesh-node');
+    process.exitCode = 2;
+    return;
+  }
+  out.step(`downloading ${res.latest.bundleUrl}`);
+  const r = await applyUpdate({ latest: res.latest });
+  out.ok(`installed mesh-node ${r.version} at ${r.target} (sha256 verified)`);
+  out.line(`   service: ${r.service === 'restarted' ? 'restarted' : r.service === 'failed' ? 'could not restart; run `mesh-node service install`' : 'not installed; restart `mesh-node start` yourself'}`);
 }
 
 async function cmdStatus(flags: Args['flags']) {
@@ -246,6 +289,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return cmdPause(false);
     case 'logs':
       return cmdLogs(flags);
+    case 'update':
+      return cmdUpdate(flags);
     case 'config':
       out.line(JSON.stringify({ ...loadConfig(), nodeToken: '<redacted>' }, null, 2));
       return;

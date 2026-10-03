@@ -126,6 +126,9 @@ Mock holders: `mockwallet_alice` (60k), `mockwallet_bob` (30k), `mockwallet_caro
 | POST | `/nodes/:id/jobs/:jobId/fail` | node token | `{error}` → re-queue once / fallback (before output) or error surfaced (after partial output) |
 | GET | `/nodes/:id` | node token or owner JWT | `{status, uptimePct24h, jobs24h, tokens24h, earnedUsd24h, earnedUsdTotal, reputation{successRate, avgFirstTokenMs, eligible}, lastSeen, …}` |
 | GET | `/nodes` | none | public summary: online/total/busy/idle, chips, models, `jobs24h`, `servedByNetwork24h`, `tokens24h`, `servedByNetworkPercent`; no wallets or tokens |
+| GET | `/install/latest.json` | none | current `mesh-node` release `{version, bundleUrl, bundleSha256, tarballUrl, dmgUrl, …}`; proxied from `UPDATE_LATEST_URL` (60 s cache) or the file written by `POST /admin/release`. Read by `mesh-node update` and the menu-bar app |
+| GET | `/install/mesh-node.js` | none | the agent bundle (`NODE_BUNDLE_PATH`, dev default `apps/node-agent/dist/mesh-node.js`); 302 to the release `bundleUrl` when absent. What `install-node.sh` downloads |
+| POST | `/admin/release` | ADMIN_TOKEN | publish/correct the release document by hand (audited; 409 while `UPDATE_LATEST_URL` is set); `GET /admin/release` shows what is served |
 
 Every `/admin/*` call is written to the `admin_actions` audit table. Errors are one JSON shape
 everywhere (`{error, message, statusCode, requestId}`; OpenAI's `{error:{message,type,code}}` under
@@ -179,6 +182,7 @@ get `451 region_blocked`. Off in dev. CORS is open. Logs are pino JSON.
 | `STATS_CACHE_MS` | `10000` | `/stats` cache; `0` disables |
 | `NODE_ENV` / `GEO_BLOCK_ENFORCE` | `development` / auto | geo-block enforced when production unless overridden |
 | `LOG_LEVEL` | `info` | pino level |
+| `UPDATE_LATEST_URL` / `UPDATE_LATEST_PATH` / `NODE_BUNDLE_PATH` | unset / `data/latest.json` / `apps/node-agent/dist/mesh-node.js` | node distribution: where `/install/latest.json` and `/install/mesh-node.js` come from (`docs/DISTRIBUTION.md`) |
 
 ## Deploy
 
@@ -223,11 +227,23 @@ packages/config    zod schema + loaders
 packages/chain-adapter  ChainAdapter interface, Mock/Solana/EVM, createAdapter
 packages/design-tokens  tokens.css
 apps/gateway       Fastify API, SQLite, distribution job, tests
-apps/node-agent    Ollama node agent: register, heartbeat, pull jobs, stream chunks (docs/NODE_PROTOCOL.md)
+apps/node-agent    Ollama node agent: register, heartbeat, pull jobs, stream chunks, self-update (docs/NODE_PROTOCOL.md)
+apps/menubar       SwiftUI menu-bar app (status, pause, link, check for updates); unsigned DMG via make dmg (docs/MENUBAR.md)
+homebrew-tap/      Homebrew formula (mirrored to mesh-network/homebrew-tap by the release workflow)
+scripts/release/   make-tarball.sh (bundle + wrapper -> tar.gz + sha256), update-formula.sh
+scripts/install-node.sh  Terminal one-liner installer served by the web app at /install-node.sh
+.github/workflows/release.yml  tag v* -> bundle, tarball, DMG, GitHub Release + latest.json (docs/DISTRIBUTION.md)
 apps/web           Vite + React app: landing, dashboard, keys, chat, network stats, docs
 scripts/demo.sh    offline end-to-end demo (fees → epoch → key with spend limit → chat → fake node serves a job → stats)
 scripts/deploy-vps.md  production runbook (Docker + Caddy on Ubuntu 24.04)
 ```
+
+## Running a node on a Mac
+
+Three channels, no Apple developer account needed (`docs/DISTRIBUTION.md`, web page `/download`):
+the Terminal one-liner (`install-node.sh`), Homebrew (`brew install mesh-network/tap/mesh-node`), or
+the unsigned menu-bar app DMG (opened through System Settings → Privacy & Security → Open Anyway).
+All install the same `mesh-node`; `mesh-node update` pulls the next release with a verified SHA-256.
 
 ## Treasury report
 

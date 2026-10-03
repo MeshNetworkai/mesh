@@ -9,7 +9,7 @@ menu bar      ●····  green serving · amber paused · grey offline/not lin
 popover       Serving / Paused / Offline / Unreachable + one line why
               Earned 24h · Earned total (display numbers)
               Jobs 24h · Uptime 24h · Last seen · Machine · Models
-              Pause/Resume · Open dashboard · View logs · Link / Re-link · Settings
+              Pause/Resume · Open dashboard · View logs · Link / Re-link · Check for updates · Settings
               Launch at login · Updated Ns ago · Quit
 first run     "Link this Mac": 8-char code -> mesh-node setup --link <code> + service install
               (or the curl one-liner with a Copy button when the agent is not installed yet)
@@ -28,11 +28,13 @@ Sources/MeshNodeCore/         Pure Foundation. Builds and tests on Linux.
   StatusModel.swift           (config, stats, paused, failure) -> green/amber/grey/red + headline + detail
   Format.swift                $0.0741 · 1,284 · 98.3% · 2 h ago · M3 Max · 64 GB
   LinkCode.swift              code normalisation + the install one-liner / setup arguments
+  ReleaseInfo.swift           latest.json parser + version compare (what "Check for updates" reads)
 Sources/MeshNode/             macOS only (wrapped in #if os(macOS))
   MeshNodeApp.swift           @main, MenuBarExtra(.window), AppDelegate (accessory policy, first-run)
   AppModel.swift              15 s poll loop, pause/resume flag, open dashboard/logs, link()
   AgentRunner.swift           spawns ~/.mesh/bin/mesh-node, streams output
   GatewayClient.swift         URLSession GET /nodes/:id with Bearer <nodeToken>
+  UpdateChecker.swift         GET <web>/downloads/latest.json; newer version -> "Open download page" (no self-update)
   LaunchAtLogin.swift         SMAppService.mainApp
   StatusIcon.swift            the menu-bar glyph (five dots, the third carries the status colour)
   Theme.swift                 design-system colours (light/dark) and the type scale (SF)
@@ -44,7 +46,7 @@ Tests/MeshNodeCoreTests/      XCTest: status mapping, config/stats parsing, form
 Resources/Info.plist          LSUIElement, ATS local networking, placeholders filled by make-app.sh
 Resources/MeshNode.entitlements  hardened runtime, no sandbox
 scripts/make-app.sh           swift build -c release -> build/MeshNode.app (+ codesign)
-scripts/make-dmg.sh           DMG + optional notarytool/stapler
+scripts/make-dmg.sh           MeshNode-<version>-arm64.dmg + .sha256; signing/notarising optional via env
 Makefile                      run · app · dmg · test · open · clean
 ```
 
@@ -93,6 +95,7 @@ compiles to a stub that prints one line.
 | Link runs `~/.mesh/bin/mesh-node setup --link <CODE> --gateway <url>` then `service install` | same as `install-node.sh` after the download step |
 | Not installed: shows `curl -fsSL <web>/install-node.sh \| sh -s -- --link <code> --gateway <url>` | README one-liner |
 | Open dashboard: `<web>/app/node` | web app route |
+| Check for updates: `GET <web>/downloads/latest.json`, compares `version` with `CFBundleShortVersionString`, "Open download page" → `<web>/download` | same document `mesh-node update` reads via `GET <gateway>/install/latest.json` |
 
 The web origin is `Brand.defaultWebURL` in `Sources/MeshNode/MeshPaths.swift`
 (`https://app.example.com` until there is a real host) and can be changed at runtime in Settings.

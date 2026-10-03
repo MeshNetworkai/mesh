@@ -3,6 +3,8 @@ import { build } from 'esbuild';
 import { chmodSync, readFileSync } from 'node:fs';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+// Release builds stamp the git tag (scripts/release/make-tarball.sh sets MESH_BUILD_VERSION=<tag without v>).
+const version = (process.env.MESH_BUILD_VERSION || '').replace(/^v/, '') || pkg.version;
 
 await build({
   entryPoints: ['src/bin.ts'],
@@ -12,7 +14,7 @@ await build({
   format: 'esm',
   outfile: 'dist/mesh-node.js',
   banner: { js: '#!/usr/bin/env node' },
-  define: { __MESH_VERSION__: JSON.stringify(pkg.version) },
+  define: { __MESH_VERSION__: JSON.stringify(version) },
   sourcemap: false,
   legalComments: 'none',
   logLevel: 'info',

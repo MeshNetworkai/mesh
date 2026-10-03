@@ -134,8 +134,28 @@ struct StatusView: View {
             RowButton(title: model.config == nil ? "Link this Mac" : "Re-link this Mac", subtitle: nil, shortcut: nil) {
                 Windows.showLink(model: model)
             }
+            RowButton(title: "Check for updates", subtitle: updateSubtitle, shortcut: nil) {
+                Task { await model.checkForUpdates() }
+            }
+            .disabled(model.isCheckingUpdate)
+            if case .available? = model.updateOutcome {
+                RowButton(title: "Open download page", subtitle: "DMG, checksum and the Open Anyway steps", shortcut: nil) {
+                    model.openDownloadPage()
+                }
+            }
             RowButton(title: "Settings", subtitle: nil, shortcut: ",") { Windows.showSettings(model: model) }
                 .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+
+    /// One line under "Check for updates": nothing until asked, then the outcome.
+    private var updateSubtitle: String? {
+        if model.isCheckingUpdate { return "Checking\u{2026}" }
+        switch model.updateOutcome {
+        case nil: return nil
+        case .upToDate(let r)?: return "Up to date (\(r.version))"
+        case .available(let r)?: return "Version \(r.version) is available; you have \(AppInfo.version)"
+        case .failed(let why)?: return "Could not check: \(why)"
         }
     }
 
