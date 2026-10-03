@@ -20,9 +20,12 @@ import type {
   MyNode,
   MyPoints,
   MyReferral,
+  NodePledge,
   NodeStats,
   NodesSummary,
   PeriodTotals,
+  PledgeText,
+  PrivacyTier,
   PointsKind,
   PointsRow,
   PointsRules,
@@ -197,6 +200,7 @@ export const mockStats = async (): Promise<Stats> => {
     servedByNetworkPercent: 71.2,
     networkSavingsUsd24h: 412.37,
     showSavings: true,
+    pointsEnabled: false, // mirrors config/tokenomics.json: the programme is built but disabled
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
@@ -268,9 +272,10 @@ export const mockCreateKey = async (input: KeyInput = {}): Promise<CreatedKey> =
   const id = state.nextId++;
   const name = input.name ?? null;
   const spendLimitUsd = input.spendLimitUsd ?? null;
-  state.keys.unshift({ id, masked: mask(key.slice(0, 14)), name, label: name, spendLimitUsd, spentUsd: 0, created_at: now(), revoked: false });
+  const privacy = input.privacy ?? null;
+  state.keys.unshift({ id, masked: mask(key.slice(0, 14)), name, label: name, spendLimitUsd, spentUsd: 0, created_at: now(), revoked: false, privacy });
   state.usage.set(id, { requests: 0, spendUsd: 0, promptTokens: 0, completionTokens: 0 });
-  return { id, key, prefix: key.slice(0, 14), name, spendLimitUsd, note: 'Store this key now; it is not shown again.' };
+  return { id, key, prefix: key.slice(0, 14), name, spendLimitUsd, privacy, note: 'Store this key now; it is not shown again.' };
 };
 
 export const mockRevokeKey = async (id: number) => {
@@ -288,6 +293,7 @@ export const mockUpdateKey = async (id: number, patch: KeyInput): Promise<ApiKey
     k.label = k.name;
   }
   if ('spendLimitUsd' in patch) k.spendLimitUsd = patch.spendLimitUsd ?? null;
+  if ('privacy' in patch) k.privacy = patch.privacy ?? null;
   return { ...k };
 };
 
@@ -334,10 +340,14 @@ const REPLIES = [
   'Short version: credits are a share of trading fees, distributed every hour to wallets holding at least 1,000 MESH. They are spent per request, at the upstream’s cost, and they do not expire while your account is active.',
 ];
 
-/** Fake SSE stream: yields content deltas, then a final chunk with usage + mesh (served by a node at the network price). */
+/**
+ * Fake SSE stream: yields content deltas, then a final chunk with usage + mesh. `trusted` and `network`
+ * are served by a node at the network price; `upstream_zdr` by the (fake) upstream at list price.
+ */
 export async function* mockChatStream(
   model: string,
   signal?: AbortSignal,
+  privacy: PrivacyTier = 'trusted',
 ): AsyncGenerator<{ content?: string; usage?: Usage; model?: string; mesh?: MeshRoute }> {
   await sleep(380);
   const text = REPLIES[Math.floor(Math.random() * REPLIES.length)];
@@ -350,9 +360,18 @@ export async function* mockChatStream(
   const prompt_tokens = 40 + Math.floor(Math.random() * 60);
   const completion_tokens = words.length + 10;
   const total = prompt_tokens + completion_tokens;
-  // Served by a Mesh node: billed the flat network price; the list price is what the upstream would have charged.
   const list = LIST_PRICES[model] ?? DEFAULT_LIST;
   const listMicros = Math.round(prompt_tokens * list.prompt + completion_tokens * list.completion);
+  if (privacy === 'upstream_zdr') {
+    // Skipped the network: list price, no savings, no node.
+    const cost = listMicros / 1e6;
+    state.balanceMicros -= listMicros;
+    state.savings.requests += 1;
+    state.ledger.unshift({ id: 9000 + state.ledger.length, kind: 'usage', deltaUsd: -cost, deltaUsdMicros: -listMicros, ref: `req:${1300 + state.ledger.length} · ${model}`, created_at: now() });
+    yield { usage: { prompt_tokens, completion_tokens, total_tokens: total, cost }, model, mesh: { route: 'openrouter', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' } };
+    return;
+  }
+  // Served by a Mesh node: billed the flat network price; the list price is what the upstream would have charged.
   const costMicros = Math.round(total * NETWORK_USD_PER_M);
   const savedMicros = Math.max(0, listMicros - costMicros);
   const cost = costMicros / 1e6;
@@ -374,11 +393,17 @@ export async function* mockChatStream(
   yield {
     usage: { prompt_tokens, completion_tokens, total_tokens: total, cost },
     model,
-    mesh: { route: 'node', nodeId: 'node_7kd2a1b9pq9f', chip: 'M3 Max', listCostUsd: listMicros / 1e6, savedUsd: savedMicros / 1e6 },
+    mesh: {
+      route: 'node',
+      nodeId: 'node_7kd2a1b9pq9f',
+      chip: 'M3 Max',
+      privacy,
+      servedBy: privacy === 'trusted' ? 'trusted node' : 'network node',
+      listCostUsd: listMicros / 1e6,
+      savedUsd: savedMicros / 1e6,
+    },
   };
 }
-
-export const MOCK_NODE_LABEL = 'node 7Kd2…pQ9f';
 
 // ---------- my nodes (/app/node) ----------
 // `?nodes=0` on the page URL previews the empty state.
@@ -451,6 +476,33 @@ export const mockMyNodes = async (): Promise<MyNode[]> => {
   return MY_NODES.map(({ nodeId, chip, ramGb, models, status, lastSeen, agentVersion, createdAt }) => ({ nodeId, chip, ramGb, models, status, lastSeen, agentVersion, createdAt }));
 };
 
+/** Pledge state per mock node: the M3 Max is gold-staked and already pledged; the M1 is unstaked. */
+const pledges = new Map<string, NodePledge>([
+  ['node_7Kd2pQ9f', { signed: true, signedAt: now() - 86400 * 9, chain: TOKENOMICS.chain, trusted: true, trustedVia: 'stake+pledge', allowlisted: false, requiredStakeTier: 'gold', stakeTier: 'gold', stakeOk: true }],
+  ['node_3Ab8xR2m', { signed: false, signedAt: null, chain: null, trusted: false, trustedVia: null, allowlisted: false, requiredStakeTier: 'gold', stakeTier: 'none', stakeOk: false }],
+]);
+const pledgeOf = (nodeId: string): NodePledge =>
+  pledges.get(nodeId) ?? { signed: false, signedAt: null, chain: null, trusted: false, trustedVia: null, allowlisted: false, requiredStakeTier: 'gold', stakeTier: 'none', stakeOk: false };
+
+export const mockPledge = async (nodeId: string): Promise<PledgeText> => {
+  await sleep(150);
+  return {
+    nodeId,
+    wallet: MOCK_WALLET,
+    message: `mesh.example asks the operator of Mesh node ${nodeId} to pledge:\n${MOCK_WALLET}\n\n1. I will not log, store, forward or inspect the prompts or replies this node processes.\n2. I will run the unmodified Mesh node agent and Ollama, with debug logging off.\n3. I will not run memory-inspection, packet-capture or similar tooling against the node process while it serves jobs.\n4. I understand that breaking this pledge forfeits trusted status and accrued rewards for this node.\n\nURI: https://mesh.example\nVersion: 1\nNode ID: ${nodeId}`,
+    ...pledgeOf(nodeId),
+  };
+};
+
+export const mockSignPledge = async (nodeId: string): Promise<PledgeText> => {
+  await sleep(300);
+  const cur = pledgeOf(nodeId);
+  const next: NodePledge = { ...cur, signed: true, signedAt: now(), chain: TOKENOMICS.chain, trusted: cur.allowlisted || cur.stakeOk, trustedVia: cur.allowlisted ? 'allowlist' : cur.stakeOk ? 'stake+pledge' : null };
+  pledges.set(nodeId, next);
+  const text = await mockPledge(nodeId);
+  return { ...text, ...next };
+};
+
 export const mockNodeStats = async (nodeId: string): Promise<NodeStats> => {
   await sleep(200);
   const n = MY_NODES.find((x) => x.nodeId === nodeId);
@@ -469,6 +521,7 @@ export const mockNodeStats = async (nodeId: string): Promise<NodeStats> => {
     chip: n.chip,
     ramGb: n.ramGb,
     models: n.models,
+    pledge: pledgeOf(nodeId),
   };
 };
 
@@ -902,8 +955,10 @@ export const mockLeaderboard = async (board: Board, withSession: boolean, limit 
   const total = { holders: 1284, nodes: 41, points: 1611, referrers: 318 }[board];
   const rows = boardRows(board, Math.min(limit, total));
   const myRank = { holders: 57, nodes: 12, points: 42, referrers: 61 }[board];
-  const myValue = { holders: 148.22, nodes: 7_210_000, points: 51_452.317, referrers: 3 }[board];
-  const mySecondary = board === 'nodes' ? 4_370 : board === 'referrers' ? 1_912.35 : null;
+  // the mock wallet takes over the row at its rank so its figure sits between its neighbours
+  const slot = rows[myRank - 1] ?? boardRows(board, myRank)[myRank - 1];
+  const myValue = slot.value;
+  const mySecondary = slot.secondary;
   if (myRank <= rows.length) rows[myRank - 1] = { rank: myRank, wallet: '9xQe…Hn4k', value: myValue, secondary: mySecondary };
   return {
     board,

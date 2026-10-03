@@ -200,7 +200,7 @@ export async function runEpoch(
   });
   const wrote = write();
   // Pre-launch points for the credits just distributed (idempotent; see points.ts).
-  if (wrote) syncPoints(db, config.points);
+  if (wrote && config.points.enabled) syncPoints(db, config.points); // points programme: built, disabled by default
 
   return {
     epochStart,

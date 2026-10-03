@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { bearer, verifySession } from '../auth.js';
 import { requireAdmin, requireSession, sessionOf, type AppContext, type Session } from '../context.js';
@@ -35,14 +35,29 @@ const BOARD_META: Record<Board, { unit: string; label: string; secondaryLabel: s
   referrers: { unit: 'referrals', label: 'Wallets referred', secondaryLabel: 'points' },
 };
 
+/**
+ * Status: built, disabled. With `points.enabled: false` (config/tokenomics.json) every points,
+ * leaderboard and referral route answers 404 as if it did not exist, so the programme can be
+ * switched back on without a deploy of new code. Nothing here is deleted; see docs/POINTS.md.
+ */
+/** onRequest hook: 404 when the programme is off. Runs before auth so a disabled route leaks nothing. */
+export function requirePointsEnabled(ctx: AppContext) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    if (ctx.config.points.enabled) return;
+    reply.code(404).send({ error: 'not_found', message: `Unknown route ${req.method} ${req.url}`, statusCode: 404 });
+    return reply;
+  };
+}
+
 export async function pointsRoutes(app: FastifyInstance, ctx: AppContext) {
   const cfg = () => ctx.config.points;
+  const gate = requirePointsEnabled(ctx);
 
   /** Public: the rules a wallet earns under (drives the "how to earn" tooltip). */
-  app.get('/points/rules', async () => ({ ...pointsRules(cfg()), generatedAt: nowSec() }));
+  app.get('/points/rules', { onRequest: gate }, async () => ({ ...pointsRules(cfg()), generatedAt: nowSec() }));
 
   /** The signed-in wallet's points: balance, 24h delta, today vs cap, split by kind, recent rows. */
-  app.get('/me/points', { preHandler: requireSession(ctx) }, async (req) => {
+  app.get('/me/points', { onRequest: gate, preHandler: requireSession(ctx) }, async (req) => {
     const { wallet } = sessionOf(req);
     syncPoints(ctx.db, cfg());
     return pointsSummary(ctx.db, cfg(), wallet);
@@ -66,7 +81,7 @@ export async function pointsRoutes(app: FastifyInstance, ctx: AppContext) {
   const BoardParams = z.object({ board: z.enum(['holders', 'nodes', 'points', 'referrers']) });
   const BoardQuery = z.object({ limit: z.coerce.number().int().min(1).max(LEADERBOARD_MAX_LIMIT).default(LEADERBOARD_MAX_LIMIT) });
 
-  app.get('/leaderboard/:board', async (req, reply) => {
+  app.get('/leaderboard/:board', { onRequest: gate }, async (req, reply) => {
     const params = BoardParams.safeParse(req.params ?? {});
     if (!params.success) return reply.code(404).send({ error: 'not_found', message: `Unknown board. One of: ${BOARDS.join(', ')}`, statusCode: 404 });
     const query = BoardQuery.safeParse(req.query ?? {});
@@ -101,6 +116,7 @@ export async function pointsRoutes(app: FastifyInstance, ctx: AppContext) {
     /** Optional idempotency key; a repeat with the same ref is a no-op. */
     ref: z.string().min(1).max(128).optional(),
   });
+  // Admin adjustments stay reachable while disabled so a ledger can be corrected before a re-enable.
   app.post('/admin/points/adjust', { preHandler: requireAdmin(ctx) }, async (req, reply) => {
     const parsed = AdjustBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });

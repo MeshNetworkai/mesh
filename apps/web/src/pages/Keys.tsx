@@ -6,7 +6,30 @@ import { fmtCost, fmtDate, fmtInt } from '../lib/format';
 import { useCopy, useKeys } from '../lib/hooks';
 import { errorMessage, useToast } from '../lib/toast';
 import { forgetSecret, rememberSecret } from '../lib/keystore';
-import type { ApiKey, CreatedKey, KeyUsage } from '../lib/types';
+import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type ApiKey, type CreatedKey, type KeyUsage, type PrivacyTier } from '../lib/types';
+
+/** '' = gateway default (trusted). */
+type PrivacyChoice = PrivacyTier | '';
+const asPrivacy = (v: string): PrivacyChoice => ((PRIVACY_TIERS as string[]).includes(v) ? (v as PrivacyTier) : '');
+
+function PrivacySelect({ id, value, onChange }: { id: string; value: PrivacyChoice; onChange: (v: PrivacyChoice) => void }) {
+  return (
+    <select id={id} className="input sm" value={value} onChange={(e) => onChange(asPrivacy(e.target.value))} title={value ? PRIVACY_TIER_INFO[value].blurb : 'Use the gateway default (trusted nodes)'}>
+      <option value="">Gateway default (trusted)</option>
+      {PRIVACY_TIERS.map((t) => (
+        <option key={t} value={t}>
+          {PRIVACY_TIER_INFO[t].label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function privacyCell(k: ApiKey) {
+  const p = k.privacy ?? null;
+  if (!p) return <span className="muted" title="Requests without an explicit tier use the gateway default: trusted nodes">default · trusted</span>;
+  return <span title={PRIVACY_TIER_INFO[p].blurb}>{PRIVACY_TIER_INFO[p].label}</span>;
+}
 
 /** GET /keys/:id/usage — all-time requests + 24h spend, with a 7d/top-model tooltip. */
 function KeyUsageCell({ id, bump }: { id: number; bump: number }) {
@@ -92,6 +115,7 @@ export function Keys() {
   const keys = useKeys();
   const [label, setLabel] = useState('');
   const [newLimit, setNewLimit] = useState('');
+  const [newPrivacy, setNewPrivacy] = useState<PrivacyChoice>('');
   const [creating, setCreating] = useState(false);
   const [usageBump, setUsageBump] = useState(0);
   const [created, setCreated] = useState<CreatedKey | null>(null);
@@ -104,11 +128,12 @@ export function Keys() {
     if (!token) return;
     setCreating(true);
     try {
-      const res = await api.createKey(token, { name: label.trim() || undefined, spendLimitUsd: parseLimit(newLimit) });
+      const res = await api.createKey(token, { name: label.trim() || undefined, spendLimitUsd: parseLimit(newLimit), privacy: newPrivacy || undefined });
       rememberSecret(res.id, res.key);
       setCreated(res);
       setLabel('');
       setNewLimit('');
+      setNewPrivacy('');
       await keys.reload();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -151,6 +176,10 @@ export function Keys() {
         <div className="field" style={{ flex: '0 1 180px' }}>
           <label htmlFor="newlimit">Spend limit · USD · optional</label>
           <input id="newlimit" className="input mono" inputMode="decimal" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} placeholder="none" />
+        </div>
+        <div className="field" style={{ flex: '0 1 220px' }}>
+          <label htmlFor="newprivacy">Default privacy</label>
+          <PrivacySelect id="newprivacy" value={newPrivacy} onChange={setNewPrivacy} />
         </div>
         <button className="btn accent" type="submit" disabled={creating || !token} style={{ alignSelf: 'end', height: 46 }}>
           {creating ? <Spinner /> : null}
@@ -195,6 +224,7 @@ export function Keys() {
                 <th>Name</th>
                 <th>Key</th>
                 <th>Created</th>
+                <th>Privacy</th>
                 <th>Usage</th>
                 <th className="num">Spent / limit</th>
                 <th aria-label="Actions" />
@@ -216,6 +246,7 @@ export function Keys() {
                     </td>
                     <td className="mono">{k.masked}</td>
                     <td className="mono">{fmtDate(k.created_at)}</td>
+                    <td style={{ fontSize: 13 }}>{privacyCell(k)}</td>
                     <td className="mono" style={{ fontSize: 13 }}>
                       <KeyUsageCell id={k.id} bump={usageBump} />
                     </td>
@@ -248,8 +279,10 @@ export function Keys() {
       ) : null}
 
       <p className="small muted">
-        Names and spend limits are stored by the gateway. A spend limit is a lifetime cap on what the key can spend; requests
-        over it get <span className="mono">429 key_spend_limit_reached</span> until you raise or clear it.
+        Names, spend limits and the default privacy tier are stored by the gateway. A spend limit is a lifetime cap on what the key can spend;
+        requests over it get <span className="mono">429 key_spend_limit_reached</span> until you raise or clear it. The default privacy tier
+        applies when a request sends neither <span className="mono">X-Mesh-Privacy</span> nor <span className="mono">mesh.privacy</span>; the
+        gateway default is trusted nodes.
       </p>
 
       {created ? <RevealModal created={created} onClose={() => setCreated(null)} /> : null}
@@ -257,11 +290,12 @@ export function Keys() {
         <EditModal
           k={editing}
           onClose={() => setEditing(null)}
-          onSave={async (newName, limit) => {
+          onSave={async (newName, limit, privacy) => {
             if (!token) return;
             const patch: api.KeyInput = {};
             if (newName !== (editing.name ?? '')) patch.name = newName || null;
             if (limit !== editing.spendLimitUsd) patch.spendLimitUsd = limit;
+            if (privacy !== (editing.privacy ?? '')) patch.privacy = privacy || null;
             if (Object.keys(patch).length === 0) {
               setEditing(null);
               return;
@@ -290,9 +324,10 @@ function parseLimit(raw: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function EditModal({ k, onClose, onSave }: { k: ApiKey; onClose: () => void; onSave: (name: string, limit: number | null) => Promise<void> }) {
+function EditModal({ k, onClose, onSave }: { k: ApiKey; onClose: () => void; onSave: (name: string, limit: number | null, privacy: PrivacyChoice) => Promise<void> }) {
   const [label, setLabel] = useState(k.name ?? '');
   const [limit, setLimit] = useState(k.spendLimitUsd !== null ? String(k.spendLimitUsd) : '');
+  const [privacy, setPrivacy] = useState<PrivacyChoice>(k.privacy ?? '');
   const [saving, setSaving] = useState(false);
   return (
     <Modal title="Edit key" onClose={onClose}>
@@ -302,7 +337,7 @@ function EditModal({ k, onClose, onSave }: { k: ApiKey; onClose: () => void; onS
         onSubmit={async (e) => {
           e.preventDefault();
           setSaving(true);
-          await onSave(label.trim(), parseLimit(limit));
+          await onSave(label.trim(), parseLimit(limit), privacy);
           setSaving(false);
         }}
       >
@@ -313,6 +348,11 @@ function EditModal({ k, onClose, onSave }: { k: ApiKey; onClose: () => void; onS
         <div className="field">
           <label htmlFor="elimit">Spend limit · USD · lifetime · blank for none</label>
           <input id="elimit" className="input mono" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="0.50" />
+        </div>
+        <div className="field">
+          <label htmlFor="eprivacy">Default privacy · when a request does not pick a tier</label>
+          <PrivacySelect id="eprivacy" value={privacy} onChange={setPrivacy} />
+          <p className="small muted" style={{ margin: '4px 0 0' }}>{privacy ? PRIVACY_TIER_INFO[privacy].blurb : PRIVACY_TIER_INFO.trusted.blurb}</p>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, platform, userInfo } from 'node:os';
 import { dirname } from 'node:path';
+import { OLLAMA_PRIVACY_ENV } from './ollama.js';
 import { LAUNCHD_LABEL, launchAgentPlist, paths } from './paths.js';
 
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -44,6 +45,9 @@ ${args.map((a) => `    <string>${xml(a)}</string>`).join('\n')}
     <string>${xml(opts.home)}</string>
     <key>MESH_SERVICE</key>
     <string>1</string>
+${Object.entries(OLLAMA_PRIVACY_ENV)
+  .map(([k, v]) => `    <key>${xml(k)}</key>\n    <string>${xml(v)}</string>`)
+  .join('\n')}
   </dict>
 </dict>
 </plist>

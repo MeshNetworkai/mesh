@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { claimReferral, referralSummary, syncPoints, truncateWallet, type ClaimError } from '../points.js';
+import { requirePointsEnabled } from './points.js';
 
 const CLAIM_ERRORS: Record<ClaimError, { status: number; message: string }> = {
   invalid_code: { status: 400, message: 'Referral codes are 6 letters or digits.' },
@@ -26,9 +27,11 @@ export function referralLink(env: AppContext['env'], code: string): string {
 
 export async function referralRoutes(app: FastifyInstance, ctx: AppContext) {
   const cfg = () => ctx.config.points;
+  // Status: built, disabled — 404 for every referral route while points.enabled is false (see routes/points.ts).
+  const gate = requirePointsEnabled(ctx);
 
   /** The signed-in wallet's code, share link and what it has earned from referrals. */
-  app.get('/me/referral', { preHandler: requireSession(ctx) }, async (req) => {
+  app.get('/me/referral', { onRequest: gate, preHandler: requireSession(ctx) }, async (req) => {
     const { wallet } = sessionOf(req);
     syncPoints(ctx.db, cfg());
     const s = referralSummary(ctx.db, cfg(), wallet);
@@ -51,7 +54,7 @@ export async function referralRoutes(app: FastifyInstance, ctx: AppContext) {
   /** Bind the signed-in wallet to a referrer, once. */
   app.post(
     '/referrals/claim',
-    { preHandler: requireSession(ctx), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    { onRequest: gate, preHandler: requireSession(ctx), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const parsed = ClaimBody.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });

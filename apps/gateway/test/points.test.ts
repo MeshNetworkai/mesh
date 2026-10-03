@@ -1,5 +1,5 @@
 import { MockAdapter } from '@mesh/chain-adapter';
-import { parseTokenomics } from '@mesh/config';
+import { parseTokenomics, type TokenomicsConfig } from '@mesh/config';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { nowSec } from '../src/db.js';
 import { runEpoch } from '../src/jobs/distribute.js';
@@ -23,15 +23,19 @@ import {
 import { referralLink } from '../src/routes/referrals.js';
 import { ADMIN, memDb, testConfig, testServer } from './helpers.js';
 
-const cfg = testConfig.points;
+// The programme is built but disabled in config/tokenomics.json (`points.enabled: false`). These
+// tests exercise it switched on through a config override; the last block checks the off state.
+const pointsOn: TokenomicsConfig = { ...testConfig, points: { ...testConfig.points, enabled: true } };
+const cfg = pointsOn.points;
 const DAY = 86_400;
 
 describe('points: config', () => {
-  it('config defaults match the programme and are read from tokenomics.json', () => {
+  it('config defaults match the programme, disabled by default, and tokenomics.json ships it off', () => {
     const { points: _omit, ...withoutPoints } = testConfig as typeof testConfig & { points?: unknown };
     const parsed = parseTokenomics(withoutPoints);
-    expect(parsed.points).toEqual({ enabled: true, perUsdCredits: 100, perUsdSpent: 50, perNodeTokenK: 1, perReferralSignup: 500, referralShareBps: 1000, dailyCapPerWallet: 50_000 });
-    expect(cfg).toEqual(parsed.points);
+    expect(parsed.points).toEqual({ enabled: false, perUsdCredits: 100, perUsdSpent: 50, perNodeTokenK: 1, perReferralSignup: 500, referralShareBps: 1000, dailyCapPerWallet: 50_000 });
+    expect(testConfig.points).toEqual(parsed.points);
+    expect(testConfig.points.enabled).toBe(false);
     expect(() => parseTokenomics({ ...testConfig, points: { referralShareBps: 20_000 } })).toThrow();
   });
 
@@ -108,11 +112,11 @@ describe('points: awarding', () => {
     const db = memDb();
     const adapter = new MockAdapter({ holders: { alice: 5_000, bob: 5_000 } });
     adapter.pushFees(10); // $10 fees -> $5 to holders -> $2.50 each -> 250 points each
-    await runEpoch({ db, adapter, config: testConfig }, 7200);
+    await runEpoch({ db, adapter, config: pointsOn }, 7200);
     expect(pointsBalance(db, 'alice')).toBe(250);
     expect(pointsBalance(db, 'bob')).toBe(250);
     adapter.pushFees(10);
-    await runEpoch({ db, adapter, config: testConfig }, 7200); // skipped
+    await runEpoch({ db, adapter, config: pointsOn }, 7200); // skipped
     syncPoints(db, cfg);
     expect(pointsBalance(db, 'alice')).toBe(250);
     const s = pointsSummary(db, cfg, 'alice');
@@ -222,11 +226,15 @@ describe('points: HTTP', () => {
   const login = async (wallet: string) => (await app.inject({ method: 'POST', url: '/admin/dev-login', headers: ADMIN, payload: { wallet } })).json().token as string;
 
   beforeAll(async () => {
-    ({ app } = await testServer({ holders: { alice: 75_000, bob: 25_000 } }));
+    ({ app } = await testServer({ holders: { alice: 75_000, bob: 25_000 }, config: pointsOn }));
     alice = await login('alice');
     bob = await login('bob');
   });
   afterAll(async () => app.close());
+
+  it('GET /stats reports pointsEnabled: true when switched on', async () => {
+    expect((await app.inject({ method: 'GET', url: '/stats' })).json().pointsEnabled).toBe(true);
+  });
 
   it('GET /points/rules is public; /me/points and /me/referral need a session', async () => {
     const rules = await app.inject({ method: 'GET', url: '/points/rules' });
@@ -361,5 +369,58 @@ describe('points: HTTP', () => {
     expect(s.dailyCap).toBe(50_000);
     const big = awardPoints(app.ctx.db, cfg, { wallet: 'bob', kind: 'credits', points: 60_000, ref: 'whale', ts: now });
     expect(big).toMatchObject({ points: 48_750, capped: true });
+  });
+});
+
+describe('points: disabled (the shipped default)', () => {
+  type App = Awaited<ReturnType<typeof testServer>>['app'];
+  let app: App;
+  const auth = (jwt: string) => ({ authorization: `Bearer ${jwt}` });
+  beforeAll(async () => {
+    ({ app } = await testServer({ holders: { alice: 75_000, bob: 25_000 } })); // testConfig: points.enabled false
+  });
+  afterAll(async () => app.close());
+
+  it('/stats says pointsEnabled: false', async () => {
+    expect((await app.inject({ method: 'GET', url: '/stats' })).json().pointsEnabled).toBe(false);
+  });
+
+  it('every points, leaderboard and referral route is 404, before auth, with the generic not-found body', async () => {
+    const alice = (await app.inject({ method: 'POST', url: '/admin/dev-login', headers: ADMIN, payload: { wallet: 'alice' } })).json().token as string;
+    const routes: Array<{ method: 'GET' | 'POST'; url: string; headers?: Record<string, string>; payload?: unknown }> = [
+      { method: 'GET', url: '/points/rules' },
+      { method: 'GET', url: '/leaderboard/points' },
+      { method: 'GET', url: '/leaderboard/holders?limit=5', headers: auth(alice) },
+      { method: 'GET', url: '/me/points' },
+      { method: 'GET', url: '/me/points', headers: auth(alice) },
+      { method: 'GET', url: '/me/referral', headers: auth(alice) },
+      { method: 'POST', url: '/referrals/claim', headers: auth(alice), payload: { code: 'ABCDEF' } },
+    ];
+    for (const r of routes) {
+      const res = await app.inject(r);
+      expect(res.statusCode, `${r.method} ${r.url}`).toBe(404);
+      expect(res.json()).toMatchObject({ error: 'not_found', statusCode: 404 });
+      expect(res.json().message).toContain('Unknown route');
+    }
+  });
+
+  it('awards nothing: a chat completion and an epoch write no points rows', async () => {
+    const alice = (await app.inject({ method: 'POST', url: '/admin/dev-login', headers: ADMIN, payload: { wallet: 'alice' } })).json().token as string;
+    await app.inject({ method: 'POST', url: '/admin/starter-credit', headers: ADMIN, payload: { wallet: 'alice', amountUsd: 1 } });
+    const key = (await app.inject({ method: 'POST', url: '/keys', headers: auth(alice), payload: { label: 't' } })).json().key as string;
+    expect((await app.inject({ method: 'POST', url: '/v1/chat/completions', headers: auth(key), payload: { model: 'mesh/mock', messages: [{ role: 'user', content: 'hi' }] } })).statusCode).toBe(200);
+    (app.ctx.adapter as MockAdapter).pushFees(100);
+    expect((await app.inject({ method: 'POST', url: '/admin/run-epoch', headers: ADMIN, payload: { epochStart: 3600 } })).statusCode).toBe(200);
+    expect((app.ctx.db.prepare('SELECT COUNT(*) AS n FROM points_ledger').get() as { n: number }).n).toBe(0);
+    expect(pointsBalance(app.ctx.db, 'alice')).toBe(0);
+    // the ledger itself still works and is picked up once re-enabled
+    expect(syncPoints(app.ctx.db, cfg).entries).toBeGreaterThan(0);
+    expect(pointsBalance(app.ctx.db, 'alice')).toBeGreaterThan(0);
+  });
+
+  it('admin adjustments remain available (audited) so a ledger can be fixed before a re-enable', async () => {
+    const r = await app.inject({ method: 'POST', url: '/admin/points/adjust', headers: ADMIN, payload: { wallet: 'bob', points: 10, note: 'pre-enable fix' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ wallet: 'bob', points: 10, applied: true });
   });
 });

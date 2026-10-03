@@ -42,7 +42,7 @@ export function AdminPage() {
             </button>
           ) : null}
         </div>
-        {authed === null ? <Skeleton h={120} /> : authed ? <AdminConsole token={COOKIE_SESSION} onUnauthorized={() => setAuthed(false)} /> : <TokenGate onAuthed={() => setAuthed(true)} />}
+        {authed === null ? <Skeleton w="100%" h="120px" /> : authed ? <AdminConsole token={COOKIE_SESSION} onUnauthorized={() => setAuthed(false)} /> : <TokenGate onAuthed={() => setAuthed(true)} />}
       </div>
     </div>
   );

@@ -67,6 +67,16 @@ export function useStats(pollMs = 30_000): Async<Stats> {
   return useAsync(api.getStats, [], pollMs);
 }
 
+/**
+ * Points / leaderboard / referral programme flag from GET /stats. Built but disabled by default
+ * (config/tokenomics.json `points.enabled`), so every points surface stays hidden until the
+ * gateway confirms it is on; no points request is made while it is off.
+ */
+export function usePointsEnabled(pollMs = 60_000): boolean {
+  const { data } = useStats(pollMs);
+  return data?.pointsEnabled === true;
+}
+
 /** Public epoch history (GET /epochs), newest first. */
 export function useEpochs(limit = 48, pollMs = 60_000): Async<EpochSummary[]> {
   return useAsync(() => api.getEpochs(limit), [limit], pollMs);

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "dev:mock": "VITE_MOCK=1 vite",
     "screenshots": "node scripts/screenshots.mjs",
+    "og": "node scripts/og.mjs",
     "e2e": "node -e \"require('fs').rmSync('e2e/.tmp',{recursive:true,force:true})\" && playwright test",
     "e2e:ui": "playwright test --ui"
   },

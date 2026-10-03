@@ -38,6 +38,8 @@ export const STORAGE = {
   theme: 'mesh.theme',
   chatKey: 'mesh.chat.key',
   chatModel: 'mesh.chat.model',
+  /** Privacy tier picked in Chat (docs/PRIVACY.md); defaults to trusted. */
+  chatPrivacy: 'mesh.chat.privacy',
   /** Referral code captured from a `?ref=` landing link, claimed from the dashboard once signed in. */
   referralCode: 'mesh.ref',
 };

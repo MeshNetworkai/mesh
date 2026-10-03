@@ -160,6 +160,8 @@ export function computeStats(ctx: AppContext) {
     /** Network credits: USD saved across all wallets in the last 24h by Mesh nodes serving requests at the network price. */
     networkSavingsUsd24h: networkSavingsUsd24h(db, now),
     showSavings: ctx.config.requestPricing.showSavings,
+    /** Points/leaderboard/referral programme: built but disabled by default; the web app hides every points surface when false. */
+    pointsEnabled: ctx.config.points.enabled,
     nodeRewardUsdPerMTokens: ctx.config.nodeRewards.usdPerMTokens,
     series24h: hourlySeries(ctx, now),
     epochSeconds: ctx.config.epochSeconds,

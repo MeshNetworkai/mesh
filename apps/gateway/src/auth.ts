@@ -119,6 +119,33 @@ export function registerMessage(p: LoginMessageParts & { nodeId?: string | null 
   return lines.join('\n');
 }
 
+/** The commitments in the operator pledge, verbatim (docs/PRIVACY.md keeps the same text). */
+export const PLEDGE_COMMITMENTS = [
+  'I will not log, store, forward or inspect the prompts or replies this node processes.',
+  'I will run the unmodified Mesh node agent and Ollama, with debug logging off.',
+  'I will not run memory-inspection, packet-capture or similar tooling against the node process while it serves jobs.',
+  'I understand that breaking this pledge forfeits trusted status and accrued rewards for this node.',
+] as const;
+
+/**
+ * Operator pledge a node owner signs to serve `trusted` jobs (POST /nodes/:id/pledge). Bound to the
+ * wallet and node id so a signature cannot be moved to another machine; deliberately nonce-free so
+ * the text is stable, reviewable and identical to docs/PRIVACY.md. Its first line differs from the
+ * sign-in and registration messages, so no signature can be replayed as another.
+ */
+export function pledgeMessage(p: { domain: string; uri: string; wallet: string; nodeId: string }): string {
+  return [
+    `${p.domain} asks the operator of Mesh node ${p.nodeId} to pledge:`,
+    p.wallet,
+    '',
+    ...PLEDGE_COMMITMENTS.map((c, i) => `${i + 1}. ${c}`),
+    '',
+    `URI: ${p.uri}`,
+    'Version: 1',
+    `Node ID: ${p.nodeId}`,
+  ].join('\n');
+}
+
 /** Constant-time string equality (hashes both sides so lengths never leak). */
 export function safeEqual(a: string | undefined | null, b: string | undefined | null): boolean {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -292,12 +319,14 @@ export interface ApiKeyRow {
   spent_usd_micros: number;
   created_at: number;
   revoked: number;
+  /** Default privacy tier for requests with this key (docs/PRIVACY.md); null = gateway default. */
+  privacy: string | null;
 }
 
 export function createApiKey(
   db: Db,
   wallet: string,
-  opts: { name?: string | null; spendLimitUsdMicros?: number | null; pepper?: string | null } | string = {},
+  opts: { name?: string | null; spendLimitUsdMicros?: number | null; pepper?: string | null; privacy?: string | null } | string = {},
 ): { id: number; key: string; prefix: string; name: string | null } {
   const o = typeof opts === 'string' ? { name: opts } : opts;
   const name = o.name ?? null;
@@ -305,10 +334,10 @@ export function createApiKey(
   const prefix = key.slice(0, API_KEY_PREFIX.length + 6);
   const res = db
     .prepare(
-      `INSERT INTO api_keys (key_hash, key_prefix, wallet, label, name, spend_limit_usd_micros, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO api_keys (key_hash, key_prefix, wallet, label, name, spend_limit_usd_micros, created_at, privacy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(hashApiKey(key, o.pepper), prefix, wallet, name, name, o.spendLimitUsdMicros ?? null, nowSec());
+    .run(hashApiKey(key, o.pepper), prefix, wallet, name, name, o.spendLimitUsdMicros ?? null, nowSec(), o.privacy ?? null);
   return { id: Number(res.lastInsertRowid), key, prefix, name };
 }
 
@@ -324,13 +353,17 @@ export function updateApiKey(
   db: Db,
   wallet: string,
   id: number,
-  patch: { name?: string | null; spendLimitUsdMicros?: number | null },
+  patch: { name?: string | null; spendLimitUsdMicros?: number | null; privacy?: string | null },
 ): ApiKeyRow | null {
   const sets: string[] = [];
   const args: unknown[] = [];
   if ('name' in patch) {
     sets.push('name = ?', 'label = ?');
     args.push(patch.name ?? null, patch.name ?? null);
+  }
+  if ('privacy' in patch) {
+    sets.push('privacy = ?');
+    args.push(patch.privacy ?? null);
   }
   if ('spendLimitUsdMicros' in patch) {
     sets.push('spend_limit_usd_micros = ?');
@@ -383,6 +416,7 @@ export function publicKeyView(k: ApiKeyRow) {
     spentUsd: k.spent_usd_micros / 1_000_000,
     created_at: k.created_at,
     revoked: k.revoked === 1,
+    privacy: k.privacy ?? null,
   };
 }
 

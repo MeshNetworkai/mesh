@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { PUBLIC_API_URL, TOKENOMICS } from '../config';
-import { useTheme } from '../lib/hooks';
+import { usePointsEnabled, useTheme } from '../lib/hooks';
 
 /** Social links: placeholders until the accounts exist (docs/BRAND.md lists them). */
 const SOCIAL: Array<{ label: string; href: string }> = [
@@ -8,7 +8,7 @@ const SOCIAL: Array<{ label: string; href: string }> = [
   { label: 'Telegram', href: 'https://t.me/mesh_placeholder' },
 ];
 
-const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string; href?: string }> }> = [
+const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string; href?: string; points?: boolean }> }> = [
   {
     title: 'Product',
     links: [
@@ -23,6 +23,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
     links: [
       { label: 'Stats', to: '/app/stats' },
       { label: 'Report', to: '/report' },
+      { label: 'Leaderboard', to: '/leaderboard', points: true }, // hidden while the points programme is disabled
       { label: 'Epochs', href: `${PUBLIC_API_URL}/epochs` },
       { label: 'Health', href: `${PUBLIC_API_URL}/health` },
     ],
@@ -47,6 +48,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
 
 export function Footer() {
   const [theme, setTheme] = useTheme();
+  const pointsEnabled = usePointsEnabled();
   const next = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark';
   return (
     <footer className="site">
@@ -74,7 +76,7 @@ export function Footer() {
         {COLUMNS.map((c) => (
           <div className="site-col" key={c.title}>
             <span className="eyebrow">{c.title}</span>
-            {c.links.map((l) =>
+            {c.links.filter((l) => !l.points || pointsEnabled).map((l) =>
               l.to ? (
                 <Link key={l.label} to={l.to}>
                   {l.label}

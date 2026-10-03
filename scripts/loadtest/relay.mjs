@@ -213,7 +213,9 @@ async function chat(base, apiKey, i) {
   try {
     const res = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      // The fake nodes are unstaked and unpledged, so they are not `trusted` (the default privacy tier,
+      // docs/PRIVACY.md): ask for `network` explicitly or every request would fall through to the upstream.
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', 'x-mesh-privacy': 'network' },
       body: JSON.stringify({ model: opts.model, stream: true, max_tokens: opts.tokens, messages: [{ role: 'user', content: `load test request ${i}` }] }),
     });
     out.status = res.status;

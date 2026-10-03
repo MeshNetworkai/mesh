@@ -63,6 +63,8 @@ export interface Stats {
   /** USD saved across all wallets in the last 24h by Mesh nodes serving at the network price. */
   networkSavingsUsd24h?: number;
   showSavings?: boolean;
+  /** Points / leaderboard / referral programme is live. Built but disabled by default; every points surface is hidden when false. */
+  pointsEnabled?: boolean;
   series24h: HourPoint[];
   epochSeconds: number;
   upstream: string;
@@ -92,6 +94,20 @@ export interface LedgerRow {
   created_at: number;
 }
 
+/** Request privacy tiers (docs/PRIVACY.md). */
+export type PrivacyTier = 'trusted' | 'network' | 'upstream_zdr';
+export const PRIVACY_TIERS: PrivacyTier[] = ['trusted', 'network', 'upstream_zdr'];
+
+/** One line per tier, shown wherever a tier is picked. */
+export const PRIVACY_TIER_INFO: Record<PrivacyTier, { label: string; blurb: string }> = {
+  trusted: { label: 'Trusted nodes', blurb: 'Only Macs whose operator staked gold and signed the pledge, or that we allowlisted. Falls back to ZDR upstream, never to other nodes.' },
+  network: { label: 'Any network node', blurb: 'Any online Mesh node. Cheapest and fastest; the operator could in principle read the plaintext while serving it.' },
+  upstream_zdr: { label: 'Upstream (ZDR)', blurb: 'Skip the network: OpenRouter with zero-data-retention providers only. Billed at list price.' },
+};
+
+/** `mesh.servedBy` label from the final chunk. */
+export type ServedBy = 'trusted node' | 'network node' | 'upstream (ZDR)' | 'upstream';
+
 export interface ApiKey {
   id: number;
   masked: string;
@@ -104,6 +120,8 @@ export interface ApiKey {
   spentUsd: number;
   created_at: number;
   revoked: boolean;
+  /** Default privacy tier for requests with this key; null = gateway default (trusted). */
+  privacy?: PrivacyTier | null;
 }
 
 /** GET /me.savings — "network credits": what the wallet saved because Mesh nodes served its requests at the network price. */
@@ -134,6 +152,7 @@ export interface CreatedKey {
   prefix: string;
   name: string | null;
   spendLimitUsd: number | null;
+  privacy?: PrivacyTier | null;
   note?: string;
 }
 
@@ -170,11 +189,15 @@ export interface Usage {
 
 /** `mesh` object on the final chunk / JSON body of a chat completion served by a Mesh node. */
 export interface MeshRoute {
-  route: 'node';
-  nodeId: string;
+  /** `node` when a Mesh node served it, else the upstream's name. */
+  route: 'node' | 'openrouter' | 'mock' | string;
+  nodeId?: string;
   chip?: string | null;
   jobId?: string;
   attempt?: number;
+  /** Tier the reply was actually served under, and the human label for it (docs/PRIVACY.md). */
+  privacy?: PrivacyTier | string;
+  servedBy?: ServedBy | string;
   /** What the upstream would have charged at list price (USD). Present when requestPricing.showSavings. */
   listCostUsd?: number;
   savedUsd?: number;
@@ -232,6 +255,27 @@ export interface MyNode {
   createdAt?: number | null;
 }
 
+/** Operator pledge status for a node (GET /nodes/:id → pledge, GET/POST /nodes/:id/pledge). */
+export interface NodePledge {
+  signed: boolean;
+  signedAt: number | null;
+  chain?: string | null;
+  trusted: boolean;
+  trustedVia: 'allowlist' | 'stake+pledge' | null;
+  allowlisted: boolean;
+  /** Stake tier name needed (with the pledge) to be trusted; null when the gateway has no such tier. */
+  requiredStakeTier: string | null;
+  stakeTier: string | null;
+  stakeOk: boolean;
+}
+
+/** GET /nodes/:id/pledge — the exact text the owner signs plus the current status. */
+export interface PledgeText extends NodePledge {
+  nodeId: string;
+  wallet: string;
+  message: string;
+}
+
 /** GET /nodes/:id — per-node stats, node token or session bearer. */
 export interface NodeStats {
   nodeId?: string;
@@ -245,6 +289,7 @@ export interface NodeStats {
   chip?: string | null;
   ramGb?: number | null;
   models?: string[];
+  pledge?: NodePledge;
 }
 
 /** What the Node page renders: /me/nodes row merged with its /nodes/:id stats (null while loading or when unavailable). */

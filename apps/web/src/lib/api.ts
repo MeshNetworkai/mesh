@@ -22,7 +22,9 @@ import type {
   NodeStats,
   NodesSummary,
   NonceResponse,
+  PledgeText,
   PointsRules,
+  PrivacyTier,
   RegisterChallenge,
   Report,
   RevokeKeyResult,
@@ -267,12 +269,15 @@ export const listKeys = async (token: string): Promise<ApiKey[]> =>
 export interface KeyInput {
   name?: string | null;
   spendLimitUsd?: number | null;
+  /** Default privacy tier for the key; null clears it (gateway default). */
+  privacy?: PrivacyTier | null;
 }
 
 export const createKey = (token: string, input: KeyInput = {}): Promise<CreatedKey> => {
   const body: KeyInput = {};
   if (input.name) body.name = input.name;
   if (input.spendLimitUsd != null) body.spendLimitUsd = input.spendLimitUsd;
+  if (input.privacy) body.privacy = input.privacy;
   return MOCK ? mock.mockCreateKey(body) : sessionRequest<CreatedKey>('/keys', { method: 'POST', body: JSON.stringify(body) }, token);
 };
 
@@ -320,6 +325,14 @@ export const createLinkCode = (token: string, input: { nonce: string; signature:
 export const getNodeStats = (token: string, nodeId: string): Promise<NodeStats> =>
   MOCK ? mock.mockNodeStats(nodeId) : sessionRequest<NodeStats>(`/nodes/${encodeURIComponent(nodeId)}`, {}, token);
 
+/** GET /nodes/:id/pledge — the operator pledge text to sign and the node's trusted status (owner session). */
+export const getPledge = (token: string, nodeId: string): Promise<PledgeText> =>
+  MOCK ? mock.mockPledge(nodeId) : sessionRequest<PledgeText>(`/nodes/${encodeURIComponent(nodeId)}/pledge`, {}, token);
+
+/** POST /nodes/:id/pledge — store the owner's signature over the pledge; returns the new status. */
+export const signPledge = (token: string, nodeId: string, input: { signature: string; chain: 'solana' | 'evm' }): Promise<PledgeText> =>
+  MOCK ? mock.mockSignPledge(nodeId) : sessionRequest<PledgeText>(`/nodes/${encodeURIComponent(nodeId)}/pledge`, { method: 'POST', body: JSON.stringify(input) }, token);
+
 // ---------- OpenAI-compatible ----------
 
 export const listModels = async (apiKey: string): Promise<Model[]> => {
@@ -337,9 +350,17 @@ export interface ChatResult {
   usage: Usage | null;
   model: string;
   latencyMs: number;
+  /** "trusted node 7Kd2…pQ9f", "network node …", "upstream (ZDR)" — from the final chunk's `mesh`. */
   servedBy: string;
-  /** Set when a Mesh node served the request (carries listCostUsd / savedUsd when savings are shown). */
+  /** The final chunk's `mesh` (route, privacy tier, served-by label; node fields and savings when a node served it). */
   mesh: MeshRoute | null;
+}
+
+/** Human "served by" line for a reply: the tier label plus the node id when a node served it. */
+export function servedByLabel(mesh: MeshRoute | null, upstreamName?: string): string {
+  if (!mesh) return upstreamName ? `upstream ${upstreamName}` : 'gateway';
+  const tier = mesh.servedBy ?? (mesh.route === 'node' ? 'network node' : 'upstream');
+  return mesh.route === 'node' && mesh.nodeId ? `${tier} ${shortAddr(mesh.nodeId, 6, 4)}` : tier;
 }
 
 /**
@@ -353,6 +374,8 @@ export async function streamChat(
     messages: ChatMessage[];
     signal?: AbortSignal;
     upstreamName?: string;
+    /** Privacy tier for this request (`X-Mesh-Privacy`); omitted = the key's default, then the gateway default. */
+    privacy?: PrivacyTier;
   },
   onDelta: (text: string) => void,
 ): Promise<ChatResult> {
@@ -361,20 +384,20 @@ export async function streamChat(
     let usage: Usage | null = null;
     let model = opts.model;
     let mesh: MeshRoute | null = null;
-    for await (const chunk of mock.mockChatStream(opts.model, opts.signal)) {
+    for await (const chunk of mock.mockChatStream(opts.model, opts.signal, opts.privacy)) {
       if (chunk.content) onDelta(chunk.content);
       if (chunk.usage) usage = chunk.usage;
       if (chunk.model) model = chunk.model;
       if (chunk.mesh) mesh = chunk.mesh;
     }
-    return { usage, model, latencyMs: performance.now() - started, servedBy: mock.MOCK_NODE_LABEL, mesh };
+    return { usage, model, latencyMs: performance.now() - started, servedBy: servedByLabel(mesh), mesh };
   }
 
   let res: Response;
   try {
     res = await fetch(`${API_URL}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}` },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}`, ...(opts.privacy ? { 'x-mesh-privacy': opts.privacy } : {}) },
       body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true, usage: { include: true } }),
       signal: opts.signal,
     });
@@ -405,7 +428,7 @@ export async function streamChat(
       };
       if (obj.model) model = obj.model;
       if (obj.usage) usage = obj.usage;
-      if (obj.mesh?.route === 'node') mesh = obj.mesh;
+      if (obj.mesh) mesh = obj.mesh;
       const content = obj.choices?.[0]?.delta?.content;
       if (content) onDelta(content);
     } catch {
@@ -432,7 +455,7 @@ export async function streamChat(
     usage,
     model,
     latencyMs: performance.now() - started,
-    servedBy: served ? `node ${shortAddr(served.nodeId, 6, 4)}` : opts.upstreamName ? `upstream ${opts.upstreamName}` : 'gateway',
+    servedBy: servedByLabel(served, opts.upstreamName),
     mesh: served,
   };
 }

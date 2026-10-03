@@ -76,7 +76,7 @@ const FAQ: Array<[string, string]> = [
   ],
   [
     'Is my prompt stored?',
-    'The gateway logs the model, token counts, cost and latency of each request so it can bill you. It does not store the prompt or the reply. Nodes are required to run with logging off.',
+    'The gateway logs the model, token counts, cost and latency of each request so it can bill you; it never stores the prompt or the reply. The node agent writes only job ids, counts and timings to its log and drops the text once the reply is sent. What we cannot change: the machine that runs the model has to see your prompt in plaintext while it runs. That is why there are privacy tiers (see "Privacy tiers" above).',
   ],
   [
     'What happens if I sell?',
@@ -115,6 +115,9 @@ export function Docs() {
           </a>
           <a className="chip" href="#run">
             Running a node
+          </a>
+          <a className="chip" href="#privacy">
+            Privacy tiers
           </a>
           <a className="chip" href="#faq">
             FAQ
@@ -293,6 +296,41 @@ export function Docs() {
               Then <code>mesh-node status</code> for uptime and earnings, <code>mesh-node pause</code> / <code>resume</code>,{' '}
               <code>mesh-node logs</code>, <code>mesh-node service uninstall</code> to remove it. Live status for your wallet is on the{' '}
               <Link to="/app/node">Node tab</Link>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="privacy">
+        <div className="sec-head">
+          <p className="eyebrow">Privacy tiers</p>
+          <div className="stack">
+            <h2>
+              Pick who may see a prompt. <span className="muted">The honest version.</span>
+            </h2>
+            <p>
+              Any machine that runs a model sees the prompt in plaintext while it runs; no software setting changes that. What Mesh does is
+              let you choose <em>which</em> machines, strip everything else from the job, and never keep the text anywhere. Pick a tier per
+              request with the <code>X-Mesh-Privacy</code> header (or <code>mesh.privacy</code> in the body), per key under{' '}
+              <Link to="/app/keys">Keys</Link>, or leave the default: <b>trusted</b>.
+            </p>
+            <ul>
+              <li>
+                <b>Trusted nodes</b> — Macs whose operator staked gold and signed the operator pledge, or that we allowlisted. If none is online
+                the request goes to the ZDR upstream, never to other nodes.
+              </li>
+              <li>
+                <b>Any network node</b> — any online node. Cheapest; the operator could in principle inspect memory while serving you.
+              </li>
+              <li>
+                <b>Upstream (ZDR)</b> — OpenRouter with <code>provider.data_collection = "deny"</code>: zero-data-retention providers only, list
+                price.
+              </li>
+            </ul>
+            <p>
+              A node receives only <code>{'{jobId, model, messages, params, maxTokens, deadlineMs, attempt}'}</code>: no wallet, key, IP, user
+              agent or request id, and messages reduced to role + text. Every reply says which tier served it in <code>mesh.servedBy</code>.
+              Full threat model: <code>docs/PRIVACY.md</code> in the repo.
             </p>
           </div>
         </div>

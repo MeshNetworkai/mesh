@@ -6,7 +6,13 @@ import type { Env } from '../src/env.js';
 import { buildServer } from '../src/server.js';
 import { MockUpstream } from '../src/upstream.js';
 
-export const testConfig: TokenomicsConfig = loadTokenomics();
+const loaded = loadTokenomics();
+/**
+ * Protocol tests drive plain (unstaked, unpledged) fake nodes, so they run with the `network` privacy
+ * tier as the default; the production default is `trusted` (docs/PRIVACY.md) and privacy.test.ts
+ * exercises that with its own config.
+ */
+export const testConfig: TokenomicsConfig = { ...loaded, privacy: { ...loaded.privacy, default: 'network' } };
 
 /** Network pricing the tests assert against, read from config/tokenomics.json so a repricing does not break the arithmetic. */
 export const NETWORK_PRICE_PER_M = testConfig.requestPricing.networkPricePerMTokens;

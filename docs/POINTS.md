@@ -1,5 +1,16 @@
 # Mesh points (pre-launch)
 
+> **Status: built, disabled.** The owner decided not to run a points / leaderboard / referral
+> programme at launch. Everything below is implemented and tested (`apps/gateway/test/points.test.ts`),
+> but `config/tokenomics.json` ships `points.enabled: false` (also the schema default). While off:
+> the gateway answers **404** for `/points/*`, `/leaderboard/*`, `/referrals/*`, `/me/points` and
+> `/me/referral` (before auth, same body as any unknown route); `syncPoints` is skipped so no
+> `points_ledger` rows are written; `GET /stats` reports `pointsEnabled: false`; the web app hides
+> the Ranks nav link, the `/leaderboard` route (404), the Points tile, the Referral card, the footer
+> link and the landing "earn points" note. `POST /admin/points/adjust` stays reachable (audited) so a
+> ledger can be corrected before a re-enable. To turn it on: set `enabled: true` and restart; the
+> incremental sync then awards the backlog from the cursors. Nothing was deleted.
+
 Points are the pre-launch loyalty ledger. They accrue in the gateway for the things that make the
 network work (holding, using, serving, bringing people in) and convert to MESH at the token
 generation event. They are chain-agnostic: nothing on a chain is touched until TGE.

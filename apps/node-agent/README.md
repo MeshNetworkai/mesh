@@ -31,7 +31,7 @@ Re-running is safe (a re-run needs a fresh code only if the stored node identity
 mesh-node setup --link <code> [--gateway <url>] [--models a,b] [--with-70b] [--ollama <url>] [--skip-pull]
 mesh-node setup --wallet <addr> ...   legacy: unsigned registration (gateway with NODES_REQUIRE_SIGNATURE=false only)
 mesh-node start                 heartbeat, take jobs, stream replies (Ctrl-C / SIGTERM to stop)
-mesh-node status [--json]       node stats from the gateway (online, uptime 24h, jobs, earned 24h/total, models)
+mesh-node status [--json]       node stats from the gateway (online, uptime 24h, jobs, earned 24h/total, models; counts only)
 mesh-node service install       launchd agent at ~/Library/LaunchAgents/xyz.mesh.node.plist (RunAtLoad, KeepAlive)
 mesh-node service uninstall     unload and remove it
 mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating with busy=true)
@@ -73,6 +73,25 @@ mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
 
 Env: `GATEWAY_URL` (default for `setup --gateway`), `MESH_LINK_CODE` (default for `setup --link`),
 `MESH_HOME` (default `~/.mesh`), `OLLAMA_HOST_URL`, `NO_COLOR`.
+
+## Privacy
+
+What a job contains and what this machine keeps (`docs/PRIVACY.md`):
+
+- A job is `{jobId, model, messages, params, maxTokens, deadlineMs, attempt}`: no wallet, API key, IP,
+  user agent or request id of the person asking. `messages` are role + text only.
+- The prompt and the reply exist in this process's memory (and in Ollama's) only while the job runs. The
+  agent empties its copies when `done`/`fail` is sent (`runner.ts:scrubJob`). They are never written to
+  disk: `~/.mesh/logs/node.log` holds job ids, token counts, chunk counts and timings, and
+  `test/privacy.test.ts` plants secrets in a job and asserts they are absent from every log line.
+- Ollama is called with `keep_alive: "5m"` (weights stay warm, the request's context is dropped by Ollama
+  when the request ends). The `ollama serve` the agent launches and the launchd service run with
+  `OLLAMA_NOHISTORY=1` and `OLLAMA_DEBUG=0`; if you run Ollama yourself, leave `OLLAMA_DEBUG` unset or
+  its server log will contain request bodies.
+- `mesh-node status` and the menu bar app show counts and earnings only.
+- Honest limit: the model needs the plaintext, so the machine running it sees every prompt it serves.
+  Signing the operator pledge in the web app (Node page) is the commitment not to look; with a gold stake
+  it makes the node eligible for `trusted` requests.
 
 ## Protocol
 

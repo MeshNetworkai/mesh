@@ -2,15 +2,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { verifierFor, type Chain } from '@mesh/chain-adapter';
-import { bearer, registerMessage, safeEqual, verifySession } from '../auth.js';
+import { bearer, pledgeMessage, registerMessage, safeEqual, verifySession } from '../auth.js';
 import { requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { jwtSecrets } from '../env.js';
 import { SMALL_BODY, fixedWindowLimiter } from './auth.js';
 import { nodeRewardsTotal } from '../ledger.js';
 import { microsToUsd } from '../money.js';
-import { isOnline, jobStats24h, recordHeartbeat, uptimePct24h, type JobRow } from '../network.js';
-import { HEARTBEAT_EVERY_SEC, NODE_ONLINE_SEC, REPUTATION_WINDOW, nodeModels, nodeReputation, type NodeRow } from '../routing.js';
+import { JOB_VIEW_FIELDS, isOnline, jobStats24h, recordHeartbeat, uptimePct24h, type JobPayload, type JobRow } from '../network.js';
+import { HEARTBEAT_EVERY_SEC, NODE_ONLINE_SEC, REPUTATION_WINDOW, nodeModels, nodeReputation, trustedTierIndex, trustedVia, type NodeRow } from '../routing.js';
 
 export const NODE_TOKEN_PREFIX = 'mesh_nt_';
 /** Longest a node may long-poll GET /nodes/:id/jobs/next. */
@@ -107,6 +107,7 @@ const DoneBody = z.object({
   finishReason: z.string().min(1).max(32).default('stop'),
 });
 const FailBody = z.object({ error: z.string().min(1).max(500) });
+const PledgeBody = z.object({ signature: z.string().min(1).max(2048), chain: z.enum(['solana', 'evm']).optional() });
 const PollQuery = z.object({ wait: z.coerce.number().int().min(0).max(MAX_POLL_WAIT_MS).default(MAX_POLL_WAIT_MS) });
 
 type NodeReq = FastifyRequest<{ Params: { id: string } }> & { node?: NodeRow };
@@ -115,18 +116,40 @@ export function getNode(ctx: AppContext, id: string): NodeRow | null {
   return (ctx.db.prepare(`SELECT * FROM nodes WHERE node_id = ?`).get(id) as NodeRow | undefined) ?? null;
 }
 
-/** Public job view (what the node receives from GET /nodes/:id/jobs/next). */
-export function jobView(job: JobRow) {
-  const payload = JSON.parse(job.payload) as { messages: unknown[]; params: Record<string, unknown> };
+/**
+ * What the node receives from GET /nodes/:id/jobs/next: exactly `JOB_VIEW_FIELDS`, nothing that
+ * identifies the caller (no wallet, API key, request id, IP, user agent, client-facing model name).
+ * See docs/PRIVACY.md; privacy.test.ts asserts the shape.
+ */
+export function jobView(job: JobRow): Record<(typeof JOB_VIEW_FIELDS)[number], unknown> {
+  const payload = JSON.parse(job.payload) as JobPayload;
   return {
     jobId: job.job_id,
     model: job.tag,
-    requestedModel: job.model,
     messages: payload.messages,
     params: payload.params,
     maxTokens: job.max_tokens,
     deadlineMs: job.deadline_ms,
     attempt: job.attempt,
+  };
+}
+
+/** Operator pledge status + whether the node currently counts as trusted (docs/PRIVACY.md). */
+export function pledgeView(ctx: Pick<AppContext, 'config' | 'stakes'>, node: NodeRow) {
+  const via = trustedVia(ctx, node);
+  const needIdx = trustedTierIndex(ctx.config);
+  const stake = ctx.stakes?.peek(node.wallet);
+  return {
+    signed: node.pledge_at !== null,
+    signedAt: node.pledge_at,
+    chain: node.pledge_chain,
+    trusted: via !== null,
+    trustedVia: via,
+    allowlisted: ctx.config.privacy.trustedWallets.includes(node.wallet),
+    /** Stake tier the wallet needs (with the pledge) to be trusted, and the tier it has. */
+    requiredStakeTier: needIdx === null ? null : ctx.config.privacy.trustedMinStakeTier,
+    stakeTier: stake?.tier.name ?? null,
+    stakeOk: needIdx !== null && (stake?.tierIndex ?? 0) >= needIdx,
   };
 }
 
@@ -166,6 +189,7 @@ export function nodeStatsView(ctx: AppContext, node: NodeRow) {
     lastSeen: node.last_seen,
     createdAt: node.created_at,
     offlineAfterSec: NODE_ONLINE_SEC,
+    pledge: pledgeView(ctx, node),
   };
 }
 
@@ -449,6 +473,38 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
     const ok = ctx.broker.nodeFail(req.params.jobId, req.params.id, parsed.data.error);
     if (!ok) return reply.code(409).send({ error: 'job_not_running', message: 'job is not running on this node' });
     return { ok: true };
+  });
+
+  /**
+   * Operator pledge (docs/PRIVACY.md). GET returns the exact text to sign and the current status;
+   * POST stores the owning wallet's signature over it. Only the owning wallet session may call
+   * either: a node token cannot pledge on the operator's behalf (the Mac never holds a key).
+   */
+  app.get<{ Params: { id: string } }>('/nodes/:id/pledge', { preHandler: requireSession(ctx) }, async (req, reply) => {
+    const node = getNode(ctx, req.params.id);
+    if (!node) return reply.code(404).send({ error: 'unknown_node', message: 'no such node' });
+    if (sessionOf(req).wallet !== node.wallet) return reply.code(401).send({ error: 'unauthorized', message: 'only the reward wallet that owns this node may pledge' });
+    return { nodeId: node.node_id, wallet: node.wallet, message: pledgeMessage({ domain, uri, wallet: node.wallet, nodeId: node.node_id }), ...pledgeView(ctx, node) };
+  });
+
+  app.post<{ Params: { id: string } }>('/nodes/:id/pledge', { preHandler: requireSession(ctx), bodyLimit: SMALL_BODY }, async (req, reply) => {
+    const parsed = PledgeBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const node = getNode(ctx, req.params.id);
+    if (!node) return reply.code(404).send({ error: 'unknown_node', message: 'no such node' });
+    const session = sessionOf(req);
+    if (session.wallet !== node.wallet) return reply.code(401).send({ error: 'unauthorized', message: 'only the reward wallet that owns this node may pledge' });
+    const chain: Chain = parsed.data.chain ?? (session.chain === 'evm' ? 'evm' : session.chain === 'solana' ? 'solana' : ctx.adapter.chain);
+    const expected = pledgeMessage({ domain, uri, wallet: node.wallet, nodeId: node.node_id });
+    const verify = chain === ctx.adapter.chain ? ctx.adapter.verifyWalletSignature.bind(ctx.adapter) : verifierFor(chain);
+    if (!verify(node.wallet, expected, parsed.data.signature)) {
+      return reply.code(401).send({ error: 'bad_signature', message: 'signature does not match the operator pledge for this node and wallet' });
+    }
+    const ts = nowSec();
+    ctx.db.prepare(`UPDATE nodes SET pledge_at = ?, pledge_signature = ?, pledge_chain = ? WHERE node_id = ?`).run(ts, parsed.data.signature, chain, node.node_id);
+    const updated = getNode(ctx, node.node_id)!;
+    req.log.info({ nodeId: node.node_id, wallet: node.wallet, chain }, 'operator pledge signed');
+    return { nodeId: node.node_id, wallet: node.wallet, ...pledgeView(ctx, updated) };
   });
 
   /** Public summary: no wallets or tokens. */

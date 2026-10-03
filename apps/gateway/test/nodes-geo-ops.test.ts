@@ -57,18 +57,20 @@ describe('node registry', () => {
     const db = memDb();
     const policy = parseModelPolicy({ networkModels: { 'llama-3.1-8b': 'llama3.1:8b' } });
     const t = 1_700_000_000;
-    const cfgOn = { routing: { preferNetwork: true } };
-    expect(decideRoute({ db, config: { routing: { preferNetwork: false } }, policy }, 'llama-3.1-8b', t).reason).toBe('network_disabled');
-    expect(decideRoute({ db, config: cfgOn, policy }, 'openai/gpt-4o', t).reason).toBe('not_network_model');
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', t).reason).toBe('no_online_node');
+    const base = { stakeTiers: testConfig.stakeTiers, privacy: testConfig.privacy };
+    const cfgOn = { ...base, routing: { preferNetwork: true } };
+    const net = { tier: 'network', source: 'default' } as const;
+    expect(decideRoute({ db, config: { ...base, routing: { preferNetwork: false } }, policy }, 'llama-3.1-8b', net, t).reason).toBe('network_disabled');
+    expect(decideRoute({ db, config: cfgOn, policy }, 'openai/gpt-4o', net, t).reason).toBe('not_network_model');
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t).reason).toBe('no_online_node');
     db.prepare(`INSERT INTO nodes (node_id, wallet, url, models, created_at, last_seen) VALUES ('n1','w','','["llama3.1:8b"]',?,?)`).run(t, t - 100);
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', t).reason).toBe('no_online_node'); // stale
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t).reason).toBe('no_online_node'); // stale
     db.prepare(`UPDATE nodes SET last_seen = ?`).run(t - 10);
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', t)).toEqual({ target: 'node', tag: 'llama3.1:8b', candidates: ['n1'], reason: 'node' });
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t)).toMatchObject({ target: 'node', tag: 'llama3.1:8b', candidates: ['n1'], reason: 'node', privacy: 'network', servedBy: 'network node' });
     // the raw tag is accepted as a model name too
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama3.1:8b', t).target).toBe('node');
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama3.1:8b', net, t).target).toBe('node');
     db.prepare(`UPDATE nodes SET busy = 1`).run();
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', t).reason).toBe('no_online_node');
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t).reason).toBe('no_online_node');
   });
 });
 

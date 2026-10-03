@@ -9,7 +9,7 @@ import { fmtCost, fmtLatency, fmtUsd } from '../lib/format';
 import { useKeys, useLocalStorage, useMe, useStats } from '../lib/hooks';
 import { loadSecrets } from '../lib/keystore';
 import { errorMessage, useToast } from '../lib/toast';
-import type { Model } from '../lib/types';
+import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type Model, type PrivacyTier } from '../lib/types';
 
 interface Turn {
   id: number;
@@ -41,6 +41,10 @@ export function Chat() {
     if (!keyChoice && usable.length) setKeyChoice(String(usable[0].id));
     if (keyChoice && keyChoice !== PASTE && !secrets[keyChoice] && usable.length) setKeyChoice(String(usable[0].id));
   }, [usable, keyChoice, secrets, setKeyChoice]);
+
+  // Privacy tier for this chat (docs/PRIVACY.md). Sent as X-Mesh-Privacy; trusted by default.
+  const [privacyRaw, setPrivacy] = useLocalStorage<string>(STORAGE.chatPrivacy, 'trusted');
+  const privacy: PrivacyTier = (PRIVACY_TIERS as string[]).includes(privacyRaw) ? (privacyRaw as PrivacyTier) : 'trusted';
 
   const [models, setModels] = useState<Model[] | null>(null);
   const [modelsErr, setModelsErr] = useState<string | null>(null);
@@ -95,7 +99,7 @@ export function Chat() {
     abortRef.current = ctrl;
     try {
       const res = await api.streamChat(
-        { apiKey, model, messages: history, signal: ctrl.signal, upstreamName: stats.data?.upstream },
+        { apiKey, model, messages: history, signal: ctrl.signal, upstreamName: stats.data?.upstream, privacy },
         (delta) => setTurns((ts) => ts.map((t) => (t.id === aiId ? { ...t, content: t.content + delta } : t))),
       );
       setTurns((ts) =>
@@ -180,7 +184,21 @@ export function Chat() {
             ))}
           </select>
         </div>
+        <div className="field">
+          <label htmlFor="privacy">Privacy</label>
+          <select id="privacy" className="input sm" value={privacy} onChange={(e) => setPrivacy(e.target.value)} aria-describedby="privacy-help">
+            {PRIVACY_TIERS.map((t) => (
+              <option key={t} value={t}>
+                {PRIVACY_TIER_INFO[t].label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
+      <p id="privacy-help" className="small muted" style={{ margin: 0 }}>
+        {PRIVACY_TIER_INFO[privacy].blurb} Whoever serves a reply sees your prompt in plaintext while it runs; the gateway never stores it.{' '}
+        <Link to="/docs#privacy">How the tiers work</Link>.
+      </p>
       {modelsErr ? <Notice kind="bad">{modelsErr}</Notice> : null}
 
       {noKeys ? (
@@ -205,7 +223,8 @@ export function Chat() {
         <div className="chat-scroll" ref={scrollRef} aria-live="polite" aria-busy={busy}>
           {turns.length === 0 ? (
             <p className="small muted" style={{ padding: '24px 0' }}>
-              Ask anything. Each reply shows which node served it, the model, what it cost, what you saved versus list price and how long it took.
+              Ask anything. Each reply shows which tier served it (trusted node, network node or ZDR upstream), the model, what it cost, what
+              you saved versus list price and how long it took.
             </p>
           ) : null}
           {turns.map((t) => (
