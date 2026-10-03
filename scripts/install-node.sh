@@ -76,10 +76,13 @@ ARCH="$(uname -m)"
 case "$OS" in
   Darwin)
     if [ "$ARCH" != "arm64" ]; then
-      warn "Intel Mac detected ($ARCH). Apple Silicon is recommended; Ollama will be slow here."
-    else
-      ok "macOS on Apple Silicon"
+      die "Mesh nodes run on Apple Silicon Macs only (detected $ARCH). Intel Macs are not supported."
     fi
+    # If this shell itself is running under Rosetta, every child inherits x86_64. Refuse early with the fix.
+    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
+      die "This Terminal is running under Rosetta (Intel emulation). Quit Terminal, right-click it in Applications > Utilities, Get Info, untick 'Open using Rosetta', then re-run."
+    fi
+    ok "macOS on Apple Silicon"
     ;;
   Linux)
     warn "Linux detected: install proceeds, but 'service install' (launchd) is macOS-only. Run 'mesh-node start' under systemd or tmux."
@@ -87,25 +90,46 @@ case "$OS" in
   *) die "unsupported OS: $OS (macOS Apple Silicon is the target)" ;;
 esac
 
-# ---- node >= 18 ------------------------------------------------------------
+# ---- node >= 18, native arm64 only ------------------------------------------
+# A Node built for Intel (installed before the Mac was upgraded, or via an x86 Homebrew in /usr/local)
+# fails with "Bad CPU type in executable" or runs slowly under Rosetta. We only accept a native arm64 Node;
+# if none exists we download the official Apple Silicon build into ~/.mesh/node (no sudo, no Homebrew needed).
 node_major() { "$1" -v 2>/dev/null | sed 's/^v//' | cut -d. -f1; }
+node_arch()  { "$1" -p 'process.arch' 2>/dev/null; }
+node_ok() {
+  [ -n "$1" ] && [ -x "$1" ] || return 1
+  major="$(node_major "$1")"; [ -n "$major" ] && [ "$major" -ge 18 ] || return 1
+  if [ "$OS" = "Darwin" ]; then [ "$(node_arch "$1")" = "arm64" ] || return 1; fi
+  return 0
+}
 NODE_BIN=""
-for cand in "$(command -v node 2>/dev/null || true)" /opt/homebrew/bin/node /usr/local/bin/node /opt/homebrew/opt/node@20/bin/node; do
-  [ -n "$cand" ] && [ -x "$cand" ] || continue
-  major="$(node_major "$cand")"
-  if [ -n "$major" ] && [ "$major" -ge 18 ]; then NODE_BIN="$cand"; break; fi
+for cand in "$MESH_HOME/node/bin/node" "$(command -v node 2>/dev/null || true)" /opt/homebrew/bin/node /opt/homebrew/opt/node@20/bin/node /usr/local/bin/node; do
+  if node_ok "$cand"; then NODE_BIN="$cand"; break; fi
 done
-if [ -z "$NODE_BIN" ]; then
-  if command -v brew >/dev/null 2>&1; then
-    say ".. installing Node 20 with Homebrew"
-    brew install node@20
-    for cand in /opt/homebrew/opt/node@20/bin/node /usr/local/opt/node@20/bin/node "$(command -v node 2>/dev/null || true)"; do
-      [ -n "$cand" ] && [ -x "$cand" ] && NODE_BIN="$cand" && break
-    done
+if [ -z "$NODE_BIN" ] && [ "$OS" = "Darwin" ]; then
+  existing="$(command -v node 2>/dev/null || true)"
+  if [ -n "$existing" ]; then
+    warn "found $existing but it is $(node_arch "$existing" || echo unknown)/v$(node_major "$existing" || echo ?) — not a native Apple Silicon Node 18+. Installing a private native copy for Mesh."
   fi
+  NODE_VER="${MESH_NODE_VERSION:-v20.18.0}"
+  say ".. downloading Node $NODE_VER (darwin-arm64) into $MESH_HOME/node"
+  mkdir -p "$MESH_HOME"
+  NODE_TGZ="$MESH_HOME/node.tgz"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-darwin-arm64.tar.gz" -o "$NODE_TGZ" || die "could not download Node from nodejs.org"
+  else
+    die "need curl to download Node"
+  fi
+  rm -rf "$MESH_HOME/node" && mkdir -p "$MESH_HOME/node"
+  tar -xzf "$NODE_TGZ" -C "$MESH_HOME/node" --strip-components=1 || die "could not unpack Node"
+  rm -f "$NODE_TGZ"
+  NODE_BIN="$MESH_HOME/node/bin/node"
+  node_ok "$NODE_BIN" || die "downloaded Node did not run; please report this"
 fi
-[ -n "$NODE_BIN" ] || die "Node 18+ not found and Homebrew is missing. Install Node from https://nodejs.org (LTS) or Homebrew from https://brew.sh, then re-run."
-ok "node $("$NODE_BIN" -v) at $NODE_BIN"
+if [ -z "$NODE_BIN" ] && [ "$OS" = "Linux" ]; then
+  die "Node 18+ not found. Install it from https://nodejs.org and re-run."
+fi
+ok "node $("$NODE_BIN" -v) ($(node_arch "$NODE_BIN")) at $NODE_BIN"
 
 # ---- fetch mesh-node.js ----------------------------------------------------
 mkdir -p "$BIN_DIR" "$MESH_HOME/logs"

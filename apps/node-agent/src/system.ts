@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, openSync } from 'node:fs';
+import { accessSync, constants, existsSync, openSync } from 'node:fs';
 import { cpus, loadavg, platform, totalmem } from 'node:os';
 
 export interface SystemInfo {
@@ -58,7 +58,16 @@ export function which(bin: string): string | null {
   return null;
 }
 
+/**
+ * Native Apple Silicon Homebrew lives in /opt/homebrew. An Intel Homebrew in /usr/local (left over from a
+ * pre-M1 Mac or a Rosetta shell) would install an Intel Ollama that fails with "Bad CPU type in executable",
+ * so we only ever use the arm64 one on macOS.
+ */
 export function hasBrew(): string | null {
+  if (process.platform === 'darwin') {
+    const native = '/opt/homebrew/bin/brew';
+    try { accessSync(native, constants.X_OK); return native; } catch { return null; }
+  }
   return which('brew');
 }
 
