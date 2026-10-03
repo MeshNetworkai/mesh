@@ -100,13 +100,13 @@ export const PRIVACY_TIERS: PrivacyTier[] = ['trusted', 'network', 'upstream_zdr
 
 /** One line per tier, shown wherever a tier is picked. */
 export const PRIVACY_TIER_INFO: Record<PrivacyTier, { label: string; blurb: string }> = {
-  trusted: { label: 'Trusted nodes', blurb: 'Only Macs whose operator staked gold and signed the pledge, or that we allowlisted. Falls back to ZDR upstream, never to other nodes.' },
+  trusted: { label: 'Trusted nodes', blurb: 'Your own Macs, allowlisted operators, and gold-staked pledged operators. Falls back to ZDR upstream, never to other nodes.' },
   network: { label: 'Any network node', blurb: 'Any online Mesh node. Cheapest and fastest; the operator could in principle read the plaintext while serving it.' },
   upstream_zdr: { label: 'Upstream (ZDR)', blurb: 'Skip the network: OpenRouter with zero-data-retention providers only. Billed at list price.' },
 };
 
 /** `mesh.servedBy` label from the final chunk. */
-export type ServedBy = 'trusted node' | 'network node' | 'upstream (ZDR)' | 'upstream';
+export type ServedBy = 'your node' | 'trusted node' | 'network node' | 'upstream (ZDR)' | 'upstream';
 
 export interface ApiKey {
   id: number;

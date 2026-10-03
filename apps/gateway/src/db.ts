@@ -274,6 +274,15 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     ALTER TABLE nodes ADD COLUMN pledge_chain TEXT;
     `,
   },
+  {
+    // Owner rule for the trusted tier (docs/PRIVACY.md §2): the wallet that made the request. A node
+    // whose reward wallet equals it may claim the trusted job. Internal only: never part of the node-facing
+    // job view (routes/nodes.ts jobView / JOB_VIEW_FIELDS).
+    id: 9,
+    sql: `
+    ALTER TABLE jobs ADD COLUMN requester_wallet TEXT;
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

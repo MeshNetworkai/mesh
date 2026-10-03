@@ -22,8 +22,13 @@ export interface JobRow {
   wallet: string;
   api_key_id: number | null;
   status: JobStatus;
-  /** 'trusted' jobs are only claimable by trusted nodes (docs/PRIVACY.md). */
+  /** 'trusted' jobs are only claimable by trusted nodes, or by the requester's own nodes (docs/PRIVACY.md). */
   privacy: 'trusted' | 'network';
+  /**
+   * Wallet behind the request (owner rule: a node with this reward wallet may claim a trusted job).
+   * INTERNAL — never part of the node-facing job view (`jobView` / `JOB_VIEW_FIELDS`).
+   */
+  requester_wallet: string | null;
   payload: string;
   max_tokens: number;
   deadline_ms: number;
@@ -160,8 +165,10 @@ export class JobRelay {
 
 interface Waiter {
   nodeId: string;
+  /** Reward wallet: a waiting node may take trusted jobs its own wallet requested (owner rule). */
+  wallet: string;
   tags: Set<string>;
-  /** Evaluated when the node started waiting: may it take `trusted` jobs? */
+  /** Evaluated when the node started waiting: may it take any `trusted` job? */
   trusted: boolean;
   resolve: (job: JobRow | null) => void;
 }
@@ -175,8 +182,10 @@ export interface CreateJobInput {
   payload: { messages: unknown[]; params: Record<string, unknown> };
   maxTokens: number;
   deadlineMs: number;
-  /** `trusted` restricts claiming to nodes the `isTrusted` callback approves. Default `network`. */
+  /** `trusted` restricts claiming to nodes the `isTrusted` callback approves, or to `requesterWallet`'s own nodes. Default `network`. */
   privacy?: 'trusted' | 'network';
+  /** Wallet behind the request (stored in `jobs.requester_wallet`, never sent to a node). */
+  requesterWallet?: string | null;
   excludeNodeId?: string | null;
   parentJobId?: string | null;
   attempt?: number;
@@ -206,12 +215,13 @@ export class JobBroker {
     const jobId = `job_${randomBytes(9).toString('base64url')}`;
     const ms = Date.now();
     const privacy = input.privacy ?? 'network';
+    const requesterWallet = input.requesterWallet ?? null;
     // The stored payload is exactly what the node will see: sanitised messages + whitelisted params.
     const payload: JobPayload = { messages: sanitizeMessages(input.payload.messages), params: input.payload.params };
     this.db
       .prepare(
-        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, privacy, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, attempt, created_at, created_ms)
-         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, privacy, requester_wallet, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, attempt, created_at, created_ms)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         jobId,
@@ -220,6 +230,7 @@ export class JobBroker {
         input.wallet,
         input.apiKeyId,
         privacy,
+        requesterWallet,
         JSON.stringify(payload),
         input.maxTokens,
         input.deadlineMs,
@@ -236,7 +247,7 @@ export class JobBroker {
     for (let i = 0; i < this.waiters.length; i++) {
       const w = this.waiters[i];
       if (!w.tags.has(input.tag) || w.nodeId === input.excludeNodeId) continue;
-      if (privacy === 'trusted' && !w.trusted) continue;
+      if (privacy === 'trusted' && !w.trusted && !(requesterWallet !== null && w.wallet === requesterWallet)) continue;
       const claimed = this.tryClaim(jobId, w.nodeId, w.trusted);
       if (claimed) {
         this.waiters.splice(i, 1);
@@ -249,8 +260,10 @@ export class JobBroker {
 
   /**
    * Atomic claim: exactly one node can move a job queued→running. Marks the node busy. A `trusted`
-   * job is only claimable when `trusted` is true for the claiming node (enforced in the UPDATE, so a
-   * race between a trusted and an untrusted poller can never hand plaintext to the wrong machine).
+   * job is only claimable when `trusted` is true for the claiming node OR the node's reward wallet is
+   * the job's `requester_wallet` (owner rule). Both are enforced in the UPDATE (the wallet via a
+   * subquery on `nodes`), so a race between a trusted and an untrusted poller can never hand
+   * plaintext to the wrong machine.
    */
   tryClaim(jobId: string, nodeId: string, trusted = false): JobRow | null {
     const ms = Date.now();
@@ -258,9 +271,11 @@ export class JobBroker {
       const res = this.db
         .prepare(
           `UPDATE jobs SET status = 'running', node_id = ?, claimed_ms = ?
-           WHERE job_id = ? AND status = 'queued' AND (exclude_node_id IS NULL OR exclude_node_id != ?) AND (privacy != 'trusted' OR ? = 1)`,
+           WHERE job_id = ? AND status = 'queued' AND (exclude_node_id IS NULL OR exclude_node_id != ?)
+             AND (privacy != 'trusted' OR ? = 1
+                  OR (requester_wallet IS NOT NULL AND requester_wallet = (SELECT wallet FROM nodes WHERE node_id = ?)))`,
         )
-        .run(nodeId, ms, jobId, nodeId, trusted ? 1 : 0);
+        .run(nodeId, ms, jobId, nodeId, trusted ? 1 : 0, nodeId);
       if (res.changes !== 1) return null;
       this.db.prepare(`UPDATE nodes SET busy = 1, last_seen = ? WHERE node_id = ?`).run(Math.floor(ms / 1000), nodeId);
       return this.get(jobId);
@@ -283,17 +298,17 @@ export class JobBroker {
     const queued = this.db
       .prepare(
         `SELECT job_id FROM jobs WHERE status = 'queued' AND tag IN (${placeholders}) AND (exclude_node_id IS NULL OR exclude_node_id != ?)
-           AND (privacy != 'trusted' OR ? = 1)
+           AND (privacy != 'trusted' OR ? = 1 OR (requester_wallet IS NOT NULL AND requester_wallet = ?))
          ORDER BY created_ms ASC`,
       )
-      .all(...tags, node.node_id, trusted ? 1 : 0) as Array<{ job_id: string }>;
+      .all(...tags, node.node_id, trusted ? 1 : 0, node.wallet) as Array<{ job_id: string }>;
     for (const q of queued) {
       const job = this.tryClaim(q.job_id, node.node_id, trusted);
       if (job) return job;
     }
     if (waitMs <= 0) return null;
     return new Promise<JobRow | null>((resolve) => {
-      const waiter: Waiter = { nodeId: node.node_id, tags, trusted, resolve: (j) => resolve(j) };
+      const waiter: Waiter = { nodeId: node.node_id, wallet: node.wallet, tags, trusted, resolve: (j) => resolve(j) };
       // A node re-polling replaces its previous waiter (one long-poll per node).
       this.waiters = this.waiters.filter((w) => w.nodeId !== node.node_id);
       this.waiters.push(waiter);

@@ -350,13 +350,17 @@ export interface ChatResult {
   usage: Usage | null;
   model: string;
   latencyMs: number;
-  /** "trusted node 7Kd2…pQ9f", "network node …", "upstream (ZDR)" — from the final chunk's `mesh`. */
+  /** "your node 7Kd2…pQ9f", "trusted node …", "network node …", "upstream (ZDR)" — from the final chunk's `mesh`. */
   servedBy: string;
   /** The final chunk's `mesh` (route, privacy tier, served-by label; node fields and savings when a node served it). */
   mesh: MeshRoute | null;
 }
 
-/** Human "served by" line for a reply: the tier label plus the node id when a node served it. */
+/**
+ * Human "served by" line for a reply: the tier label plus the node id when a node served it.
+ * `your node` is the gateway's label when a trusted request was served by a Mac whose reward wallet
+ * is the requester's own (docs/PRIVACY.md owner rule); it is passed through like the other labels.
+ */
 export function servedByLabel(mesh: MeshRoute | null, upstreamName?: string): string {
   if (!mesh) return upstreamName ? `upstream ${upstreamName}` : 'gateway';
   const tier = mesh.servedBy ?? (mesh.route === 'node' ? 'network node' : 'upstream');

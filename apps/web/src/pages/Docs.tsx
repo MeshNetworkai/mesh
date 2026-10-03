@@ -316,7 +316,8 @@ export function Docs() {
             </p>
             <ul>
               <li>
-                <b>Trusted nodes</b> — Macs whose operator staked gold and signed the operator pledge, or that we allowlisted. If none is online
+                <b>Trusted nodes</b> — your own Macs (nodes whose reward wallet is the wallet making the request), allowlisted operators, and
+                gold-staked operators who signed the operator pledge. If none is online
                 the request goes to the ZDR upstream, never to other nodes.
               </li>
               <li>

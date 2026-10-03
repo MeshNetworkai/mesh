@@ -132,7 +132,13 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     started: number,
   ): Promise<NetworkOutcome> {
     const { tag, trustedOnly } = route;
+    const requesterWallet = route.requesterWallet ?? key.wallet;
     const routing = ctx.config.routing;
+    /** `servedBy` for the node that took the job: "your node" when a trusted request landed on the requester's own Mac. */
+    const servedByFor = (nodeId: string | null): RouteDecision['servedBy'] => {
+      if (route.privacy !== 'trusted' || !nodeId) return route.servedBy;
+      return getNode(ctx, nodeId)?.wallet === requesterWallet ? 'your node' : route.servedBy;
+    };
     // Only whitelisted sampling params travel to the node: never `user`, `metadata`, tool ids or
     // anything else the client attached (docs/PRIVACY.md).
     const params: Record<string, unknown> = {};
@@ -153,7 +159,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         liveRelay?.close();
       }
     });
-    const writeHeaders = (nodeId: string) => {
+    const writeHeaders = (nodeId: string, servedBy: RouteDecision['servedBy']) => {
       if (headersWritten) return;
       headersWritten = true;
       reply.hijack();
@@ -161,7 +167,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         ...(reply.getHeaders() as Record<string, string>),
         'x-mesh-route': `node:${nodeId}`,
         'x-mesh-privacy': route.privacy,
-        'x-mesh-served-by': route.servedBy,
+        'x-mesh-served-by': servedBy,
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache',
         connection: 'keep-alive',
@@ -185,6 +191,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         maxTokens,
         deadlineMs: Date.now() + routing.jobTimeoutMs,
         privacy: trustedOnly ? 'trusted' : 'network',
+        requesterWallet,
         excludeNodeId: exclude,
         parentJobId: parent,
         attempt,
@@ -194,6 +201,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
       const createdMs = Date.now();
       const text: string[] = [];
       let nodeId: string | null = null;
+      let servedBy: RouteDecision['servedBy'] = route.servedBy;
       let sent = 0;
       let usage: JobUsage | null = null;
       let failure: { error: string; nodeFault: boolean } | null = null;
@@ -208,9 +216,10 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         }
         if (ev.type === 'claimed') {
           nodeId = ev.nodeId;
+          servedBy = servedByFor(nodeId);
         } else if (ev.type === 'chunk') {
           if (stream) {
-            writeHeaders(nodeId ?? 'unknown');
+            writeHeaders(nodeId ?? 'unknown', servedBy);
             write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: sent === 0 ? { role: 'assistant', content: ev.delta } : { content: ev.delta }, finish_reason: null }] }));
           } else text.push(ev.delta);
           sent++;
@@ -254,12 +263,12 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
           jobId: job.job_id,
           attempt,
           privacy: route.privacy,
-          servedBy: route.servedBy,
+          servedBy,
           ...(pricing.showSavings ? { listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved) } : {}),
         };
-        req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null }, 'chat completion (node)');
+        req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy }, 'chat completion (node)');
         if (stream) {
-          writeHeaders(nodeId);
+          writeHeaders(nodeId, servedBy);
           write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }], usage: usageOut, mesh }));
           write('data: [DONE]\n\n');
           if (!raw.writableEnded) raw.end();
@@ -267,7 +276,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         }
         reply.header('x-mesh-route', `node:${nodeId}`);
         reply.header('x-mesh-privacy', route.privacy);
-        reply.header('x-mesh-served-by', route.servedBy);
+        reply.header('x-mesh-served-by', servedBy);
         reply.header('x-mesh-cost-usd', microsToUsd(cost).toString());
         if (pricing.showSavings) reply.header('x-mesh-saved-usd', microsToUsd(saved).toString());
         reply.header('x-mesh-balance-usd', microsToUsd(balanceMicros(ctx.db, key.wallet)).toString());
@@ -295,13 +304,13 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
         ctx.broker.abandon(job.job_id, 'failed', f.error, f.nodeFault);
         recordError(ctx.db, { route: req.url, status: 502, code: 'node_stream_failed', message: `${f.error} (job ${job.job_id}, node ${nodeId})` });
         req.log.warn({ jobId: job.job_id, nodeId, error: f.error, sent }, 'node failed after partial output; not charged');
-        write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'error' }], error: { message: `Mesh node failed mid-stream (${f.error}). You were not charged.`, type: 'upstream_error', code: 'node_stream_failed' }, mesh: { route: 'node', nodeId, jobId: job.job_id, privacy: route.privacy, servedBy: route.servedBy } }));
+        write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'error' }], error: { message: `Mesh node failed mid-stream (${f.error}). You were not charged.`, type: 'upstream_error', code: 'node_stream_failed' }, mesh: { route: 'node', nodeId, jobId: job.job_id, privacy: route.privacy, servedBy } }));
         write('data: [DONE]\n\n');
         if (!raw.writableEnded) raw.end();
         return { kind: 'errored' };
       }
       // Nothing sent yet: retry once on a different node (of the same tier) if one is available, else fall back.
-      const others = nodeId ? eligibleNodes(ctx, tag, { exclude: nodeId, trustedOnly }) : [];
+      const others = nodeId ? eligibleNodes(ctx, tag, { exclude: nodeId, trustedOnly, requesterWallet }) : [];
       if (attempt === 1 && others.length > 0) {
         ctx.broker.abandon(job.job_id, 'failed', f.error, f.nodeFault);
         req.log.warn({ jobId: job.job_id, nodeId, error: f.error, next: others[0].node_id }, 'network job failed; re-queueing once');
@@ -389,7 +398,8 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     if ('error' in privacy) return openaiError(reply, 400, privacy.error, 'invalid_request_error', 'invalid_privacy_tier');
 
     // ---- Mesh node network first (when enabled and an idle node of the right tier advertises the model's tag) ----
-    const route = decideRoute(ctx, requestedModel, privacy);
+    // The key's wallet is the requester: its own nodes count as trusted for this request (owner rule).
+    const route = decideRoute(ctx, requestedModel, privacy, { requesterWallet: key.wallet });
     // Served-by for the upstream leg; a node failure keeps the tier's ZDR choice.
     const upstreamServedBy = route.zdr ? 'upstream (ZDR)' : 'upstream';
     const upstreamPrivacy = route.zdr ? 'upstream_zdr' : 'network';
