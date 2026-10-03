@@ -67,7 +67,7 @@ export function ensureOllamaInstalled(): string | null {
   }
   const brew = hasBrew();
   if (!brew) {
-    out.fail('Ollama is not installed and Homebrew is missing.');
+    out.fail('Ollama is not installed and native Apple Silicon Homebrew (/opt/homebrew) is missing. Install Ollama for Apple Silicon from the link below, open it once, then re-run.');
     out.line(`   Download it from ${c.cyan(OLLAMA_DOWNLOAD_URL)}, open it once, then re-run this command.`);
     return null;
   }
