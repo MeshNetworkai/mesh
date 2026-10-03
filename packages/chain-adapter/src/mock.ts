@@ -1,4 +1,6 @@
 import type { Chain, ChainAdapter, HolderBalance, StakeInfo } from './types.js';
+import { EvmAdapter } from './evm.js';
+import { SolanaAdapter } from './solana.js';
 
 export interface MockAdapterOptions {
   chain?: Chain;
@@ -148,8 +150,19 @@ export class MockAdapter implements ChainAdapter {
   }
 
   /** Mock signature = base64("<wallet>:<message>"). */
+  /**
+   * Accepts the mock test signature (`MockAdapter.sign`) AND real wallet signatures, so a gateway running
+   * with the mock treasury before the token exists still lets Phantom / MetaMask users sign in. The real
+   * verifier is picked by wallet shape: 0x-prefixed → EVM (EIP-191), otherwise Solana (ed25519 over the bytes).
+   */
   verifyWalletSignature(wallet: string, message: string, signature: string): boolean {
-    return signature === MockAdapter.sign(wallet, message);
+    if (signature === MockAdapter.sign(wallet, message)) return true;
+    try {
+      const real = wallet.startsWith('0x') ? new EvmAdapter() : new SolanaAdapter();
+      return real.verifyWalletSignature(wallet, message, signature);
+    } catch {
+      return false;
+    }
   }
 
   static sign(wallet: string, message: string): string {
