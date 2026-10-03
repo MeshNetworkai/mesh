@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Mesh ($MESH): trading fees -> hourly AI inference credits, served through an OpenAI-compatible gateway",
   "engines": {
-    "node": ">=20"
+    "node": ">=20 <25"
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
