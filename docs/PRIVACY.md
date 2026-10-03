@@ -55,7 +55,7 @@ An unknown or disabled value is `400 invalid_privacy_tier`, never a guess.
 
 | Tier | Who runs the model | Cost | When no such machine is available |
 | --- | --- | --- | --- |
-| `trusted` (default) | Nodes whose reward wallet is in `config.privacy.trustedWallets`, **or** whose wallet holds at least the `trustedMinStakeTier` stake tier (`gold`) **and** whose operator signed the pledge (§4) | Network price | `config.privacy.fallback` (default `upstream_zdr`). `fallback: "network"` is only honoured when nobody asked for trusted explicitly; an explicit trusted request (header, body or key) goes to the ZDR upstream and **never silently to another node** |
+| `trusted` (default) | **Your own nodes** (reward wallet = the wallet behind the API key making the request), **or** nodes whose reward wallet is in `config.privacy.trustedWallets`, **or** whose wallet holds at least the `trustedMinStakeTier` stake tier (`gold`) **and** whose operator signed the pledge (§4) | Network price | `config.privacy.fallback` (default `upstream_zdr`). `fallback: "network"` is only honoured when nobody asked for trusted explicitly; an explicit trusted request (header, body or key) goes to the ZDR upstream and **never silently to another node** |
 | `network` | Any online, idle, reputable node advertising the model | Network price | Plain upstream |
 | `upstream_zdr` | OpenRouter with `provider: {data_collection: "deny"}` (zero-data-retention providers only) | List price | n/a (an upstream error is surfaced; fewer providers qualify, so a model can be unavailable under ZDR) |
 
@@ -70,11 +70,21 @@ Every reply says how it was served: headers `x-mesh-privacy` (`trusted | network
 "mesh": { "route": "openrouter", "privacy": "upstream_zdr", "servedBy": "upstream (ZDR)" }
 ```
 
-`servedBy` is one of `trusted node`, `network node`, `upstream (ZDR)`, `upstream`. After a trusted
-node fails before producing output, the retry only considers trusted nodes and the final fallback keeps
-ZDR (`x-mesh-fallback` carries the reason). A `trusted` job is marked as such in the queue and the
-claim is enforced in SQL (`UPDATE … WHERE privacy != 'trusted' OR <node is trusted>`), so a race
-between a trusted and an untrusted poller can never hand plaintext to the wrong machine.
+`servedBy` is one of `your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`.
+`your node` means a `trusted` request was served by a Mac whose reward wallet is your own. After a
+trusted node fails before producing output, the retry only considers trusted nodes and the final
+fallback keeps ZDR (`x-mesh-fallback` carries the reason). A `trusted` job is marked as such in the
+queue and the claim is enforced in SQL (`UPDATE … WHERE privacy != 'trusted' OR <node is trusted> OR
+<node wallet = job requester wallet>`), so a race between a trusted and an untrusted poller can never
+hand plaintext to the wrong machine.
+
+**The owner rule.** Your own Macs are trusted for your own requests: a node whose reward wallet equals
+the wallet behind the API key may serve that wallet's `trusted` requests without being allowlisted or
+staked + pledged (`trustedVia` reports `owner`). The request's wallet is kept in an internal
+`jobs.requester_wallet` column for the claim check only; it is **not** part of the job view a node
+receives (`JOB_VIEW_FIELDS` is unchanged, and `privacy.test.ts` asserts it is absent). The rule is
+one-directional: owning a node grants nothing for other wallets' requests, and when your node is
+offline the usual fallback applies (another trusted node, else the ZDR upstream).
 
 ## 3. What we do technically
 
@@ -153,9 +163,9 @@ Node ID: <nodeId>
 
 The gateway verifies the signature (ed25519 for Solana, EIP-191 for EVM) against the node's reward
 wallet and stores `nodes.pledge_at`, `pledge_signature`, `pledge_chain`. A node is trusted when
-`trustedVia(node)` is `allowlist` (wallet in `config.privacy.trustedWallets`) or `stake+pledge`
-(pledge signed **and** the wallet's stake tier ≥ `config.privacy.trustedMinStakeTier`, read from the
-per-epoch stake cache). Stake dropping below gold removes trusted status at the next epoch without any
+`trustedVia(node, requesterWallet)` is `owner` (the node's reward wallet is the requesting wallet,
+§2), `allowlist` (wallet in `config.privacy.trustedWallets`) or `stake+pledge` (pledge signed **and**
+the wallet's stake tier ≥ `config.privacy.trustedMinStakeTier`, read from the per-epoch stake cache). Stake dropping below gold removes trusted status at the next epoch without any
 action on our side; an allowlist entry or a config change takes effect immediately.
 `GET /nodes/:id` and `GET /me/nodes` include `pledge: {signed, signedAt, trusted, trustedVia,
 allowlisted, requiredStakeTier, stakeTier, stakeOk}` so the web Node page can show the card.

@@ -585,7 +585,7 @@ paths:
         * Otherwise the request goes to the upstream provider at its list price and `x-mesh-route` names the upstream.
           If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
         * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
-          (`trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
+          (`your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
         * Non-streamed replies set `x-mesh-cost-usd` and `x-mesh-balance-usd`. Streamed replies carry `usage.cost`
           (USD) in the final chunk, plus `mesh: { route, nodeId, privacy, servedBy, listCostUsd, savedUsd }` when a node served it.
         * Failed requests are never charged. Rate limit: 120 requests per minute per key.
@@ -619,7 +619,7 @@ paths:
             x-mesh-saved-usd: { description: 'List price minus what you paid when a node served it (non-stream only).', schema: { type: string } }
             x-mesh-fallback: { description: 'Reason a node attempt was abandoned before output, or `no_trusted_node`.', schema: { type: string } }
             x-mesh-privacy: { description: 'Tier the reply was served under.', schema: { $ref: '#/components/schemas/PrivacyTier' } }
-            x-mesh-served-by: { description: '`trusted node`, `network node`, `upstream (ZDR)` or `upstream`.', schema: { type: string } }
+            x-mesh-served-by: { description: '`your node` (a trusted request served by your own Mac), `trusted node`, `network node`, `upstream (ZDR)` or `upstream`.', schema: { type: string } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChatCompletion' }
@@ -1455,7 +1455,7 @@ components:
       properties:
         route: { type: string, description: '`node`, or the upstream name (`openrouter`).' }
         privacy: { $ref: '#/components/schemas/PrivacyTier' }
-        servedBy: { type: string, enum: [trusted node, network node, upstream (ZDR), upstream] }
+        servedBy: { type: string, enum: [your node, trusted node, network node, upstream (ZDR), upstream] }
         nodeId: { type: string }
         chip: { type: string }
         listCostUsd: { type: number, description: What the upstream would have charged. }

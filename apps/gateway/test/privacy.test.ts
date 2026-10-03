@@ -3,7 +3,7 @@ import { parseTokenomics, type TokenomicsConfig } from '@mesh/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PLEDGE_COMMITMENTS, pledgeMessage } from '../src/auth.js';
 import { JOB_VIEW_FIELDS, JobBroker, sanitizeMessages } from '../src/network.js';
-import { decideRoute, isTrustedNode, resolvePrivacy, type NodeRow } from '../src/routing.js';
+import { decideRoute, isTrustedNode, resolvePrivacy, trustedVia, type NodeRow } from '../src/routing.js';
 import { OpenRouterUpstream, upstreamBody } from '../src/upstream.js';
 import { ADMIN, memDb, testConfig, testServer } from './helpers.js';
 
@@ -126,12 +126,17 @@ describe('anonymised jobs: what a node receives', () => {
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ]);
     const raw = JSON.stringify(job);
-    for (const leak of ['alice', 'ops-bot', 'end-user-4711', 'sess_secret', 'secret-client', '203.0.113.9', 'mesh_sk_', 'llama-3.1-8b', 'api_key', 'wallet', 'requestId', 'image_url']) {
+    for (const leak of ['alice', 'ops-bot', 'end-user-4711', 'sess_secret', 'secret-client', '203.0.113.9', 'mesh_sk_', 'llama-3.1-8b', 'api_key', 'wallet', 'requestId', 'image_url', 'requester']) {
       expect(raw).not.toContain(leak);
     }
+    // the internal requester wallet (owner rule) is stored on the row but never reaches the node
+    expect(job).not.toHaveProperty('requester_wallet');
+    expect(job).not.toHaveProperty('requesterWallet');
+    expect([...JOB_VIEW_FIELDS]).not.toContain('requesterWallet');
     // the stored row is the same sanitised payload (what a DB dump would show)
-    const row = app.ctx.db.prepare(`SELECT payload FROM jobs WHERE job_id = ?`).get(job.jobId) as { payload: string };
+    const row = app.ctx.db.prepare(`SELECT payload, requester_wallet FROM jobs WHERE job_id = ?`).get(job.jobId) as { payload: string; requester_wallet: string | null };
     expect(row.payload).not.toContain('ops-bot');
+    expect(row.requester_wallet).toBe('alice');
     await n.chunk(job.jobId, 0, 'ok');
     await n.done(job.jobId);
     const res = await client;
@@ -316,6 +321,90 @@ describe('trusted tier never silently degrades to network', () => {
 function app0Policy() {
   return { allow: [], deny: [], networkModels: { 'llama-3.1-8b': 'llama3.1:8b' } };
 }
+
+describe('owner rule: your own Macs are trusted for your own requests', () => {
+  // The API key in boot() belongs to wallet `alice`; a node registered with wallet `alice` is "her" Mac.
+  it("a plain node owned by the requesting wallet serves a trusted request, labelled 'your node'", async () => {
+    const { app, chat } = await boot();
+    const other = await fakeNode(app, { nodeId: 'someone-else', wallet: 'bob' });
+    const mine = await fakeNode(app, { nodeId: 'my-mac', wallet: 'alice' });
+    const row = (id: string) => app.ctx.db.prepare(`SELECT * FROM nodes WHERE node_id = ?`).get(id) as NodeRow;
+    // diagnostics: owner only for the requester's wallet; nothing wallet-wide
+    expect(trustedVia(app.ctx, row('my-mac'), 'alice')).toBe('owner');
+    expect(trustedVia(app.ctx, row('my-mac'))).toBeNull();
+    expect(trustedVia(app.ctx, row('my-mac'), 'bob')).toBeNull();
+    expect(isTrustedNode(app.ctx, row('someone-else'), 'alice')).toBe(false);
+    expect(decideRoute(app.ctx, 'llama-3.1-8b', { tier: 'trusted', source: 'header' }, { requesterWallet: 'alice' })).toMatchObject({ target: 'node', candidates: ['my-mac'], privacy: 'trusted', requesterWallet: 'alice' });
+    expect(decideRoute(app.ctx, 'llama-3.1-8b', { tier: 'trusted', source: 'header' }, { requesterWallet: 'carol' })).toMatchObject({ target: 'openrouter', reason: 'no_trusted_node' });
+
+    // the other wallet's node polls first and must not get the job
+    const otherPoll = other.pull(600);
+    await new Promise((r) => setTimeout(r, 50));
+    const { job, res } = await serve(mine, chat({ model: 'llama-3.1-8b', stream: true, messages: [{ role: 'user', content: 'secret' }] }, { 'x-mesh-privacy': 'trusted' }));
+    expect((await otherPoll).statusCode).toBe(204);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-mesh-privacy']).toBe('trusted');
+    expect(res.headers['x-mesh-served-by']).toBe('your node');
+    const last = sse(res.body).at(-1)!;
+    expect(last.mesh).toMatchObject({ route: 'node', nodeId: 'my-mac', privacy: 'trusted', servedBy: 'your node' });
+    // the node saw the protocol fields only
+    expect(Object.keys(job).sort()).toEqual([...JOB_VIEW_FIELDS].sort());
+    expect(JSON.stringify(job)).not.toContain('alice');
+    const stored = app.ctx.db.prepare(`SELECT privacy, requester_wallet, node_id FROM jobs WHERE job_id = ?`).get(job.jobId) as { privacy: string; requester_wallet: string; node_id: string };
+    expect(stored).toEqual({ privacy: 'trusted', requester_wallet: 'alice', node_id: 'my-mac' });
+
+    // non-stream: same label in the JSON body
+    const b = await serve(mine, chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'again' }] }));
+    expect(b.res.json().mesh).toMatchObject({ route: 'node', nodeId: 'my-mac', privacy: 'trusted', servedBy: 'your node' });
+    expect(b.res.headers['x-mesh-served-by']).toBe('your node');
+  });
+
+  it("another wallet's plain node never serves it; with the owner node offline the fallback is unchanged (ZDR upstream)", async () => {
+    const { app, chat } = await boot();
+    const other = await fakeNode(app, { nodeId: 'someone-else', wallet: 'bob' });
+    await fakeNode(app, { nodeId: 'my-mac', wallet: 'alice' });
+    // my Mac went offline (stale heartbeat)
+    app.ctx.db.prepare(`UPDATE nodes SET last_seen = ? WHERE node_id = 'my-mac'`).run(Math.floor(Date.now() / 1000) - 3600);
+    const r = await chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'private' }] });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['x-mesh-fallback']).toBe('no_trusted_node');
+    expect(r.json().mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect((await other.pull(0)).statusCode).toBe(204);
+    expect((app.ctx.db.prepare(`SELECT COUNT(*) AS n FROM jobs`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('a genuinely trusted node serving the request is still labelled "trusted node", not "your node"', async () => {
+    const { app, chat, login } = await boot();
+    const trusted = await trustedNode(app, login);
+    const { res } = await serve(trusted, chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'x' }] }));
+    expect(res.json().mesh).toMatchObject({ nodeId: trusted.id, privacy: 'trusted', servedBy: 'trusted node' });
+  });
+
+  it('broker: the claim SQL admits the owner node and refuses others, even when called directly', () => {
+    const db = memDb();
+    const t = Math.floor(Date.now() / 1000);
+    const node = (id: string, wallet: string): NodeRow => ({ node_id: id, wallet, url: '', models: '["llama3.1:8b"]', ram_gb: null, chip: null, busy: 0, created_at: t, last_seen: t, token_hash: null, agent_version: null, load_avg: null, pledge_at: null, pledge_signature: null, pledge_chain: null });
+    for (const [id, w] of [['mine', 'alice'], ['theirs', 'bob']]) db.prepare(`INSERT INTO nodes (node_id, wallet, url, models, created_at, last_seen) VALUES (?, ?, '', '["llama3.1:8b"]', ?, ?)`).run(id, w, t, t);
+    const broker = new JobBroker(db, () => ({ minSuccessRate: 0.8, reputationMinJobs: 5 })); // nobody is trusted via the callback
+    const mk = (requesterWallet: string | null) =>
+      broker.create({ model: 'm', tag: 'llama3.1:8b', wallet: 'alice', apiKeyId: 1, payload: { messages: [{ role: 'user', content: 'x' }], params: {} }, maxTokens: 10, deadlineMs: Date.now() + 5000, privacy: 'trusted', requesterWallet }).job;
+    const j1 = mk('alice');
+    expect(broker.tryClaim(j1.job_id, 'theirs', false)).toBeNull();
+    expect(broker.get(j1.job_id)!.status).toBe('queued');
+    expect(broker.tryClaim(j1.job_id, 'mine', false)?.node_id).toBe('mine');
+    // without a requester wallet the owner rule does not apply
+    const j2 = mk(null);
+    expect(broker.tryClaim(j2.job_id, 'mine', false)).toBeNull();
+    expect(broker.tryClaim(j2.job_id, 'theirs', false)).toBeNull();
+    // pull() path: only the owner's node finds it
+    db.prepare(`UPDATE nodes SET busy = 0`).run();
+    const j3 = mk('alice');
+    return Promise.all([broker.pull(node('theirs', 'bob'), 0), broker.pull(node('mine', 'alice'), 0)]).then(([theirs, mine]) => {
+      expect(theirs).toBeNull();
+      expect(mine?.job_id).toBe(j3.job_id);
+    });
+  });
+});
 
 describe('operator pledge', () => {
   it('GET returns the exact text; POST by the owner stores pledge_at + signature; wrong signer / other wallet / node token are refused', async () => {
