@@ -125,7 +125,8 @@ export function nodeRewardsTotal(db: Db, where: { wallet?: string; nodeId?: stri
 
 // ---------------- treasury ledger (what the treasury share received and what it owes) ----------------
 
-export type TreasuryKind = 'fee_share' | 'node_reward_accrual' | 'buyback' | 'ops' | 'other';
+/** `guest_chat`: what a free guest message (routes/guest.ts) cost the treasury when the upstream served it. */
+export type TreasuryKind = 'fee_share' | 'node_reward_accrual' | 'buyback' | 'ops' | 'other' | 'guest_chat';
 
 export interface TreasuryRow {
   id: number;
@@ -161,7 +162,7 @@ export function treasuryBalanceMicros(db: Db): number {
 }
 
 export function treasuryTotalsByKind(db: Db, sinceSec = 0): Record<TreasuryKind, number> {
-  const out: Record<TreasuryKind, number> = { fee_share: 0, node_reward_accrual: 0, buyback: 0, ops: 0, other: 0 };
+  const out: Record<TreasuryKind, number> = { fee_share: 0, node_reward_accrual: 0, buyback: 0, ops: 0, other: 0, guest_chat: 0 };
   const rows = db
     .prepare(`SELECT kind, COALESCE(SUM(usd_micros), 0) AS v FROM treasury_ledger WHERE created_at >= ? GROUP BY kind`)
     .all(sinceSec) as Array<{ kind: TreasuryKind; v: number }>;

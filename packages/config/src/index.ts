@@ -152,6 +152,25 @@ export const TokenomicsSchema = z
         batchSize: z.number().int().min(1).max(5000).default(200),
       })
       .default({}),
+    /**
+     * Guest chat (apps/gateway/src/routes/guest.ts): homepage visitors get a few free messages a day
+     * without signing in, keyed by client IP. Served under the `network` privacy tier (Mesh nodes
+     * first, ZDR upstream fallback) and paid for by the treasury (`guest_chat` treasury rows).
+     * Disabled → /v1/guest/* is a 404.
+     */
+    guest: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Free messages per client IP per rolling 24h. */
+        messagesPerDay: z.number().int().min(0).default(5),
+        /** Hard cap on completion tokens per guest message. */
+        maxTokens: z.number().int().positive().default(400),
+        /** Hard cap on total prompt characters (all messages' content). */
+        maxInputChars: z.number().int().positive().default(2000),
+        /** Model used when the request does not name one. */
+        model: z.string().min(1).default('llama-3.1-8b'),
+      })
+      .default({}),
     /** Node network registration policy. */
     nodes: z
       .object({

@@ -166,7 +166,31 @@ export const REPORT_METHOD = {
   treasury:
     'treasuryBalanceUsd = treasury share received − node rewards accrued − buybacks − ops, from the treasury ledger. Node rewards accrue in USD when a Mesh node completes a job and are paid from the treasury share.',
   network: 'servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period (requests_log).',
+  guestChat:
+    'Free guest messages (POST /v1/guest/chat) are paid by the treasury: upstreamCostUsd is what the upstream charged for guest messages it served (guest_chat treasury rows); nodeRewardsUsd is what Mesh nodes earned serving guest messages (already inside node rewards accrued). Requests are counted in requests_log under the guest wallet.',
 };
+
+/** What free guest chat has cost so far (routes/guest.ts). */
+export function guestChatTotals(ctx: AppContext) {
+  const db = ctx.db;
+  const rq = db
+    .prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN upstream LIKE 'node:%' THEN 1 ELSE 0 END) AS node, COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens FROM requests_log WHERE wallet = 'guest'`)
+    .get() as { n: number; node: number | null; tokens: number };
+  const upstreamCost = (db.prepare(`SELECT COALESCE(SUM(-usd_micros),0) AS v FROM treasury_ledger WHERE kind = 'guest_chat'`).get() as { v: number }).v;
+  const rewards = (
+    db
+      .prepare(`SELECT COALESCE(SUM(r.usd_micros),0) AS v FROM node_rewards r JOIN jobs j ON j.job_id = r.job_id WHERE j.wallet = 'guest' AND r.kind = 'node_reward' AND r.status = 'accrued'`)
+      .get() as { v: number }
+  ).v;
+  return {
+    requests: rq.n,
+    servedByNetwork: rq.node ?? 0,
+    tokens: rq.tokens,
+    upstreamCostUsd: microsToUsd(upstreamCost),
+    nodeRewardsUsd: microsToUsd(rewards),
+    totalCostUsd: microsToUsd(upstreamCost + rewards),
+  };
+}
 
 export function computeReport(ctx: AppContext, now = nowSec()) {
   const db = ctx.db;
@@ -193,8 +217,10 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
         buybackUsd: microsToUsd(treasury.buyback),
         opsUsd: microsToUsd(treasury.ops),
         otherUsd: microsToUsd(treasury.other),
+        guestChatUsd: microsToUsd(treasury.guest_chat),
         balanceUsd: microsToUsd(treasuryBalanceMicros(db)),
       },
+      guestChat: guestChatTotals(ctx),
     },
     last7d,
     last30d,
