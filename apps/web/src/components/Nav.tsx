@@ -1,6 +1,6 @@
 import { NavLink, Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { useMe, usePointsEnabled } from '../lib/hooks';
+import { useBeta, useMe, usePointsEnabled } from '../lib/hooks';
 import { fmtUsd } from '../lib/format';
 
 function BalancePill() {
@@ -9,6 +9,17 @@ function BalancePill() {
     <Link to="/app" className="pill balance" aria-label="Your credits">
       Credits <b>{loading && !data ? '…' : fmtUsd(data?.balance.usd ?? 0, 3)}</b>
     </Link>
+  );
+}
+
+/** "Beta" marker shown while config.beta.enabled (from GET /stats). Renders nothing until the gateway confirms it. */
+export function BetaPill({ className = '' }: { className?: string }) {
+  const beta = useBeta();
+  if (!beta?.enabled) return null;
+  return (
+    <span className={`pill beta ${className}`.trim()} title={beta.inviteRequired ? 'Public beta: invite required to sign in' : 'Public beta'}>
+      {beta.label}
+    </span>
   );
 }
 
@@ -27,6 +38,7 @@ export function TopNav() {
           <i />
         </span>
         Mesh
+        <BetaPill />
       </Link>
       <NavLink to="/" end className={cls}>
         Home

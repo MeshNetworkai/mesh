@@ -69,6 +69,13 @@ interface AuthApi {
   modalOpen: boolean;
   openModal: () => void;
   closeModal: () => void;
+  /**
+   * Public beta: the gateway answered `403 invite_required` for the wallet that just signed. The modal
+   * shows the invite field; the next sign-in attempt sends `invite` along with the signature.
+   */
+  inviteNeeded: boolean;
+  invite: string;
+  setInvite: (code: string) => void;
   signInSolana: (adapterName: string) => Promise<void>;
   signInEvm: (connectorId: string) => Promise<void>;
   signInMock: () => Promise<void>;
@@ -95,6 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('idle');
   const [chain, setChain] = useState<Chain>(DEFAULT_CHAIN);
   const [modalOpen, setModalOpen] = useState(false);
+  const [inviteNeeded, setInviteNeeded] = useState(false);
+  const [invite, setInvite] = useState('');
+  const inviteRef = useRef(invite);
+  inviteRef.current = invite;
 
   const { connectAsync, connectors } = useConnect();
   const { signMessageAsync } = useSignMessage();
@@ -144,6 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(s);
       setStatus('idle');
       setModalOpen(false);
+      setInviteNeeded(false);
+      setInvite('');
     },
     [],
   );
@@ -152,6 +165,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (err: unknown) => {
       setStatus('idle');
       const msg = errorMessage(err);
+      // Beta gate: not an error, a missing (or wrong) invite code. Keep the modal open with the field showing.
+      if (err instanceof api.ApiError && (err.code === 'invite_required' || err.code === 'invite_invalid')) {
+        setInviteNeeded(true);
+        if (err.code === 'invite_required') toast.info('Mesh is in beta: enter your invite code and sign again');
+        else toast.error(msg);
+        return;
+      }
       // User-cancelled signatures are not errors worth shouting about.
       if (/reject|denied|cancel/i.test(msg)) toast.info('Signature cancelled');
       else toast.error(msg);
@@ -173,7 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return signed;
         });
         setStatus('verifying');
-        const res = await api.verifySignature(wallet, signature, 'solana', signed);
+        const res = await api.verifySignature(wallet, signature, 'solana', signed, inviteRef.current);
         finish(cookieSession(res.wallet, res.chain));
       } catch (err) {
         fail(err);
@@ -195,7 +215,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { message } = await api.getNonce(wallet);
         const signature = await signMessageAsync({ message, account: wallet });
         setStatus('verifying');
-        const res = await api.verifySignature(wallet, signature, 'evm', message);
+        const res = await api.verifySignature(wallet, signature, 'evm', message, inviteRef.current);
         finish(cookieSession(res.wallet, res.chain));
       } catch (err) {
         fail(err);
@@ -207,7 +227,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInMock = useCallback(async () => {
     try {
       setStatus('verifying');
-      finish(await mockSession());
+      finish(await mockSession(inviteRef.current));
     } catch (err) {
       fail(err);
     }
@@ -265,6 +285,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       modalOpen,
       openModal: () => setModalOpen(true),
       closeModal: () => status === 'idle' && setModalOpen(false),
+      inviteNeeded,
+      invite,
+      setInvite,
       signInSolana,
       signInEvm,
       signInMock,
@@ -272,7 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       expire,
       signMessage,
     }),
-    [session, status, chain, modalOpen, signInSolana, signInEvm, signInMock, signOut, expire, signMessage],
+    [session, status, chain, modalOpen, inviteNeeded, invite, signInSolana, signInEvm, signInMock, signOut, expire, signMessage],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

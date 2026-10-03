@@ -22,6 +22,7 @@ import { jwtSecrets, type Env } from './env.js';
 import type { JobBroker } from './network.js';
 import type { StakeResolver } from './staking.js';
 import type { Upstream } from './upstream.js';
+import type { Verifier } from './verification.js';
 
 export interface AppContext {
   db: Db;
@@ -38,6 +39,8 @@ export interface AppContext {
   alerts?: AlertMonitor;
   /** Stake tier resolver (staking.ts): per-epoch cache of wallet → tier/multiplier. */
   stakes?: StakeResolver;
+  /** Spot-check verification of node work (verification.ts); absent only when a test injects nothing and config disables it. */
+  verifier?: Verifier;
 }
 
 export interface Session {

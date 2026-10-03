@@ -4,9 +4,9 @@ import { MOCK } from '../config';
 import * as api from '../lib/api';
 import { ApiError, COOKIE_SESSION } from '../lib/api';
 import { fmtAgo, fmtDateTime, fmtInt, fmtUsd, shortAddr } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useCopy } from '../lib/hooks';
 import { MOCK_ADMIN_TOKEN_HINT } from '../lib/mock';
-import type { AdminOverview } from '../lib/types';
+import type { AdminOverview, WaitlistEntry } from '../lib/types';
 
 /**
  * Operator page. The ADMIN_TOKEN is sent once to POST /admin/login, which answers with a 12 h
@@ -118,6 +118,7 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
   const [fees, runFees] = useAction(onUnauthorized);
   const [starter, runStarter] = useAction(onUnauthorized);
   const [revoke, runRevoke] = useAction(onUnauthorized);
+  const [unquarantine, runUnquarantine] = useAction(onUnauthorized);
   const [feeAmount, setFeeAmount] = useState('100');
   const [batch, setBatch] = useState('');
   const [note, setNote] = useState('');
@@ -152,6 +153,16 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
               <span className="dot" /> holding age off
             </span>
           )}
+          {o?.beta?.enabled ? (
+            <span className="pill sm outline-accent">
+              {o.beta.label.toLowerCase()} · {o.beta.inviteRequired ? 'invite required' : 'open'}
+            </span>
+          ) : null}
+          {o?.verification ? (
+            <span className={`pill sm ${o.verification.config.enabled ? '' : 'off'}`}>
+              <span className={`dot ${o.verification.config.enabled ? 'dot-live' : ''}`} /> spot checks {o.verification.config.enabled ? `${Math.round(o.verification.config.sampleRate * 100)}%` : 'off'}
+            </span>
+          ) : null}
         </div>
         <span className="small muted">{o ? `refreshed ${fmtAgo(o.time)}` : ''}</span>
       </div>
@@ -236,6 +247,8 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
         </div>
       </div>
 
+      {o?.beta?.enabled ? <BetaPanels token={token} o={o} onUnauthorized={onUnauthorized} onChanged={() => void ov.reload()} /> : null}
+
       <div className="stack sm">
         <span className="eyebrow">Recent epochs</span>
         {loading ? <Skeleton w="100%" h="120px" /> : o ? <EpochTable o={o} /> : null}
@@ -295,13 +308,14 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
                     <th>Status</th>
                     <th>Chip</th>
                     <th>Wallet</th>
+                    <th title="spot checks: ok / suspect / mismatch">Checks</th>
                     <th>Seen</th>
                   </tr>
                 </thead>
                 <tbody>
                   {o.nodes.length === 0 ? (
                     <tr>
-                      <td className="muted" colSpan={5}>
+                      <td className="muted" colSpan={6}>
                         No nodes registered.
                       </td>
                     </tr>
@@ -310,14 +324,35 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
                       <tr key={n.nodeId}>
                         <td className="mono">{n.nodeId}</td>
                         <td>
-                          <span className={`pill sm ${n.online ? '' : 'off'}`}>
-                            <span className={`dot ${n.online ? 'dot-live' : ''}`} />
-                            {n.online ? (n.busy ? 'busy' : 'idle') : 'offline'}
-                          </span>
+                          {n.quarantined ? (
+                            <span className="row" style={{ gap: 6 }}>
+                              <span className="pill sm bad" title={n.verification?.quarantineReason ?? 'quarantined'}>
+                                <span className="dot" />
+                                quarantined
+                              </span>
+                              <button className="btn ghost sm" disabled={unquarantine.busy} onClick={() => runUnquarantine(() => api.adminClearQuarantine(token, n.nodeId), () => ov.reload())}>
+                                Clear
+                              </button>
+                            </span>
+                          ) : (
+                            <span className={`pill sm ${n.online ? '' : 'off'}`}>
+                              <span className={`dot ${n.online ? 'dot-live' : ''}`} />
+                              {n.online ? (n.busy ? 'busy' : 'idle') : 'offline'}
+                            </span>
+                          )}
                         </td>
                         <td>{n.chip ?? '—'}</td>
                         <td className="mono" title={n.wallet}>
                           {shortAddr(n.wallet, 6, 4)}
+                        </td>
+                        <td className="mono small">
+                          {n.verification ? (
+                            <>
+                              <span className="pos">{n.verification.ok}</span> / {n.verification.suspect} / <span className={n.verification.mismatch ? 'neg' : ''}>{n.verification.mismatch}</span>
+                            </>
+                          ) : (
+                            '—'
+                          )}
                         </td>
                         <td className="muted">{fmtAgo(n.lastSeen)}</td>
                       </tr>
@@ -327,8 +362,62 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
               </table>
             </div>
           ) : null}
+          {unquarantine.error ? <Notice kind="bad">{unquarantine.error}</Notice> : null}
         </div>
       </div>
+
+      {o?.verification ? (
+        <div className="stack sm">
+          <span className="eyebrow">Spot checks · verification</span>
+          <p className="hint">
+            {fmtInt(o.verification.checked)} jobs re-checked: <span className="pos">{fmtInt(o.verification.ok)} ok</span> · {fmtInt(o.verification.suspect)} suspect ·{' '}
+            <span className={o.verification.mismatch ? 'neg' : ''}>{fmtInt(o.verification.mismatch)} mismatch</span> · {fmtInt(o.verification.inconclusive)} inconclusive ·{' '}
+            {fmtInt(o.verification.quarantinedNodes)} quarantined. Sample {Math.round(o.verification.config.sampleRate * 100)}% (×3 under {o.verification.config.minJobsBeforeTrust} jobs), mismatch = {o.verification.config.mismatchPenalty}{' '}
+            failures, quarantine after {o.verification.config.quarantineAfterMismatches}.
+          </p>
+          <div className="tblwrap">
+            <table className="tbl small">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Verdict</th>
+                  <th className="num">Score</th>
+                  <th>Primary</th>
+                  <th>Checked by</th>
+                  <th>Reasons</th>
+                </tr>
+              </thead>
+              <tbody>
+                {o.verification.recent.length === 0 ? (
+                  <tr>
+                    <td className="muted" colSpan={6}>
+                      No checks yet.
+                    </td>
+                  </tr>
+                ) : (
+                  o.verification.recent.slice(0, 12).map((v) => (
+                    <tr key={v.id}>
+                      <td className="muted">{fmtAgo(v.createdAt)}</td>
+                      <td>
+                        <span className={`pill sm ${v.verdict === 'ok' ? '' : v.verdict === 'mismatch' ? 'bad' : v.verdict === 'suspect' ? 'warn' : 'off'}`}>
+                          <span className="dot" />
+                          {v.verdict}
+                        </span>
+                      </td>
+                      <td className="num mono">{v.score === null ? '—' : v.score.toFixed(2)}</td>
+                      <td className="mono">{v.primaryNode}</td>
+                      <td className="mono">{v.checkNode}</td>
+                      <td className="mono wrap" style={{ fontSize: 12 }}>
+                        {v.reasons.join(' · ') || '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <div className="panels">
         <div className="stack sm">
@@ -393,6 +482,187 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
             </div>
           ) : null}
         </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Public beta: the waitlist (oldest first) and invite codes. "Admit next N" mints one one-use code
+ * per entry and shows them here; sending them is on you (e-mail delivery is out of scope). Wallet
+ * entries are admitted directly and sign in without a code.
+ */
+function BetaPanels({ token, o, onUnauthorized, onChanged }: { token: string; o: AdminOverview; onUnauthorized: () => void; onChanged: () => void }) {
+  const beta = o.beta!;
+  const [status, setStatus] = useState<'waiting' | 'invited' | 'all'>('waiting');
+  const wl = useAsync(() => api.adminWaitlist(token, status), [token, status], 60_000);
+  const [admitN, setAdmitN] = useState(String(beta.batchSize));
+  const [count, setCount] = useState('5');
+  const [uses, setUses] = useState('1');
+  const [admit, runAdmit] = useAction(onUnauthorized);
+  const [invites, runInvites] = useAction(onUnauthorized);
+  const [copied, copy] = useCopy();
+  const admitted = (admit.result as { entries?: WaitlistEntry[] } | undefined)?.entries;
+  const codes = (invites.result as { codes?: string[] } | undefined)?.codes;
+  const codeLines = (rows: WaitlistEntry[]) => rows.map((e) => `${e.email ?? e.wallet ?? ''}\t${e.code ?? ''}`).join('\n');
+
+  return (
+    <>
+      <div className="tiles">
+        <Tile label="Waiting" value={fmtInt(beta.waiting)} delta={`${fmtInt(beta.total)} on the list`} />
+        <Tile label="Invited" value={fmtInt(beta.invited)} delta="codes sent from the list" />
+        <Tile label="Admitted wallets" value={fmtInt(beta.admitted)} delta="signed in with a code or admitted" />
+        <Tile label="Live codes" value={fmtInt(beta.liveCodes)} delta={`${fmtInt(beta.liveUses)} uses left`} />
+      </div>
+      <div className="panels">
+        <div className="panel" aria-label="Waitlist">
+          <span className="eyebrow">Waitlist · admit the next batch</span>
+          <p className="hint">
+            Oldest {beta.batchSize} by default. Each e-mail entry gets a one-use code to send by hand; wallet entries are admitted straight away and sign in
+            without a code. Watch the runbook signals between batches.
+          </p>
+          <div className="keybox">
+            <input className="input mono sm" type="number" min="1" max="5000" step="1" value={admitN} onChange={(e) => setAdmitN(e.target.value)} aria-label="How many to admit" />
+            <button
+              className="btn primary sm"
+              disabled={admit.busy || !(Number(admitN) > 0) || beta.waiting === 0}
+              onClick={() =>
+                runAdmit(
+                  () => api.adminAdmitWaitlist(token, Number(admitN)),
+                  () => {
+                    onChanged();
+                    void wl.reload();
+                  },
+                )
+              }
+            >
+              {admit.busy ? <Spinner /> : null} Admit next {admitN || '…'}
+            </button>
+          </div>
+          {admit.error ? <Notice kind="bad">{admit.error}</Notice> : null}
+          {admitted ? (
+            <div className="stack sm">
+              <div className="row between">
+                <span className="small">
+                  {admitted.length === 0 ? 'Nobody was waiting.' : `${fmtInt(admitted.length)} admitted. Send each code to its address:`}
+                </span>
+                {admitted.length ? (
+                  <button className="btn ghost sm" onClick={() => void copy(codeLines(admitted))}>
+                    {copied ? 'Copied' : 'Copy all'}
+                  </button>
+                ) : null}
+              </div>
+              {admitted.length ? (
+                <div className="tblwrap">
+                  <table className="tbl small">
+                    <thead>
+                      <tr>
+                        <th>Who</th>
+                        <th>Code</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {admitted.map((e) => (
+                        <tr key={e.id}>
+                          <td className="mono">{e.email ?? shortAddr(e.wallet ?? '', 6, 4)}</td>
+                          <td className="mono">{e.wallet && !e.email ? 'admitted (no code needed)' : e.code}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="panel" aria-label="Invites">
+          <span className="eyebrow">Invite codes · mint</span>
+          <p className="hint">For friends, partners and support cases. Codes are shown once; a wallet that uses one stays admitted for good.</p>
+          <div className="keybox">
+            <input className="input mono sm" type="number" min="1" max="1000" step="1" value={count} onChange={(e) => setCount(e.target.value)} aria-label="Number of codes" />
+            <span className="small muted">×</span>
+            <input className="input mono sm" type="number" min="1" max="10000" step="1" value={uses} onChange={(e) => setUses(e.target.value)} aria-label="Uses per code" />
+            <button
+              className="btn secondary sm"
+              disabled={invites.busy || !(Number(count) > 0) || !(Number(uses) > 0)}
+              onClick={() => runInvites(() => api.adminInvites(token, Number(count), Number(uses)), onChanged)}
+            >
+              {invites.busy ? <Spinner /> : null} Mint
+            </button>
+          </div>
+          {invites.error ? <Notice kind="bad">{invites.error}</Notice> : null}
+          {codes ? (
+            <div className="stack sm">
+              <div className="row between">
+                <span className="small">
+                  {fmtInt(codes.length)} code{codes.length === 1 ? '' : 's'}, {uses} use{Number(uses) === 1 ? '' : 's'} each:
+                </span>
+                <button className="btn ghost sm" onClick={() => void copy(codes.join('\n'))}>
+                  {copied ? 'Copied' : 'Copy all'}
+                </button>
+              </div>
+              <div className="codes" aria-label="Invite codes">
+                {codes.map((c) => (
+                  <code key={c}>{c}</code>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="stack sm" aria-label="Waitlist entries">
+        <div className="row between">
+          <span className="eyebrow">Waitlist · {status}</span>
+          <div className="seg" role="tablist" aria-label="Waitlist filter">
+            {(['waiting', 'invited', 'all'] as const).map((st) => (
+              <button key={st} role="tab" aria-selected={status === st} className={status === st ? 'on' : ''} onClick={() => setStatus(st)}>
+                {st}
+              </button>
+            ))}
+          </div>
+        </div>
+        {wl.loading && !wl.data ? (
+          <Skeleton w="100%" h="100px" />
+        ) : wl.error && !wl.data ? (
+          <Notice kind="bad">{wl.error}</Notice>
+        ) : wl.data ? (
+          <div className="tblwrap">
+            <table className="tbl small">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Who</th>
+                  <th>Joined</th>
+                  <th>Invited</th>
+                  <th>Code</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wl.data.entries.length === 0 ? (
+                  <tr>
+                    <td className="muted" colSpan={5}>
+                      {status === 'waiting' ? 'Nobody waiting.' : 'Nothing here.'}
+                    </td>
+                  </tr>
+                ) : (
+                  wl.data.entries.slice(0, 50).map((e) => (
+                    <tr key={e.id}>
+                      <td className="muted">{e.id}</td>
+                      <td className="mono" title={e.wallet ?? e.email ?? ''}>
+                        {e.email ?? shortAddr(e.wallet ?? '', 6, 4)}
+                      </td>
+                      <td className="muted">{fmtAgo(e.createdAt)}</td>
+                      <td className="muted">{e.invitedAt ? fmtAgo(e.invitedAt) : '—'}</td>
+                      <td className="mono">{e.code ?? '—'}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </div>
     </>
   );

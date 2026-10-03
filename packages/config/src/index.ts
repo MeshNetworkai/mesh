@@ -119,6 +119,39 @@ export const TokenomicsSchema = z
           .default({}),
       })
       .default({}),
+    /**
+     * Spot-check verification of node work (apps/gateway/src/verification.ts, docs/NODE_PROTOCOL.md §10).
+     * A sampled fraction of network-served jobs is re-run on a second node (or the upstream) at
+     * temperature 0 after the client has its answer; the two outputs are compared and a `mismatch`
+     * costs the primary node reputation and that job's reward. Repeated mismatches quarantine the node.
+     */
+    verification: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Fraction of eligible jobs re-checked (0..1). New nodes are sampled at 3× this rate. */
+        sampleRate: z.number().min(0).max(1).default(0.05),
+        /** A node with fewer scored jobs than this is "new" and sampled at 3× `sampleRate`. */
+        minJobsBeforeTrust: z.number().int().min(0).default(20),
+        /** One `mismatch` verdict counts as this many node-fault failures in the reputation window. */
+        mismatchPenalty: z.number().int().min(1).default(3),
+        /** Mismatches within the reputation window that quarantine the node until an admin clears it. */
+        quarantineAfterMismatches: z.number().int().min(1).default(2),
+      })
+      .default({}),
+    /**
+     * Public beta gating (docs/RUNBOOK.md "Public beta rollout"). With `inviteRequired`, a wallet
+     * signs in (and registers nodes) only once admitted: either with an invite code on /auth/verify
+     * or because an admin admitted it from the waitlist. `label` is what the web app shows in the pill.
+     */
+    beta: z
+      .object({
+        enabled: z.boolean().default(false),
+        label: z.string().min(1).max(24).default('Beta'),
+        inviteRequired: z.boolean().default(false),
+        /** Default number of waitlist entries POST /admin/waitlist/admit admits per call. */
+        batchSize: z.number().int().min(1).max(5000).default(200),
+      })
+      .default({}),
     /** Node network registration policy. */
     nodes: z
       .object({

@@ -12,7 +12,13 @@ const loaded = loadTokenomics();
  * tier as the default; the production default is `trusted` (docs/PRIVACY.md) and privacy.test.ts
  * exercises that with its own config.
  */
-export const testConfig: TokenomicsConfig = { ...loaded, privacy: { ...loaded.privacy, default: 'network' } };
+export const testConfig: TokenomicsConfig = {
+  ...loaded,
+  privacy: { ...loaded.privacy, default: 'network' },
+  // Protocol tests register plain nodes and sign in directly: beta gating and spot checks are exercised by beta.test.ts / verification.test.ts with their own config.
+  beta: { ...loaded.beta, enabled: false },
+  verification: { ...loaded.verification, enabled: false },
+};
 
 /** Network pricing the tests assert against, read from config/tokenomics.json so a repricing does not break the arithmetic. */
 export const NETWORK_PRICE_PER_M = testConfig.requestPricing.networkPricePerMTokens;

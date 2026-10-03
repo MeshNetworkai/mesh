@@ -281,6 +281,72 @@ docker run --rm -v mesh_mesh-data:/data -v "$PWD":/out alpine sh -c 'cp /data/me
 scp mesh@YOUR_VPS_IP:~/mesh/mesh-*.db ~/backups/     # from your laptop
 ```
 
+## 9b. Public beta rollout
+
+The launch above is a **public beta**: anyone can see the site, nobody signs in or runs a node until
+their wallet is admitted (`config/tokenomics.json → beta`, `apps/gateway/src/beta.ts`). The web app
+shows the `Beta` pill, the landing CTA is "Join the waitlist" (wallet or e-mail → `POST /waitlist`),
+and `POST /auth/verify` answers `403 invite_required` until the wallet presents a code once.
+
+```json
+"beta": { "enabled": true, "label": "Beta", "inviteRequired": true, "batchSize": 200 }
+```
+
+**Day 0: seed.** Mint codes for the friends list and the node operators you already know (one code
+per person, or one shared code with N uses for a group chat), then send them yourself:
+
+```sh
+curl -s -X POST $G/admin/invites -H "$A" -H "$J" -d '{"count":10,"uses":1}' | jq -r '.codes[]'
+curl -s -X POST $G/admin/invites -H "$A" -H "$J" -d '{"count":1,"uses":25}' | jq -r '.codes[0]'   # one code for the ops chat
+curl -s -X POST $G/admin/admit -H "$A" -H "$J" -d '{"wallet":"<wallet>"}'                        # admit one wallet by hand
+```
+
+A wallet that signs in with a code is admitted for good (`admissions` table); the code loses one use.
+Node registration checks the same table, so an operator signs in on the web first, then links the Mac.
+
+**Batches.** Admit from the waitlist oldest-first, `batchSize` (200) at a time, from the Admin page
+("Admit next 200") or:
+
+```sh
+curl -s -X POST $G/admin/waitlist/admit -H "$A" -H "$J" -d '{"n":200}' | jq -r '.entries[] | "\(.email // .wallet)\t\(.code)"'
+curl -s "$G/admin/waitlist?status=waiting&limit=5" -H "$A" | jq '.counts'
+```
+
+Each e-mail entry gets a **one-use code** you send by hand (mail-merge the two columns; there is no
+mailer in the gateway); wallet entries are admitted directly and sign in without typing anything.
+The call is idempotent in the sense that an entry is admitted once; running it again takes the next
+oldest. Suggested cadence: one batch per day for the first week, then two, as long as the signals
+below stay green. Space batches at least a few hours apart so a bad batch is attributable.
+
+**What to watch between batches** (all in `GET /admin/overview`, the Admin page, or `/health/alerts`):
+
+| Signal | Green | Act when |
+| --- | --- | --- |
+| `recentErrors` rate (5xx, `upstream_*`, `node_stream_failed`) | flat per request | rises with the batch → hold the next one, read §11b/§11c |
+| `totals.requests24h` ÷ admitted wallets | > 1 (people actually use it) | ≪ 1 for two batches → the onboarding is broken, not the capacity; check the sign-in funnel before admitting more |
+| OpenRouter spend vs. cap (`/report`, provider dashboard) | within the daily budget | > 70 % of the cap → smaller batch or raise the cap |
+| `nodesOnline`, `servedByNetworkPercent` | both rising with the operator invites | share falls while requests rise → you admitted users faster than operators; send the operator invite (LAUNCH_COPY §4) before the next user batch |
+| `verification` (`mismatch`, `quarantinedNodes`, `docs/NODE_PROTOCOL.md` §10) | mismatches rare, quarantines explainable | a quarantine per batch → look at the nodes before inviting more operators; clear only after you understand why |
+| Credits: `creditsOutstandingUsd` vs. fees | outstanding grows slower than fees | starter credits dwarf earned ones → stop handing out starters |
+| Waitlist `waiting` | shrinking | growing faster than you admit for a week → bigger batches, or open fully |
+| Disk, DB size | flat | §11e |
+
+Between batches also read the last 20 `admin_actions` (you are the only admin; anything you did not do
+is an incident, §11d) and spot-check one admitted wallet's `/me` for a sane ledger.
+
+**When to open fully.** Flip `beta.inviteRequired` to `false` (rebuild, `config/*.json` is baked in)
+when all of these have held for a week: no batch caused an error spike, the network share is where
+you want it with headroom (idle nodes online at the daily peak), OpenRouter spend is predictable and
+under the cap, the waitlist is being admitted faster than it grows, and the spot-check mismatch rate
+is near zero with no unexplained quarantine. Keep `beta.enabled: true` (the pill and the Terms "Beta"
+clause stay) until you are also happy to drop the "we may reset or pause" language; then set
+`enabled: false`, which hides the pill, closes the waitlist (`POST /waitlist` → 404) and changes
+nothing else. Admissions stay in the table; they are harmless once the gate is off.
+
+**Closing again.** Set `inviteRequired: true` and rebuild: already-admitted wallets keep working,
+new wallets see the waitlist. No data changes, so this is the fastest brake you have short of
+stopping the gateway.
+
 ## 10. Rollback
 
 ```sh
@@ -410,4 +476,9 @@ docker compose start gateway && curl -s $G/health | jq .ok
 | Everything on one screen | `GET /admin/overview` (admin) |
 | Force / replay an epoch | `POST /admin/run-epoch {epochStart?}` (admin) |
 | Credits for friends | `POST /admin/starter-credits {items:[{wallet, amountUsd}], note}` (admin) |
+| Beta: mint invite codes | `POST /admin/invites {count, uses}` (admin) → `codes[]` |
+| Beta: admit next waitlist batch | `POST /admin/waitlist/admit {n?}` (admin) → `entries[] {email|wallet, code}` |
+| Beta: waitlist + counters | `GET /admin/waitlist?status=waiting|invited|all` (admin) |
+| Beta: admit one wallet | `POST /admin/admit {wallet}` (admin) |
+| Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |

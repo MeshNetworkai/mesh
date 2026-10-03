@@ -25,6 +25,9 @@ mkdirSync(outDir, { recursive: true });
 
 const PAGES = [
   { path: '/', name: 'landing', full: true },
+  // Beta: the landing as a stranger sees it (pill, waitlist CTA) and the sign-in modal asking for an invite code.
+  { path: '/', name: 'landing-beta', full: true, anon: true },
+  { path: '/', name: 'invite', anon: true },
   { path: '/app', name: 'app' },
   { path: '/app/keys', name: 'keys' },
   { path: '/app/chat', name: 'chat' },
@@ -79,14 +82,34 @@ try {
     });
     // No third-party requests in CI: fonts are self-hosted via @fontsource.
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1|localhost)/, (r) => r.abort());
-    const page = await ctx.newPage();
+    // Signed-out context for the `anon` pages (the init script above would re-seed the session on every load).
+    const anonCtx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, colorScheme: 'light' });
+    await anonCtx.addInitScript(() => {
+      try {
+        localStorage.setItem('mesh.theme', 'light');
+      } catch {}
+    });
+    await anonCtx.route(/^https?:\/\/(?!127\.0\.0\.1|localhost)/, (r) => r.abort());
+    const authedPage = await ctx.newPage();
+    const anonPage = await anonCtx.newPage();
     const errors = [];
-    page.on('pageerror', (e) => errors.push(e.message));
+    authedPage.on('pageerror', (e) => errors.push(e.message));
+    anonPage.on('pageerror', (e) => errors.push(e.message));
     for (const p of SELECTED) {
-      console.log(`→ ${p.path} @ ${w}`);
+      const page = p.anon ? anonPage : authedPage;
+      console.log(`→ ${p.path} @ ${w}${p.anon ? ' (signed out)' : ''}`);
       await page.goto(`${BASE}${p.path}`, { waitUntil: 'load' });
       await page.evaluate(() => document.fonts.ready.then(() => true));
       await page.waitForTimeout(900); // let mock latency + fonts settle
+      if (p.name === 'invite') {
+        // Open the sign-in modal and try the mock wallet without a code: the gateway's `invite_required` shows the field.
+        await page.locator('form#waitlist').waitFor({ timeout: 8000 }).catch(() => {});
+        await page.getByRole('button', { name: 'Connect wallet' }).first().click();
+        await page.locator('.wallet-btn', { hasText: 'Mock wallet' }).click();
+        await page.locator('#invite-code').waitFor({ timeout: 8000 }).catch(() => {});
+        await page.locator('#invite-code').fill('K7QM2-XDA4P').catch(() => {});
+        await page.waitForTimeout(300);
+      }
       if (p.name === 'admin') {
         // type the (mock) admin token so the console renders; it is kept in memory only
         const field = page.locator('#admin-token');
@@ -114,6 +137,7 @@ try {
     }
     if (errors.length) console.warn('page errors:', errors);
     await ctx.close();
+    await anonCtx.close();
   }
 } finally {
   await browser.close();

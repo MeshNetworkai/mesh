@@ -2,18 +2,26 @@ import { MockAdapter } from '@mesh/chain-adapter';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ADMIN_SESSION_TTL_SEC, safeEqual, signAdminSession, signSession } from '../auth.js';
+import { admit, admitOldest, betaView, createInviteCodes, listWaitlist, waitlistCounts } from '../beta.js';
 import { adminAudited, adminHeaderToken, authViaOf, clearAdminCookies, markAdminAudited, requireAdmin, setAdminCookies, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec, recordAdminAction } from '../db.js';
 import { runEpoch } from '../jobs/distribute.js';
 import { addLedgerEntry, balanceMicros, ensureWallet, treasuryBalanceMicros } from '../ledger.js';
 import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
+import { clearQuarantine, nodeVerificationStats, quarantineNode, verificationOverview } from '../verification.js';
+import { getNode } from './nodes.js';
 
 const FakeFeesBody = z.object({ amountUsd: z.number().positive() });
 const StarterItem = z.object({ wallet: z.string().min(1).max(128), amountUsd: z.number().positive().max(10_000) });
 const StarterBatchBody = z.object({ items: z.array(StarterItem).min(1).max(500), note: z.string().max(200).optional() });
 const RunEpochBody = z.object({ epochStart: z.number().int().nonnegative().optional() }).optional();
 const DevLoginBody = z.object({ wallet: z.string().min(1).max(128), chain: z.enum(['solana', 'evm']).optional() });
+const InvitesBody = z.object({ count: z.number().int().min(1).max(1000).default(1), uses: z.number().int().min(1).max(10_000).default(1) });
+const AdmitBody = z.object({ n: z.number().int().min(1).max(5000).optional() }).optional();
+const AdmitWalletBody = z.object({ wallet: z.string().min(1).max(128) });
+const WaitlistQuery = z.object({ limit: z.coerce.number().int().min(1).max(5000).default(500), status: z.enum(['waiting', 'invited', 'all']).default('all') });
+const QuarantineBody = z.object({ reason: z.string().min(1).max(200).default('manual') }).optional();
 
 export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   const guard = requireAdmin(ctx);
@@ -160,7 +168,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       apiKeys: (db.prepare(`SELECT COUNT(*) AS v FROM api_keys WHERE revoked = 0`).get() as { v: number }).v,
       requests: (db.prepare(`SELECT COUNT(*) AS v FROM requests_log`).get() as { v: number }).v,
       requests24h: (db.prepare(`SELECT COUNT(*) AS v FROM requests_log WHERE created_at >= ?`).get(now - 86_400) as { v: number }).v,
-      nodeRewards: (db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind='node_reward'`).get() as { v: number }).v,
+      nodeRewards: (db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind='node_reward' AND status='accrued'`).get() as { v: number }).v,
       treasuryBalance: treasuryBalanceMicros(db),
     };
     const holders = db
@@ -226,9 +234,88 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         busy: n.busy === 1,
         lastSeen: n.last_seen,
         online: n.last_seen >= now - NODE_ONLINE_SEC,
+        quarantined: n.quarantined_at !== null,
+        verification: nodeVerificationStats(db, n),
       })),
+      /** Spot-check verification (verification.ts): network-wide counts and the latest verdicts. */
+      verification: { ...verificationOverview(db), config: ctx.config.verification },
+      /** Public beta: config + waitlist / admissions counters (routes below manage them). */
+      beta: { ...betaView(ctx.config.beta), batchSize: ctx.config.beta.batchSize, ...waitlistCounts(db) },
       recentErrors: errors,
       recentAdminActions: actions.map((a) => ({ ...a, payload: safeJson(a.payload) })),
+    };
+  });
+
+  // ---------------- spot-check verification: quarantine management ----------------
+
+  /** Clear a quarantine set by repeated verification mismatches (or by hand). The node is routable again at once. */
+  app.post<{ Params: { id: string } }>('/admin/nodes/:id/quarantine/clear', { preHandler: guard }, async (req, reply) => {
+    const node = getNode(ctx, req.params.id);
+    if (!node) return reply.code(404).send({ error: 'not_found', message: `no node ${req.params.id}` });
+    const was = node.quarantined_at;
+    clearQuarantine(ctx.db, node.node_id);
+    audit(req, 'quarantine-clear', { nodeId: node.node_id, wallet: node.wallet, wasQuarantinedAt: was, reason: node.quarantine_reason });
+    return { nodeId: node.node_id, quarantined: false, wasQuarantinedAt: was, verification: nodeVerificationStats(ctx.db, getNode(ctx, node.node_id)!) };
+  });
+
+  /** Quarantine a node by hand (stops routing and pulls until cleared). */
+  app.post<{ Params: { id: string } }>('/admin/nodes/:id/quarantine', { preHandler: guard }, async (req, reply) => {
+    const parsed = QuarantineBody.safeParse(req.body ?? undefined);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const node = getNode(ctx, req.params.id);
+    if (!node) return reply.code(404).send({ error: 'not_found', message: `no node ${req.params.id}` });
+    const reason = `admin: ${parsed.data?.reason ?? 'manual'}`;
+    quarantineNode(ctx.db, node.node_id, reason);
+    audit(req, 'quarantine', { nodeId: node.node_id, wallet: node.wallet, reason });
+    return { nodeId: node.node_id, quarantined: true, verification: nodeVerificationStats(ctx.db, getNode(ctx, node.node_id)!) };
+  });
+
+  // ---------------- public beta: invites + waitlist ----------------
+
+  /** Mint invite codes: `count` codes with `uses` uses each (default 1 × 1). Codes are returned once here and listed nowhere else. */
+  app.post('/admin/invites', { preHandler: guard }, async (req, reply) => {
+    const parsed = InvitesBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const codes = createInviteCodes(ctx.db, parsed.data.count, parsed.data.uses, `admin:${req.ip}`);
+    audit(req, 'invites', { count: codes.length, uses: parsed.data.uses });
+    return { count: codes.length, uses: parsed.data.uses, codes, beta: betaView(ctx.config.beta) };
+  });
+
+  /** Admit a specific wallet without a code (support cases). */
+  app.post('/admin/admit', { preHandler: guard }, async (req, reply) => {
+    const parsed = AdmitWalletBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    admit(ctx.db, parsed.data.wallet, 'admin');
+    audit(req, 'admit', { wallet: parsed.data.wallet });
+    return { wallet: parsed.data.wallet, admitted: true };
+  });
+
+  /**
+   * Admit the oldest `n` waiting entries (default `beta.batchSize`): each gets a one-use code, returned
+   * here for the operator to send (e-mail delivery is out of scope). Wallet entries are admitted directly.
+   */
+  app.post('/admin/waitlist/admit', { preHandler: guard }, async (req, reply) => {
+    const parsed = AdmitBody.safeParse(req.body ?? undefined);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const n = parsed.data?.n ?? ctx.config.beta.batchSize;
+    const rows = admitOldest(ctx.db, n, `admin:${req.ip}`);
+    audit(req, 'waitlist-admit', { requested: n, admitted: rows.length });
+    return {
+      requested: n,
+      admitted: rows.length,
+      entries: rows.map((r) => ({ id: r.id, wallet: r.wallet, email: r.email, code: r.code, createdAt: r.created_at, invitedAt: r.invited_at })),
+      counts: waitlistCounts(ctx.db),
+    };
+  });
+
+  app.get('/admin/waitlist', { preHandler: guard }, async (req, reply) => {
+    const parsed = WaitlistQuery.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const rows = listWaitlist(ctx.db, parsed.data);
+    return {
+      counts: waitlistCounts(ctx.db),
+      beta: { ...betaView(ctx.config.beta), batchSize: ctx.config.beta.batchSize },
+      entries: rows.map((r) => ({ id: r.id, wallet: r.wallet, email: r.email, code: r.code, createdAt: r.created_at, invitedAt: r.invited_at })),
     };
   });
 
@@ -241,6 +328,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const chain = parsed.data.chain ?? ctx.adapter.chain;
     ensureWallet(ctx.db, parsed.data.wallet, chain);
+    // A dev session is an admitted wallet (so demo/e2e flows can register nodes under beta gating).
+    admit(ctx.db, parsed.data.wallet, 'dev');
     const token = await signSession(ctx.env.JWT_SECRET, parsed.data.wallet, chain);
     // Same cookie pair as /auth/verify so browser e2e / demo flows get a cookie session too.
     const csrf = setSessionCookies(ctx.env, reply, token);

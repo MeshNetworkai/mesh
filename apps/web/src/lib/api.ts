@@ -3,7 +3,11 @@ import { shortAddr } from './format';
 import * as mock from './mock';
 import type {
   AdminOverview,
+  AdminWaitlist,
+  AdmitResult,
   ApiKey,
+  InvitesResult,
+  WaitlistJoin,
   Board,
   ClaimResult,
   Leaderboard,
@@ -243,17 +247,41 @@ export const adminStarterCredits = (token: string, items: Array<{ wallet: string
 export const adminRevokeKey = (token: string, id: number): Promise<RevokeKeyResult> =>
   MOCK ? mock.mockAdminRevokeKey(token, id) : request<RevokeKeyResult>(`/admin/keys/${id}`, { method: 'DELETE', headers: adminHeaders(token) });
 
+/** POST /admin/nodes/:id/quarantine/clear — lift a verification quarantine; the node is routable again at once. */
+export const adminClearQuarantine = (token: string, nodeId: string): Promise<{ nodeId: string; quarantined: boolean }> =>
+  MOCK ? mock.mockAdminClearQuarantine(token, nodeId) : request(`/admin/nodes/${encodeURIComponent(nodeId)}/quarantine/clear`, { method: 'POST', headers: adminHeaders(token) });
+
+// ---------- public beta (waitlist + invites) ----------
+
+/** POST /waitlist — public; wallet or e-mail. */
+export const joinWaitlist = (input: { wallet?: string; email?: string }): Promise<WaitlistJoin> =>
+  MOCK ? mock.mockJoinWaitlist(input) : request<WaitlistJoin>('/waitlist', { method: 'POST', body: JSON.stringify(input) });
+
+export const adminWaitlist = (token: string, status: 'waiting' | 'invited' | 'all' = 'all', limit = 500): Promise<AdminWaitlist> =>
+  MOCK ? mock.mockAdminWaitlist(token, status) : request<AdminWaitlist>(`/admin/waitlist?status=${status}&limit=${limit}`, { headers: adminHeaders(token) });
+
+/** POST /admin/waitlist/admit — oldest `n` entries get one-use codes (returned here; you send them). */
+export const adminAdmitWaitlist = (token: string, n?: number): Promise<AdmitResult> =>
+  MOCK ? mock.mockAdminAdmitWaitlist(token, n) : request<AdmitResult>('/admin/waitlist/admit', { method: 'POST', headers: adminHeaders(token), body: JSON.stringify(n ? { n } : {}) });
+
+/** POST /admin/invites — mint `count` codes with `uses` uses each. */
+export const adminInvites = (token: string, count: number, uses: number): Promise<InvitesResult> =>
+  MOCK ? mock.mockAdminInvites(token, count, uses) : request<InvitesResult>('/admin/invites', { method: 'POST', headers: adminHeaders(token), body: JSON.stringify({ count, uses }) });
+
 // ---------- auth ----------
 
 /** Returns the SIWE/SIWS-style message the wallet must sign verbatim. */
 export const getNonce = (wallet: string) =>
   request<NonceResponse>('/auth/nonce', { method: 'POST', body: JSON.stringify({ wallet }) });
 
-/** Echoes the signed message so the gateway can pinpoint tampering (domain / nonce / issued-at). */
-export const verifySignature = (wallet: string, signature: string, chain: 'solana' | 'evm', message: string) =>
+/**
+ * Echoes the signed message so the gateway can pinpoint tampering (domain / nonce / issued-at). `invite`
+ * is the beta invite code: the gateway answers `403 invite_required` when the wallet needs one.
+ */
+export const verifySignature = (wallet: string, signature: string, chain: 'solana' | 'evm', message: string, invite?: string | null) =>
   request<Session & { expiresIn: string }>('/auth/verify', {
     method: 'POST',
-    body: JSON.stringify({ wallet, signature, chain, message }),
+    body: JSON.stringify({ wallet, signature, chain, message, ...(invite ? { invite } : {}) }),
   });
 
 // ---------- session-scoped ----------

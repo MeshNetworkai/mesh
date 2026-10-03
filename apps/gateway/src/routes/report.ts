@@ -130,7 +130,7 @@ export function periodTotals(ctx: AppContext, from: number, to: number): PeriodT
   s.starter = led.starter;
   s.used = led.used;
   s.rewards = (
-    db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind='node_reward' AND created_at >= ? AND created_at < ?`).get(from, to) as { v: number }
+    db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind='node_reward' AND status='accrued' AND created_at >= ? AND created_at < ?`).get(from, to) as { v: number }
   ).v;
   const rq = db
     .prepare(

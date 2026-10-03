@@ -2,6 +2,7 @@ import { verifierFor, type Chain } from '@mesh/chain-adapter';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { NONCE_TTL_SEC, SESSION_TTL_SEC, loginMessage, parseLoginMessage, signSession } from '../auth.js';
+import { betaView, inviteRequired, isAdmitted, redeemInvite } from '../beta.js';
 import { clearSessionCookies, resolveSession, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { ensureWallet } from '../ledger.js';
@@ -18,6 +19,8 @@ const VerifyBody = z.object({
   nonce: z.string().min(1).max(64).optional(),
   /** Optional: the exact message the wallet signed; must equal what the server issued. */
   message: z.string().max(2000).optional(),
+  /** Beta: invite code for a wallet that has never been admitted (config.beta.inviteRequired). */
+  invite: z.string().trim().min(1).max(64).optional(),
 });
 
 export async function authRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -90,12 +93,26 @@ export async function authRoutes(app: FastifyInstance, ctx: AppContext) {
       return reply.code(401).send({ error: 'bad_signature', message: 'signature does not match the issued sign-in message' });
     }
 
+    // ---- beta gate: the signature is good, but is this wallet allowed in yet? (docs/RUNBOOK.md) ----
+    const beta = ctx.config.beta;
+    if (inviteRequired(beta) && !isAdmitted(ctx.db, wallet)) {
+      if (!parsed.data.invite) {
+        return reply.code(403).send({ error: 'invite_required', message: `Mesh is in ${beta.label.toLowerCase()}: this wallet needs an invite code to sign in. Join the waitlist or enter your code.`, statusCode: 403, beta: betaView(beta) });
+      }
+      const r = redeemInvite(ctx.db, wallet, parsed.data.invite);
+      if (!r.ok) {
+        req.log.info({ wallet, reason: r.reason }, 'invite code rejected');
+        return reply.code(403).send({ error: 'invite_invalid', message: r.reason === 'exhausted' ? 'This invite code has no uses left.' : 'Unknown invite code.', statusCode: 403, reason: r.reason, beta: betaView(beta) });
+      }
+      req.log.info({ wallet, code: r.code }, 'wallet admitted to the beta with an invite code');
+    }
+
     ensureWallet(ctx.db, wallet, chain);
     ctx.db.prepare(`UPDATE wallets SET last_login = ? WHERE wallet = ?`).run(nowSec(), wallet);
     const token = await signSession(ctx.env.JWT_SECRET, wallet, chain);
     // Browser clients get the session as an HttpOnly cookie (+ CSRF cookie); API clients keep using the token.
     const csrf = setSessionCookies(ctx.env, reply, token);
-    return { token, wallet, chain, expiresIn: '7d', expiresInSec: SESSION_TTL_SEC, csrf };
+    return { token, wallet, chain, expiresIn: '7d', expiresInSec: SESSION_TTL_SEC, csrf, admitted: !inviteRequired(beta) || isAdmitted(ctx.db, wallet) };
   });
 
   /** Exchange a valid (unexpired) session (bearer or cookie) for a fresh 7-day one; re-sets the cookies. */

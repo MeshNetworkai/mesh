@@ -203,7 +203,17 @@ export function Terms() {
                 provider. Nothing here limits liability that cannot be limited by law.
               </p>
             </Clause>
-            <Clause n="12" title="Changes to these terms">
+            <Clause n="12" title="Beta">
+              <p>
+                Mesh is in public beta. Access may be limited to invited wallets and opened in batches from a waitlist; an invite code admits
+                one wallet and is not transferable once used. During the beta we may reset, rate-limit or pause parts of the service, change
+                prices and reward rates, and remove nodes whose work fails our spot checks (a sample of node answers is re-run elsewhere and
+                compared; a node whose answers do not hold up loses the reward for that job and, if it repeats, is quarantined). Credits and
+                node rewards earned in the beta are real inside the gateway but carry the same "not a promise" terms as everything else here.
+                We will say in the docs when the beta ends.
+              </p>
+            </Clause>
+            <Clause n="13" title="Changes to these terms">
               <p>
                 We may update these terms. The date at the top changes when we do. Continuing to use the service after a change means you accept
                 it. Related pages: <Link to="/privacy">Privacy</Link>, <Link to="/risk">Risk</Link>, <Link to="/docs">Docs</Link>.

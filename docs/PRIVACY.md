@@ -96,6 +96,15 @@ Gateway
 - No prompt or reply ever written to disk: `requests_log` and `jobs` hold ids, counts, cost and timing.
   Pino redacts `Authorization`; request bodies are not logged at any level we run.
 - `x-mesh-privacy` / `x-mesh-served-by` / `mesh.*` so the client can verify the path on every reply.
+- **Spot checks reveal nothing new** (`docs/NODE_PROTOCOL.md` §10). A sampled job is re-run on a
+  second node from the *same* stored, anonymised payload — the seven fields of §1, `temperature: 0`,
+  no marker that it is a check — and under the *same* tier: a `trusted` job is only re-checked by
+  another trusted node (or the ZDR upstream), a `network` job by any eligible node (or the upstream),
+  and a `trusted` job served by your own Mac is never re-checked anywhere. So the set of machines
+  that can see a prompt is exactly the set the tier already allowed; a check adds one more member of
+  that set for one more generation, not a new kind of party. The gateway compares the two outputs in
+  memory (token counts, garbage heuristics, a word-overlap score) and stores only the job ids, the
+  score, the verdict and short reason codes in `verifications`; neither output is written anywhere.
 
 Node agent (`apps/node-agent`)
 
@@ -137,6 +146,9 @@ Node agent (`apps/node-agent`)
 The trusted tier is therefore a **policy** control backed by three things: the operator signed a
 pledge (§5) with the wallet that receives rewards, that wallet has a gold stake at risk, and the
 gateway can revoke trusted status and stop routing to the node. It is not a cryptographic guarantee.
+Spot checks (§3) add a fourth, weaker thing: a node that returns garbage or unrelated answers loses
+rewards and is quarantined. That protects *quality*, not confidentiality — a node that reads prompts
+and still answers correctly passes every check.
 Use `upstream_zdr` when a contractual zero-retention commitment from a large provider is the better
 trade-off for you, and do not send to any tier what you would not send to a third party.
 

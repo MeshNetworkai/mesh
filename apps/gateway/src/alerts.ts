@@ -325,7 +325,7 @@ export class AlertMonitor {
     const used = (db.prepare(`SELECT COALESCE(-SUM(delta_usd_micros),0) AS v FROM credits_ledger WHERE kind = 'usage' AND created_at >= ?`).get(since) as { v: number }).v;
     const req = db.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT wallet) AS wallets, SUM(CASE WHEN upstream LIKE 'node:%' THEN 1 ELSE 0 END) AS byNode FROM requests_log WHERE created_at >= ?`).get(since) as { n: number; wallets: number; byNode: number | null };
     const nodes = db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN last_seen >= ? THEN 1 ELSE 0 END) AS online FROM nodes`).get(Math.floor(now / 1000) - NODE_ONLINE_SEC) as { total: number; online: number | null };
-    const rewards = (db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind = 'node_reward' AND created_at >= ?`).get(since) as { v: number }).v;
+    const rewards = (db.prepare(`SELECT COALESCE(SUM(usd_micros),0) AS v FROM node_rewards WHERE kind = 'node_reward' AND status = 'accrued' AND created_at >= ?`).get(since) as { v: number }).v;
     const errs = db.prepare(`SELECT code, COUNT(*) AS n FROM errors_log WHERE created_at >= ? GROUP BY code ORDER BY n DESC LIMIT 5`).all(since) as Array<{ code: string; n: number }>;
     const errTotal = errs.reduce((a, e) => a + e.n, 0);
     const firing = [...this.states.values()].filter((s) => s.firing).map((s) => s.key);

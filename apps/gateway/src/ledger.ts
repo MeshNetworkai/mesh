@@ -48,6 +48,8 @@ export function recentLedger(db: Db, wallet: string, limit = 20): LedgerRow[] {
 // ---------------- node rewards (separate ledger, accrued per completed job) ----------------
 
 export type NodeRewardKind = 'node_reward' | 'payout';
+/** `withheld`: spot-check verification found a mismatch on the job (verification.ts); the row stays for the audit trail but counts for nothing. */
+export type NodeRewardStatus = 'accrued' | 'withheld';
 
 export interface NodeRewardRow {
   id: number;
@@ -57,6 +59,7 @@ export interface NodeRewardRow {
   kind: NodeRewardKind;
   tokens: number;
   usd_micros: number;
+  status: NodeRewardStatus;
   created_at: number;
 }
 
@@ -88,8 +91,23 @@ export function addNodeReward(
   return write();
 }
 
+/**
+ * Mark a job's reward as withheld (verification mismatch) and give the accrual back to the treasury.
+ * Idempotent; returns the row or null when the job has no accrued reward.
+ */
+export function withholdNodeReward(db: Db, jobId: string, reason: string): NodeRewardRow | null {
+  const tx = db.transaction(() => {
+    const row = db.prepare(`SELECT * FROM node_rewards WHERE job_id = ? AND kind = 'node_reward' AND status = 'accrued'`).get(jobId) as NodeRewardRow | undefined;
+    if (!row) return null;
+    db.prepare(`UPDATE node_rewards SET status = 'withheld' WHERE id = ?`).run(row.id);
+    if (row.usd_micros !== 0) addTreasuryEntry(db, { kind: 'node_reward_accrual', usdMicros: row.usd_micros, ref: `withheld:job:${jobId}:${reason}` });
+    return { ...row, status: 'withheld' as const };
+  });
+  return tx();
+}
+
 export function nodeRewardsTotal(db: Db, where: { wallet?: string; nodeId?: string }, sinceSec = 0): { usdMicros: number; tokens: number; jobs: number } {
-  const conds: string[] = ["kind = 'node_reward'", 'created_at >= ?'];
+  const conds: string[] = ["kind = 'node_reward'", "status = 'accrued'", 'created_at >= ?'];
   const args: unknown[] = [sinceSec];
   if (where.wallet) {
     conds.push('wallet = ?');

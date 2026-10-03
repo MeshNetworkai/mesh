@@ -13,7 +13,7 @@ import { adminIpAllowlist, corsOrigin, loadEnv, productionProblems, trustedProxy
 import { geoBlockHook } from './geoblock.js';
 import { cidrMatcher } from './netaddr.js';
 import { JobBroker } from './network.js';
-import { isTrustedNode } from './routing.js';
+import { isTrustedNode, reputationConfig } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { keyRoutes } from './routes/keys.js';
@@ -28,6 +28,8 @@ import { statsRoutes } from './routes/stats.js';
 import { v1Routes } from './routes/v1.js';
 import { StakeResolver } from './staking.js';
 import { createUpstream } from './upstream.js';
+import { Verifier } from './verification.js';
+import { waitlistRoutes } from './routes/waitlist.js';
 
 export interface BuildOptions {
   env?: Partial<Env>;
@@ -45,10 +47,11 @@ export function createContext(opts: BuildOptions = {}): AppContext {
   const db = opts.context?.db ?? openDb(env.MESH_DB_PATH);
   const stakes = opts.context?.stakes ?? new StakeResolver({ adapter, config });
   // Trusted-tier jobs (docs/PRIVACY.md) may only be claimed by trusted nodes; the broker asks here.
-  const broker = opts.context?.broker ?? new JobBroker(db, () => config.routing, (node) => isTrustedNode({ config, stakes }, node));
+  const broker = opts.context?.broker ?? new JobBroker(db, () => reputationConfig(config), (node) => isTrustedNode({ config, stakes }, node));
   // Jobs left queued/running by a previous process can never complete: fail them now.
   broker.reapExpired(Number.MAX_SAFE_INTEGER);
-  return {
+  const upstream = opts.context?.upstream ?? createUpstream(env);
+  const ctx: AppContext = {
     broker,
     env,
     config,
@@ -56,10 +59,13 @@ export function createContext(opts: BuildOptions = {}): AppContext {
     db,
     prices: opts.context?.prices ?? loadModelPrices(),
     policy: opts.context?.policy ?? loadModelPolicy(),
-    upstream: opts.context?.upstream ?? createUpstream(env),
+    upstream,
     nonces: opts.context?.nonces ?? new NonceStore(db),
     stakes,
   };
+  // Spot-check verification (verification.ts) re-runs sampled jobs after the client has its answer.
+  ctx.verifier = opts.context?.verifier ?? new Verifier({ db, config, stakes, broker, upstream });
+  return ctx;
 }
 
 /** One JSON shape for every unexpected error; OpenAI shape under /v1 so SDKs can parse it. */
@@ -116,6 +122,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
     genReqId: () => randomUUID(),
   });
 
+  if (ctx.verifier) ctx.verifier.log = app.log;
   app.setErrorHandler(errorHandler(ctx));
   app.addHook('onSend', async (req, reply) => {
     if (!reply.hasHeader('x-request-id')) reply.header('x-request-id', req.id);
@@ -194,6 +201,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(openapiRoutes, ctx);
   await app.register(reportRoutes, ctx);
   await app.register(authRoutes, ctx);
+  await app.register(waitlistRoutes, ctx);
   await app.register(keyRoutes, ctx);
   await app.register(meRoutes, ctx);
   await app.register(stakeRoutes, ctx);
@@ -217,7 +225,7 @@ export function isAdminPath(path: string): boolean {
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 /** Routes authenticated by something other than a cookie (signature, admin token in the body/header). */
-const CSRF_EXEMPT = new Set(['/auth/nonce', '/auth/verify', '/admin/login', '/nodes/register', '/nodes/register/challenge']);
+const CSRF_EXEMPT = new Set(['/auth/nonce', '/auth/verify', '/admin/login', '/nodes/register', '/nodes/register/challenge', '/waitlist']);
 
 /** True when the request is a cookie-authenticated state change that must pass the CSRF check. */
 export function csrfApplies(req: FastifyRequest): boolean {
