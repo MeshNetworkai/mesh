@@ -116,6 +116,14 @@ Every step from design system to launch, grouped by session. Tick items as they 
 - [ ] Create the GitHub repository and push (Oliver: a GitHub account and an org name, e.g. mesh-network; I do the rest) — needed for releases, CI and the Homebrew tap
 - [ ] Legal entity for the launch (company for domain, server, token; Apple account later if ever) — Oliver, with a quick legal read
 
+**Homepage rework (3 Oct):**
+
+- [x] Free homepage chat: 5 messages a day per visitor with no sign-in, served by the network and paid by the treasury (cost shown on /report), 251 gateway tests passing
+- [x] Homepage variant A "warm editorial" at /v2: ecosystem loop diagram, Use / Run / Hold columns, six-point "why it's different" (no rivals named), privacy tiers, live numbers, chat in the hero
+- [x] Homepage variant B "clean product-first" at /v3: chat as a product window in the hero, flow cards, Use / Run / Hold cards with mock UI, checklist, metrics, developer strip
+- [ ] Pick A, B, or a mix — then it becomes the homepage and the old landing retires (Oliver)
+- [x] Public checklist page shared: Share → anyone with the link (Oliver)
+
 ## Open decisions and inputs
 
 | Decision | Default if you don't say | Needed by |
