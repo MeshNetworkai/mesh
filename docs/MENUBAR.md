@@ -59,9 +59,35 @@ done
 iconutil -c icns AppIcon.iconset -o apps/menubar/Resources/AppIcon.icns
 ```
 
-## 3. Sign with Developer ID
+## 3. Ship unsigned (the current path: no developer account)
 
-You need the Apple Developer Program membership (the account the team already has) and a
+```sh
+cd apps/menubar
+VERSION=0.2.0 make dmg            # build/MeshNode-0.2.0-arm64.dmg + build/MeshNode-0.2.0-arm64.dmg.sha256
+```
+
+With no `CODESIGN_IDENTITY` the app is ad-hoc signed and the DMG is not signed or notarised. That is
+what `.github/workflows/release.yml` job B produces on `macos-latest` and attaches to the GitHub
+Release together with `latest.json`. Users get it from the web `/download` page, which shows the
+SHA-256 from `latest.json` and walks them through Gatekeeper:
+
+1. open the DMG, drag to Applications, double-click → "Apple could not verify…" → **Done**;
+2. System Settings → Privacy & Security → Security section → "Mesh Node was blocked…" → **Open Anyway**
+   → Touch ID / password;
+3. open again → **Open**. First launch only. On macOS 15+ right-click → Open does *not* work for
+   unsigned apps any more, so the page does not suggest it.
+
+The app's **Check for updates** reads `<web>/downloads/latest.json` (`UpdateChecker.swift`,
+`ReleaseInfo.swift`) and offers "Open download page" when the version is newer than
+`CFBundleShortVersionString`; it does not update itself. Full flow: `DISTRIBUTION.md`.
+
+Checklist for an unsigned release: `swift test` green, `VERSION` set (the tag), `Brand.defaultWebURL`
+is the real host, `make dmg` printed the sha256, the hash in `latest.json` matches the `.sha256`
+file, open-anyway walkthrough tried once on a clean user account.
+
+## 4. Sign with Developer ID (later)
+
+You need the Apple Developer Program membership and a
 **Developer ID Application** certificate in your login keychain (Xcode > Settings > Accounts >
 Manage Certificates > + > Developer ID Application, or create it at developer.apple.com and
 double-click the `.cer`).
@@ -86,7 +112,7 @@ Why no sandbox / not the Mac App Store: the app's job is to read and write files
 home and launch a Node script. Both are impossible from the sandbox without a privileged helper.
 Developer ID + notarisation is the right channel.
 
-## 4. Notarise
+## 5. Notarise
 
 One-time: store notarisation credentials in the keychain. Use an **app-specific password** for the
 Apple ID (appleid.apple.com > Sign-In and Security > App-Specific Passwords), not the account password.
@@ -101,8 +127,12 @@ Then build the DMG and let the script submit, wait and staple:
 ```sh
 CODESIGN_IDENTITY="Developer ID Application: Your Company Ltd (TEAMID1234)" \
 NOTARY_PROFILE=mesh-notary make dmg
-# build/MeshNode-<version>.dmg
+# build/MeshNode-<version>-arm64.dmg (+ .sha256)
 ```
+
+In CI the same happens when the secrets `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_CODESIGN_IDENTITY`,
+`NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_PASSWORD` exist (`release.yml` job B); without them the
+job builds the unsigned DMG of §3.
 
 `scripts/make-dmg.sh` runs `hdiutil create` (UDZO, with an `/Applications` symlink), signs the DMG,
 `xcrun notarytool submit --wait`, `xcrun stapler staple`, `stapler validate`, then a Gatekeeper dry
@@ -116,28 +146,27 @@ Typical causes: binary not signed with hardened runtime (`--options runtime` mis
 timestamp (offline build machine), or an unsigned nested binary (we have none; the agent is not
 bundled).
 
-## 5. Distribute
+## 6. Distribute
 
-- Attach `MeshNode-<version>.dmg` to a GitHub release (or serve it from the web app next to
-  `install-node.sh`). Users drag the app to Applications, open it, and link the Mac. On first open
-  macOS shows the standard "downloaded from the internet" prompt; with a stapled notarisation that
-  is a single OK.
+- `release.yml` attaches `MeshNode-<version>-arm64.dmg` (+ `.sha256`, `latest.json`) to the GitHub
+  release; the web `/download` page links it. Users drag the app to Applications, open it, and link
+  the Mac. With a stapled notarisation the first-open prompt is a single OK; unsigned, see §3.
 - Set `Brand.defaultWebURL` in `apps/menubar/Sources/MeshNode/MeshPaths.swift` to the real web host
   before building a release, so Open dashboard and the install one-liner point at production without
   a visit to Settings.
 - Launch at login uses `SMAppService.mainApp`; the first time a user enables it macOS may ask them to
   allow it in System Settings > General > Login Items (the app shows a one-line hint and a button).
-- The app does not update itself. A later step is Sparkle (needs an EdDSA key and an appcast feed
-  served over https) or a "new version" line in the popover fed by `GET /stats`.
+- The app does not update itself. "Check for updates" compares `latest.json` and opens `/download`;
+  Sparkle (EdDSA key + appcast over https) is the later step once builds are signed.
 
-## 6. Checklist per release
+## 7. Checklist per signed release
 
 ```
 [ ] swift test green
 [ ] VERSION bumped (git tag vX.Y.Z)
 [ ] Brand.defaultWebURL is the production web host
-[ ] CODESIGN_IDENTITY=… NOTARY_PROFILE=… make dmg  -> "ok build/MeshNode-X.Y.Z.dmg"
-[ ] xcrun stapler validate build/MeshNode-X.Y.Z.dmg
+[ ] CODESIGN_IDENTITY=… NOTARY_PROFILE=… make dmg  -> "ok build/MeshNode-X.Y.Z-arm64.dmg"
+[ ] xcrun stapler validate build/MeshNode-X.Y.Z-arm64.dmg
 [ ] open the DMG on a second Mac: drag, open, link, pause, resume, dashboard, logs, quit
 ```
 
@@ -146,6 +175,7 @@ bundled).
 - Agent: [`apps/node-agent/README.md`](../apps/node-agent/README.md) (`mesh-node setup/service/pause/resume/logs`)
 - Protocol: [`NODE_PROTOCOL.md`](NODE_PROTOCOL.md) section 8 is the `GET /nodes/:id` shape the app parses
 - Design tokens: [`design-system.html`](design-system.html)
+- Distribution (channels, release workflow, updates): [`DISTRIBUTION.md`](DISTRIBUTION.md)
 
 ## Privacy
 

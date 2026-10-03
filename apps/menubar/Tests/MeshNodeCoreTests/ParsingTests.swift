@@ -203,3 +203,35 @@ final class LinkCodeTests: XCTestCase {
         XCTAssertEqual(InstallCommand.setupArguments(code: "K7QM2XDA", gateway: ""), ["setup", "--link", "K7QM2XDA"])
     }
 }
+
+final class ReleaseInfoTests: XCTestCase {
+    func testParsesLatestJson() throws {
+        let json = """
+        {
+          "version": "v0.2.0",
+          "bundleUrl": "https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node.js",
+          "bundleSha256": "3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855E",
+          "dmgUrl": "https://github.com/mesh-network/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg",
+          "dmgSha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "publishedAt": "2026-10-03T12:00:00.000Z"
+        }
+        """
+        let r = try ReleaseInfo.parse(jsonString: json)
+        XCTAssertEqual(r.version, "0.2.0")
+        XCTAssertEqual(r.dmgUrl?.lastPathComponent, "MeshNode-0.2.0-arm64.dmg")
+        XCTAssertEqual(r.bundleSha256, "3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855e")
+        XCTAssertNotNil(r.publishedAt)
+        XCTAssertThrowsError(try ReleaseInfo.parse(jsonString: "{\"bundleUrl\":\"x\"}"))
+        XCTAssertThrowsError(try ReleaseInfo.parse(jsonString: "[]"))
+    }
+
+    func testVersionCompare() {
+        XCTAssertEqual(ReleaseInfo.compare("0.2.0", "0.1.9"), 1)
+        XCTAssertEqual(ReleaseInfo.compare("1.0.0", "v1.0.0"), 0)
+        XCTAssertEqual(ReleaseInfo.compare("1.0.0-beta", "1.0.0"), -1)
+        XCTAssertEqual(ReleaseInfo.compare("1.10.0", "1.9.0"), 1)
+        XCTAssertTrue(ReleaseInfo(version: "0.2.0").isNewer(than: "0.1.0"))
+        XCTAssertFalse(ReleaseInfo(version: "0.2.0").isNewer(than: "0.2.0"))
+        XCTAssertFalse(ReleaseInfo(version: "9.9.9").isNewer(than: "dev"))
+    }
+}

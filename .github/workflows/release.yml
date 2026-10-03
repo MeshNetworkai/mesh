@@ -1,0 +1,315 @@
+name: Release (node agent + menu-bar app)
+
+# On a version tag (v0.2.0):
+#   A  ubuntu   node-agent bundle -> mesh-node.js (+ .sha256), tarball mesh-node-<v>-darwin-arm64.tar.gz (+ .sha256)
+#   B  macos    swift build -c release + make dmg -> MeshNode-<v>-arm64.dmg (+ .sha256); UNSIGNED unless the
+#               signing secrets exist (CODESIGN_IDENTITY / NOTARY_PROFILE are optional, see docs/MENUBAR.md)
+#   C  ubuntu   GitHub Release with every artifact + latest.json; commits the updated Homebrew formula
+#               (homebrew-tap/Formula/mesh-node.rb) back to the default branch and, when HOMEBREW_TAP_TOKEN
+#               is set, pushes it to the mesh-network/homebrew-tap repository.
+# Full story: docs/DISTRIBUTION.md. The gateway image is built by docker.yml on the same tag.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build without a tag (e.g. 0.2.0-rc1). Artifacts only; no GitHub Release."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+  CI: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      is_release: ${{ steps.v.outputs.is_release }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"; version="${tag#v}"; is_release=true
+          else
+            version="${{ inputs.version }}"; version="${version#v}"; tag="v${version}"; is_release=false
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] || { echo "bad version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  agent:
+    name: A · node-agent bundle + tarball (ubuntu)
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + test node-agent
+        run: |
+          pnpm --filter @mesh/node-agent typecheck
+          pnpm --filter @mesh/node-agent test
+
+      - name: Build bundle + tarball (stamps the tag version into mesh-node --version)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          OUT: dist/release
+        run: |
+          set -euo pipefail
+          sh scripts/release/make-tarball.sh | tee release.out
+          grep '^MESH_' release.out > dist/release/vars.env
+          node apps/node-agent/dist/mesh-node.js --version | grep -qx "$VERSION"
+
+      - name: Shell syntax check
+        run: |
+          sh -n scripts/install-node.sh
+          sh -n scripts/release/make-tarball.sh
+          sh -n scripts/release/update-formula.sh
+          sh -n apps/menubar/scripts/make-app.sh
+          sh -n apps/menubar/scripts/make-dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-agent
+          path: |
+            dist/release/mesh-node.js
+            dist/release/mesh-node.js.sha256
+            dist/release/mesh-node-*-darwin-arm64.tar.gz
+            dist/release/mesh-node-*-darwin-arm64.tar.gz.sha256
+            dist/release/vars.env
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  menubar:
+    name: B · menu-bar app DMG (macOS, arm64)
+    needs: version
+    # macos-latest runners are Apple Silicon (arm64); the DMG is arm64-only like the agent.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # make-app.sh derives BUILD from the commit count
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          uname -m
+
+      - name: Import Developer ID certificate (optional; skipped when secrets are unset)
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Store notarytool credentials (optional)
+        if: ${{ secrets.NOTARY_APPLE_ID != '' }}
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: xcrun notarytool store-credentials mesh-notary --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD"
+
+      - name: swift test (MeshNodeCore)
+        working-directory: apps/menubar
+        run: swift test
+
+      - name: swift build -c release + make dmg
+        working-directory: apps/menubar
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          ARCHS: arm64
+          # Empty when the secrets are not set -> make-app.sh signs ad-hoc, make-dmg.sh leaves the DMG unsigned.
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          NOTARY_PROFILE: ${{ secrets.NOTARY_APPLE_ID != '' && 'mesh-notary' || '' }}
+        run: |
+          set -euo pipefail
+          swift build -c release --arch arm64
+          make dmg
+          ls -la build/*.dmg build/*.sha256
+          test -f "build/MeshNode-${VERSION}-arm64.dmg"
+          test -f "build/MeshNode-${VERSION}-arm64.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: menubar
+          path: |
+            apps/menubar/build/MeshNode-*-arm64.dmg
+            apps/menubar/build/MeshNode-*-arm64.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  release:
+    name: C · GitHub Release + latest.json + Homebrew formula
+    needs: [version, agent, menubar]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Commit the formula back to the default branch, not to the detached tag.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble release directory + latest.json
+        id: assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/node-agent/* release/
+          cp artifacts/menubar/* release/
+          rm -f release/vars.env
+          source artifacts/node-agent/vars.env
+          TARBALL="mesh-node-${VERSION}-darwin-arm64.tar.gz"
+          DMG="MeshNode-${VERSION}-arm64.dmg"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          DMG_SHA="$(cut -d' ' -f1 "release/${DMG}.sha256")"
+          [[ "$DMG_SHA" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$MESH_TARBALL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$MESH_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          cat > release/latest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "channel": "beta",
+            "publishedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "bundleUrl": "${BASE}/mesh-node.js",
+            "bundleSha256": "${MESH_BUNDLE_SHA256}",
+            "tarballUrl": "${BASE}/${TARBALL}",
+            "tarballSha256": "${MESH_TARBALL_SHA256}",
+            "dmgUrl": "${BASE}/${DMG}",
+            "dmgSha256": "${DMG_SHA}",
+            "minMacOS": "13.0",
+            "arch": "arm64",
+            "notes": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          }
+          EOF
+          node -e 'JSON.parse(require("fs").readFileSync("release/latest.json","utf8"))'
+          cat release/latest.json
+          # Combined checksum file for people who verify by hand.
+          (cd release && cat ./*.sha256 > SHA256SUMS.txt)
+          echo "tarball_url=${BASE}/${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "tarball_sha=${MESH_TARBALL_SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula (url + sha256)
+        run: sh scripts/release/update-formula.sh "$VERSION" "${{ steps.assemble.outputs.tarball_url }}" "${{ steps.assemble.outputs.tarball_sha }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            release/
+            homebrew-tap/Formula/mesh-node.rb
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: needs.version.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: mesh-node ${{ env.VERSION }}
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/mesh-node.js
+            release/mesh-node.js.sha256
+            release/mesh-node-${{ env.VERSION }}-darwin-arm64.tar.gz
+            release/mesh-node-${{ env.VERSION }}-darwin-arm64.tar.gz.sha256
+            release/MeshNode-${{ env.VERSION }}-arm64.dmg
+            release/MeshNode-${{ env.VERSION }}-arm64.dmg.sha256
+            release/SHA256SUMS.txt
+            release/latest.json
+          body: |
+            Unsigned beta build for Apple Silicon Macs. macOS will warn on first open of the DMG; use
+            System Settings > Privacy & Security > Open Anyway. Verify downloads against `SHA256SUMS.txt`.
+
+            - Terminal: `curl -fsSL https://<web-host>/install-node.sh | sh -s -- --link <code> --gateway <gateway>`
+            - Homebrew: `brew install mesh-network/tap/mesh-node`
+            - Menu-bar app: `MeshNode-${{ env.VERSION }}-arm64.dmg`
+            - Existing installs: `mesh-node update` (or `brew upgrade mesh-node`)
+
+            `latest.json` is what `mesh-node update` and the apps read. Full instructions: `docs/DISTRIBUTION.md`.
+
+      - name: Commit formula to the default branch
+        if: needs.version.outputs.is_release == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add homebrew-tap/Formula/mesh-node.rb
+          if git diff --cached --quiet; then echo "formula unchanged"; exit 0; fi
+          git commit -m "homebrew: mesh-node ${VERSION}"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+      - name: Push formula to the tap repository (needs HOMEBREW_TAP_TOKEN)
+        if: ${{ needs.version.outputs.is_release == 'true' && secrets.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || 'mesh-network/homebrew-tap' }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cp homebrew-tap/Formula/mesh-node.rb tap/Formula/mesh-node.rb
+          [ -f tap/README.md ] || cp homebrew-tap/README.md tap/README.md
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "tap unchanged"; exit 0; fi
+          git commit -m "mesh-node ${VERSION}"
+          git push
+
+      - name: What to do next
+        run: |
+          echo "latest.json is attached to the release; deploy it to the web host as /downloads/latest.json"
+          echo "(or point the gateway at it: UPDATE_LATEST_URL=https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json)."
+          echo "See docs/DISTRIBUTION.md, 'Release steps'."

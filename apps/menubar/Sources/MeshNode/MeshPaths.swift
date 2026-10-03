@@ -42,6 +42,8 @@ enum Brand {
     /// Change this before shipping, or set it once in the app's Settings.
     static let defaultWebURL = "https://app.example.com"
     static let dashboardPath = "/app/node"
+    /// Download page: DMG + SHA-256 + the macOS "Open Anyway" steps; also where "Check for updates" sends people.
+    static let downloadPath = "/download"
     static let pollInterval: TimeInterval = 15
 }
 

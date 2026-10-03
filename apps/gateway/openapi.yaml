@@ -784,6 +784,46 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /install/latest.json:
+    get:
+      tags: [Nodes]
+      summary: Current mesh-node release (version, URLs, SHA-256 checksums)
+      description: |
+        Read by `mesh-node update`, the daily check in `mesh-node start`, and the menu-bar app's "Check for updates".
+        Proxied from `UPDATE_LATEST_URL` (the web host's `/downloads/latest.json`, published by the release workflow)
+        with a 60 s cache, or served from the static file written by `POST /admin/release`. See `docs/DISTRIBUTION.md`.
+      operationId: getLatestRelease
+      responses:
+        '200':
+          description: The latest published release.
+          content:
+            application/json:
+              example:
+                version: 0.2.0
+                bundleUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node.js
+                bundleSha256: 3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855e
+                tarballUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node-0.2.0-darwin-arm64.tar.gz
+                tarballSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                dmgUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg
+                dmgSha256: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+                publishedAt: '2026-10-03T12:00:00.000Z'
+        '404':
+          description: 'No release published (`no_release`).'
+  /install/mesh-node.js:
+    get:
+      tags: [Nodes]
+      summary: The one-file node agent bundle
+      description: |
+        What `install-node.sh` downloads first. Served from `NODE_BUNDLE_PATH` (dev default `apps/node-agent/dist/mesh-node.js`);
+        when the file is absent the gateway redirects (302) to the `bundleUrl` of the current release.
+      operationId: getNodeBundle
+      responses:
+        '200':
+          description: JavaScript bundle (`text/javascript`).
+        '302':
+          description: Redirect to the released bundle.
+        '404':
+          description: 'Neither a local bundle nor a release exists (`bundle_unavailable`).'
   /nodes/register:
     post:
       tags: [Nodes]

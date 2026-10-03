@@ -36,6 +36,7 @@ mesh-node service install       launchd agent at ~/Library/LaunchAgents/xyz.mesh
 mesh-node service uninstall     unload and remove it
 mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating with busy=true)
 mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
+mesh-node update [--check]      install the latest release (sha256-verified, atomic swap, service restart); --check only reports (exit 2 if newer)
 ```
 
 `setup` does, in order:
@@ -71,8 +72,24 @@ mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
   says to run `mesh-node setup --link <code>` again).
 - SIGTERM/SIGINT: finishes the current job, sends a last heartbeat, exits 0.
 
+`update` (`src/update.ts`, `docs/DISTRIBUTION.md`): reads `latest.json` from `MESH_UPDATE_URL` or
+`<gateway>/install/latest.json` (`{version, bundleUrl, bundleSha256, …}`), downloads the bundle to
+`~/.mesh/bin/mesh-node.js.update.tmp`, checks the SHA-256 and that it is JavaScript, renames it over
+`mesh-node.js` (atomic), then `launchctl kickstart -k`s the service. A failed check leaves everything
+untouched. `start` checks 60 s after boot and daily, logs `update available: …` once per version, and
+installs only with `MESH_AUTO_UPDATE=1` (`MESH_UPDATE_CHECK=0` disables). Homebrew installs
+(`MESH_INSTALL_CHANNEL=brew`, set by the brew wrapper) are told to `brew upgrade` instead. Dev builds
+(`0.1.0-dev`) never report an update.
+
 Env: `GATEWAY_URL` (default for `setup --gateway`), `MESH_LINK_CODE` (default for `setup --link`),
-`MESH_HOME` (default `~/.mesh`), `OLLAMA_HOST_URL`, `NO_COLOR`.
+`MESH_HOME` (default `~/.mesh`), `OLLAMA_HOST_URL`, `NO_COLOR`, `MESH_UPDATE_URL`, `MESH_AUTO_UPDATE`,
+`MESH_UPDATE_CHECK`, `MESH_INSTALL_CHANNEL`.
+
+## Other ways to install
+
+`brew install mesh-network/tap/mesh-node` (formula in `homebrew-tap/Formula/mesh-node.rb`, built from
+the release tarball `scripts/release/make-tarball.sh` produces) or the menu-bar app DMG; the web
+`/download` page lists all three with checksums. `docs/DISTRIBUTION.md` has the release workflow.
 
 ## Privacy
 
@@ -101,9 +118,10 @@ See `docs/NODE_PROTOCOL.md`. Field names in `src/gateway.ts` are the wire contra
 
 ```sh
 pnpm --filter node-agent dev -- --help        # run from source (tsx)
-pnpm --filter node-agent test                 # vitest: runner vs fake Ollama + fake gateway, config, model selection
+pnpm --filter node-agent test                 # vitest: runner vs fake Ollama + fake gateway, config, model selection, update (fake release server)
 pnpm --filter node-agent typecheck
-pnpm --filter node-agent build                # esbuild -> dist/mesh-node.js (node20, ESM, shebang)
+pnpm --filter node-agent build                # esbuild -> dist/mesh-node.js (node20, ESM, shebang); MESH_BUILD_VERSION=x.y.z stamps a release version
+VERSION=0.2.0 sh scripts/release/make-tarball.sh   # release tarball + sha256 (what the Homebrew formula installs)
 ```
 
 `test/fakes.ts` has a fake Ollama (`/api/tags`, `/api/pull`, streamed `/api/chat`) and a fake gateway
@@ -112,6 +130,6 @@ installs a local build.
 
 ## Later
 
-- Notarised menu-bar app (Swift) wrapping this agent and Ollama.
+- Signed + notarised menu-bar app (unsigned beta DMG ships today, `docs/DISTRIBUTION.md`).
 - Signed request/response digests for verifiable work.
 - Linux: `service install` is launchd-only today; run `mesh-node start` under systemd or tmux.

@@ -15,35 +15,39 @@ test.describe('landing', () => {
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
 
-  test('beta: pill next to the logo and in the hero, waitlist CTA joins the list, invite field appears after invite_required', async ({ page }) => {
+  test('open beta: pill next to the logo and in the hero, normal connect CTA (no waitlist form), waitlist API still open', async ({ page }) => {
     await page.goto('/');
-    // config/tokenomics.json: beta.enabled + inviteRequired → pill + waitlist instead of the big connect button.
+    // config/tokenomics.json: beta.enabled + inviteRequired=false → pill shown, but the hero keeps the
+    // big connect button instead of the waitlist form. (The gated flow is covered by apps/gateway/test/beta.test.ts.)
     const pills = page.locator('.pill.beta');
     await expect(pills.first()).toBeVisible();
     await expect(pills).toHaveCount(2);
     await expect(pills.first()).toHaveText('Beta');
-    const form = page.locator('form#waitlist');
-    await expect(form).toBeVisible();
-    await page.getByLabel('Wallet address or e-mail').fill('e2e-first@example.com');
-    await form.getByRole('button', { name: 'Join the waitlist' }).click();
-    await expect(page.locator('#waitlist')).toContainText(/You are on the list at position \d+/);
-    // Idempotent: the same e-mail is not added twice.
-    const res = await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-first@example.com' } });
-    expect(await res.json()).toMatchObject({ alreadyListed: true });
+    await expect(pills.first()).toHaveAttribute('title', 'Public beta');
+    await expect(page.locator('form#waitlist')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
 
-    // A wallet that was never admitted gets the invite field after the gateway says so (simulated 403 through the modal state).
+    // The public waitlist endpoint stays open while beta.enabled (idempotent per e-mail).
+    const first = await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-first@example.com' } });
+    expect(first.status()).toBe(200);
+    expect(await first.json()).toMatchObject({ ok: true, alreadyListed: false, beta: { inviteRequired: false } });
+    const again = await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-first@example.com' } });
+    expect(await again.json()).toMatchObject({ alreadyListed: true });
+
+    // Sign-in modal opens; no invite field (only ever shown after a 403 invite_required, which open beta never sends).
     await page.getByRole('button', { name: 'Connect wallet' }).first().click();
     await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
-    await expect(page.getByLabel('Invite code')).toHaveCount(0); // only after invite_required
+    await expect(page.getByLabel('Invite code')).toHaveCount(0);
   });
 });
 
 test.describe('beta admin', () => {
-  test('admin page: waitlist section lists the entry, "Admit next" mints a code the gateway accepts, invites mint codes', async ({ page }) => {
+  test('admin page: waitlist section lists the entry, "Admit next" mints a code, sign-in needs no code in open beta, invites mint codes', async ({ page }) => {
     await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-admit@example.com' } });
     await page.goto('/admin');
     await page.getByLabel('Admin token').fill('e2e-admin-token');
     await page.getByRole('button', { name: 'Open' }).click();
+    await expect(page.getByText(/beta · open/)).toBeVisible();
     await expect(page.getByText('Waitlist · admit the next batch')).toBeVisible();
     await expect(page.getByLabel('Waitlist entries')).toContainText('e2e-admit@example.com');
     await page.getByLabel('How many to admit').fill('50');
@@ -52,16 +56,18 @@ test.describe('beta admin', () => {
     await expect(admitted).toContainText('admitted. Send each code');
     const code = await admitted.locator('tbody tr', { hasText: 'e2e-admit@example.com' }).locator('td').nth(1).textContent();
     expect(code).toMatch(/^[A-Z2-9]{5}-[A-Z2-9]{5}$/);
-    // The code admits a wallet: a sign-in without it is refused, with it accepted (mock adapter signature).
+    // Open beta (inviteRequired=false): a never-admitted wallet signs in WITHOUT a code (mock adapter signature).
+    // The gated variant (403 invite_required until a code is supplied) lives in apps/gateway/test/beta.test.ts.
     const sign = (wallet: string, message: string) => Buffer.from(`${wallet}:${message}`, 'utf8').toString('base64'); // MockAdapter.sign
-    let nonce = await (await page.request.post(`${GATEWAY_URL}/auth/nonce`, { data: { wallet: 'e2e_invited' } })).json();
-    const denied = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_invited', signature: sign('e2e_invited', nonce.message), message: nonce.message } });
-    expect(denied.status()).toBe(403);
-    expect((await denied.json()).error).toBe('invite_required');
+    let nonce = await (await page.request.post(`${GATEWAY_URL}/auth/nonce`, { data: { wallet: 'e2e_open' } })).json();
+    const open = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_open', signature: sign('e2e_open', nonce.message), message: nonce.message } });
+    expect(open.status()).toBe(200);
+    expect(await open.json()).toMatchObject({ wallet: 'e2e_open', admitted: true });
+    // Supplying a minted code in open beta is harmless: the gate is skipped and the sign-in succeeds.
     nonce = await (await page.request.post(`${GATEWAY_URL}/auth/nonce`, { data: { wallet: 'e2e_invited' } })).json();
-    const ok = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_invited', signature: sign('e2e_invited', nonce.message), message: nonce.message, invite: code } });
-    expect(ok.status()).toBe(200);
-    expect(await ok.json()).toMatchObject({ wallet: 'e2e_invited', admitted: true });
+    const withCode = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_invited', signature: sign('e2e_invited', nonce.message), message: nonce.message, invite: code } });
+    expect(withCode.status()).toBe(200);
+    expect(await withCode.json()).toMatchObject({ wallet: 'e2e_invited', admitted: true });
 
     await page.getByLabel('Number of codes').fill('3');
     await page.getByRole('button', { name: 'Mint' }).click();
@@ -182,6 +188,38 @@ test.describe('signed-in app', () => {
     await page.goto('/app/stats');
     await expect(page.locator('body')).toContainText(/Network|Epoch/);
     await expect(page.locator('.tile').first()).toBeVisible();
+  });
+
+  test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Download' }).click();
+    await expect(page).toHaveURL(/\/download$/);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Run a node');
+    // The sample latest.json in apps/web/public feeds version + hashes.
+    const latest = await (await page.request.get('/downloads/latest.json')).json();
+    await expect(page.getByLabel('Current release')).toContainText(`Latest v${latest.version}`);
+    await expect(page.getByLabel('Current release')).toContainText('Apple Silicon only');
+    await expect(page.getByLabel('DMG SHA-256')).toContainText(latest.dmgSha256);
+    await expect(page.getByLabel('Tarball SHA-256')).toContainText(latest.tarballSha256);
+    await expect(page.getByRole('link', { name: /Download MeshNode-.*-arm64\.dmg/ })).toHaveAttribute('href', latest.dmgUrl);
+    // Three options, each with its own steps.
+    await expect(page.locator('#terminal pre.term')).toContainText('install-node.sh | sh -s -- --link <code>');
+    await expect(page.locator('#homebrew pre.term')).toContainText('brew install mesh-network/tap/mesh-node');
+    await expect(page.locator('#homebrew pre.term')).toContainText('mesh-node setup --link <code>');
+    const steps = page.getByLabel('Open Anyway walkthrough');
+    await expect(steps.locator('li')).toHaveCount(5);
+    await expect(steps).toContainText('Privacy & Security');
+    await expect(steps).toContainText('Open Anyway');
+    await expect(page.locator('#app')).toContainText('Right-click → Open no longer bypasses');
+    await expect(page.locator('#warning')).toContainText('unsigned beta');
+    // Typing a link code fills it into both command blocks.
+    await page.getByRole('textbox', { name: 'Link code' }).fill('k7qm-2xda');
+    await expect(page.locator('#terminal pre.term')).toContainText('--link K7QM2XDA');
+    await expect(page.locator('#homebrew pre.term')).toContainText('--link K7QM2XDA');
+    // Footer + Node page link back here.
+    await expect(page.locator('footer').getByRole('link', { name: 'Download for Mac' })).toHaveAttribute('href', '/download');
+    await page.goto('/app/node');
+    await expect(page.locator('main').getByRole('link', { name: 'Download for Mac' })).toHaveCount(2); // the Node page's hint + the footer
   });
 
   test('report page renders at /report (public, fed by GET /report)', async ({ page }) => {

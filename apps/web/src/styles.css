@@ -2235,3 +2235,75 @@ table.schema table.schema {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ---------- /download ---------- */
+.dl-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dl-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  padding: 20px 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 20px 32px;
+  align-items: start;
+  box-shadow: 0 20px 60px rgba(5, 9, 18, 0.05);
+}
+.dl-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.dl-files {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px 32px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.dl-files > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.dl-files a {
+  overflow-wrap: anywhere;
+}
+.dl-sha {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.dl-hash {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.download .docs code,
+.download code {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .dl-card,
+  .dl-files {
+    grid-template-columns: 1fr;
+  }
+}

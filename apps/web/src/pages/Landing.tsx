@@ -19,6 +19,7 @@ const ROWS = [
     desc: `Keep ${fmtInt(TOKENOMICS.minHoldTokens)} ${TOKENOMICS.ticker} in your wallet and AI credits arrive every hour, paid for by trading fees. Nothing to claim, and the full epoch history is public.`,
     live: true,
     to: undefined as string | undefined,
+    alt: undefined as { label: string; to: string } | undefined,
   },
   {
     word: 'Ask',
@@ -30,6 +31,7 @@ const ROWS = [
     desc: `Leave your Mac open with Ollama and earn ${fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens it serves, tracked per job. One command to join, stop any time.`,
     live: true,
     to: '/app/node',
+    alt: { label: 'Terminal, Homebrew or the menu-bar app: Download for Mac', to: '/download' },
   },
   {
     word: 'Stake',
@@ -207,6 +209,14 @@ export function Landing() {
               )}
               <p className="desc">
                 {r.desc}
+                {r.alt ? (
+                  <>
+                    <br />
+                    <Link className="note" to={r.alt.to}>
+                      {r.alt.label}
+                    </Link>
+                  </>
+                ) : null}
                 {stats?.pointsEnabled && 'note' in r && typeof r.note === 'string' ? (
                   <>
                     <br />
@@ -298,7 +308,8 @@ export function Landing() {
             <h3 className="display d-s">Serve answers from your Mac</h3>
             <p>
               One command installs the node agent, registers with the gateway and starts earning for the replies it serves. Credits now,{' '}
-              {TOKENOMICS.ticker} once the token layer ships. <Link to="/app/node">Open the Node tab</Link> for your live status.
+              {TOKENOMICS.ticker} once the token layer ships. <Link to="/app/node">Open the Node tab</Link> for your live status, or{' '}
+              <Link to="/download">download the menu-bar app</Link> (Homebrew too).
             </p>
             <Terminal label="Install the node agent" code={`# paste in Terminal (macOS, Apple Silicon); get <code> from Run a node -> Link a Mac\n${installOneLiner(null)}`} wrap />
           </div>

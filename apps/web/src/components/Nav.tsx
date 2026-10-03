@@ -60,6 +60,9 @@ export function TopNav() {
       <NavLink to="/docs" className={cls}>
         Docs
       </NavLink>
+      <NavLink to="/download" className={cls}>
+        Download
+      </NavLink>
       {session ? (
         <BalancePill />
       ) : (

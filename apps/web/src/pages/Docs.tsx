@@ -294,8 +294,9 @@ export function Docs() {
             <Terminal code={installOneLiner(null)} label="Install the node agent" wrap />
             <p>
               Then <code>mesh-node status</code> for uptime and earnings, <code>mesh-node pause</code> / <code>resume</code>,{' '}
-              <code>mesh-node logs</code>, <code>mesh-node service uninstall</code> to remove it. Live status for your wallet is on the{' '}
-              <Link to="/app/node">Node tab</Link>.
+              <code>mesh-node logs</code>, <code>mesh-node update</code>, <code>mesh-node service uninstall</code> to remove it. Live status for your
+              wallet is on the <Link to="/app/node">Node tab</Link>. Homebrew (<code>brew install mesh-network/tap/mesh-node</code>) and the menu-bar app
+              are on <Link to="/download">Download for Mac</Link>, with checksums and the macOS “Open Anyway” steps for the unsigned beta.
             </p>
           </div>
         </div>

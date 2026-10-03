@@ -16,10 +16,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentInstalled = false
     @Published private(set) var launchAtLogin = LaunchAtLogin.isEnabled
     @Published var actionError: String?
+    /// Result of the last "Check for updates" (nil until the user asks).
+    @Published private(set) var updateOutcome: UpdateChecker.Outcome?
+    @Published private(set) var isCheckingUpdate = false
 
     let runner = AgentRunner()
 
     private let gateway = GatewayClient()
+    private let updates = UpdateChecker()
     private var pollTask: Task<Void, Never>?
     private var wakeObserver: NSObjectProtocol?
 
@@ -208,6 +212,27 @@ final class AppModel: ObservableObject {
         let serviceCode = await runner.run(InstallCommand.serviceInstallArguments)
         await refresh()
         return serviceCode == 0
+    }
+
+    // MARK: - updates
+
+    /// Reads `<web>/downloads/latest.json`; a newer version is reported in the popover with a button that
+    /// opens the download page. The app never replaces itself (unsigned beta; see docs/DISTRIBUTION.md).
+    func checkForUpdates() async {
+        if isCheckingUpdate { return }
+        isCheckingUpdate = true
+        defer { isCheckingUpdate = false }
+        updateOutcome = await updates.check(web: webURL)
+    }
+
+    /// `<web>/download`: DMG, checksum and the "Open Anyway" walkthrough.
+    func openDownloadPage() {
+        let base = webURL.hasSuffix("/") ? String(webURL.dropLast()) : webURL
+        guard let url = URL(string: base + Brand.downloadPath) else {
+            actionError = "The web URL in Settings is not valid."
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func quit() {

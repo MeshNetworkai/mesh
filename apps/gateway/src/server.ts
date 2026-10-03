@@ -16,6 +16,7 @@ import { JobBroker } from './network.js';
 import { isTrustedNode, reputationConfig } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
+import { installRoutes, type InstallOptions } from './routes/install.js';
 import { keyRoutes } from './routes/keys.js';
 import { meRoutes } from './routes/me.js';
 import { nodeRoutes } from './routes/nodes.js';
@@ -36,6 +37,8 @@ export interface BuildOptions {
   /** Override pieces of the context (tests inject ':memory:' db, custom adapter, etc). */
   context?: Partial<AppContext>;
   logger?: boolean | object;
+  /** Test hooks for /install/* (fake fetch, clock). */
+  install?: InstallOptions;
 }
 
 export function createContext(opts: BuildOptions = {}): AppContext {
@@ -199,6 +202,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
 
   await app.register(statsRoutes, ctx);
   await app.register(openapiRoutes, ctx);
+  await app.register(async (inst) => installRoutes(inst, ctx, opts.install ?? {}));
   await app.register(reportRoutes, ctx);
   await app.register(authRoutes, ctx);
   await app.register(waitlistRoutes, ctx);

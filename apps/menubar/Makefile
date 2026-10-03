@@ -2,7 +2,8 @@
 #
 #   make run     swift run (no bundle: Dock-less via activation policy, launch-at-login disabled)
 #   make app     build/MeshNode.app, ad-hoc signed       CODESIGN_IDENTITY="Developer ID Application: ..." make app
-#   make dmg     build/MeshNode-<version>.dmg            NOTARY_PROFILE=mesh-notary make dmg   (notarise + staple)
+#   make dmg     build/MeshNode-<version>-arm64.dmg + .sha256 (unsigned by default)
+#                CODESIGN_IDENTITY="Developer ID Application: ..." NOTARY_PROFILE=mesh-notary make dmg   (sign + notarise + staple)
 #   make test    swift test (MeshNodeCore only; runs on Linux too)
 #   make open    build and open the .app
 #   make clean
@@ -13,7 +14,7 @@ SHELL := /bin/sh
 .PHONY: help run build app dmg test open clean fmt
 
 help:
-	@sed -n '3,9p' Makefile | sed 's/^#//'
+	@sed -n '3,10p' Makefile | sed 's/^#//'
 
 run:
 	swift run MeshNode

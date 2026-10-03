@@ -1,0 +1,15 @@
+{
+  "sample": true,
+  "version": "0.1.0",
+  "channel": "beta",
+  "publishedAt": "2026-10-03T12:00:00.000Z",
+  "bundleUrl": "https://github.com/mesh-network/mesh/releases/download/v0.1.0/mesh-node.js",
+  "bundleSha256": "e16d3eaf9a34a734a18c34a800fb7fc2202e5b97741f9ef3dab611f237d324a2",
+  "tarballUrl": "https://github.com/mesh-network/mesh/releases/download/v0.1.0/mesh-node-0.1.0-darwin-arm64.tar.gz",
+  "tarballSha256": "aade66f15292346eae6df81f7deeaf54602024989d55038743e7b83edf13e10e",
+  "dmgUrl": "https://github.com/mesh-network/mesh/releases/download/v0.1.0/MeshNode-0.1.0-arm64.dmg",
+  "dmgSha256": "9c8f1e2d3b4a5968778695a4b3c2d1e0f1e2d3c4b5a69788796a5b4c3d2e1f00",
+  "minMacOS": "13.0",
+  "arch": "arm64",
+  "notes": "Sample document: the release workflow (.github/workflows/release.yml) publishes the real one next to each GitHub Release."
+}

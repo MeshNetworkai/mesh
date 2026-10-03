@@ -77,6 +77,21 @@ const EnvSchema = z.object({
   /** Enforce config.geoBlock on /v1 and /auth. Defaults to on in production, off otherwise. */
   GEO_BLOCK_ENFORCE: bool.optional(),
   LOG_LEVEL: z.string().default('info'),
+  // ---- node distribution (apps/gateway/src/routes/install.ts, docs/DISTRIBUTION.md) ----
+  /**
+   * Where GET /install/latest.json gets its document: an upstream URL (the web host's
+   * /downloads/latest.json, published by the release workflow) proxied with a 60 s cache. When unset,
+   * the file at UPDATE_LATEST_PATH is served instead (written by POST /admin/release).
+   */
+  UPDATE_LATEST_URL: z.string().url().optional(),
+  /** Static latest.json for GET /install/latest.json when UPDATE_LATEST_URL is unset. Default: next to the DB (`data/latest.json`). */
+  UPDATE_LATEST_PATH: z.string().min(1).optional(),
+  /**
+   * The esbuild bundle served at GET /install/mesh-node.js (what install-node.sh downloads first).
+   * Default: apps/node-agent/dist/mesh-node.js (dev). When missing, the route redirects to the
+   * bundleUrl in latest.json so a production gateway without the file still installs nodes.
+   */
+  NODE_BUNDLE_PATH: z.string().min(1).optional(),
   // ---- alerts (apps/gateway/src/alerts.ts) ----
   ALERTS_ENABLED: bool.default(true),
   ALERT_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
