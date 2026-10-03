@@ -408,6 +408,8 @@ export async function streamChat(
     upstreamName?: string;
     /** Privacy tier for this request (`X-Mesh-Privacy`); omitted = the key's default, then the gateway default. */
     privacy?: PrivacyTier;
+    /** Internal: guest endpoint (no key, no privacy header). */
+    guest?: boolean;
   },
   onDelta: (text: string) => void,
 ): Promise<ChatResult> {
@@ -427,18 +429,27 @@ export async function streamChat(
 
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}`, ...(opts.privacy ? { 'x-mesh-privacy': opts.privacy } : {}) },
-      body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true, usage: { include: true } }),
-      signal: opts.signal,
-    });
+    res = opts.guest
+      ? await fetch(`${API_URL}/v1/guest/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: opts.model, messages: opts.messages }),
+          signal: opts.signal,
+        })
+      : await fetch(`${API_URL}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}`, ...(opts.privacy ? { 'x-mesh-privacy': opts.privacy } : {}) },
+          body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true, usage: { include: true } }),
+          signal: opts.signal,
+        });
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err;
     throw new ApiError(0, `Could not reach the gateway at ${API_URL}`, 'network');
   }
   if (!res.ok) throw await readError(res);
   if (!res.body) throw new ApiError(502, 'Gateway returned no body');
+  const remainingHeader = res.headers.get('x-guest-remaining');
+  if (remainingHeader !== null) guestRemainingListeners.forEach((fn) => fn(Number(remainingHeader)));
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -490,4 +501,44 @@ export async function streamChat(
     servedBy: servedByLabel(served, opts.upstreamName),
     mesh: served,
   };
+}
+
+/* ---------- guest chat (homepage, no sign-in) ---------- */
+
+export interface GuestQuota {
+  remaining: number;
+  limit: number;
+  enabled: boolean;
+  resetAt?: number;
+  model?: string;
+}
+
+const guestRemainingListeners = new Set<(remaining: number) => void>();
+/** Fires whenever a guest reply reports the remaining free messages (header `x-guest-remaining`). */
+export function onGuestRemaining(fn: (remaining: number) => void): () => void {
+  guestRemainingListeners.add(fn);
+  return () => guestRemainingListeners.delete(fn);
+}
+
+let mockGuestRemaining = 5;
+
+export const getGuestQuota = (): Promise<GuestQuota> =>
+  MOCK ? Promise.resolve({ remaining: mockGuestRemaining, limit: 5, enabled: true, model: 'llama-3.1-8b' }) : request<GuestQuota>('/v1/guest/quota');
+
+/**
+ * Free homepage chat: `POST /v1/guest/chat`, a few messages per day per visitor, served by the network
+ * and paid by the treasury. Throws ApiError(429, …, 'guest_quota_exhausted') when they are used up.
+ */
+export async function streamGuestChat(
+  opts: { messages: ChatMessage[]; model?: string; signal?: AbortSignal; upstreamName?: string },
+  onDelta: (text: string) => void,
+): Promise<ChatResult> {
+  if (MOCK) {
+    if (mockGuestRemaining <= 0) throw new ApiError(429, 'Connect a wallet to keep chatting', 'guest_quota_exhausted');
+    mockGuestRemaining -= 1;
+    const r = await streamChat({ apiKey: '', model: opts.model ?? 'llama-3.1-8b', messages: opts.messages, signal: opts.signal, privacy: 'network' }, onDelta);
+    guestRemainingListeners.forEach((fn) => fn(mockGuestRemaining));
+    return r;
+  }
+  return streamChat({ apiKey: '', model: opts.model ?? 'llama-3.1-8b', messages: opts.messages, signal: opts.signal, upstreamName: opts.upstreamName, guest: true }, onDelta);
 }
