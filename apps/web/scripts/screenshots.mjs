@@ -31,9 +31,15 @@ const PAGES = [
   { path: '/app/stats', name: 'stats', full: true },
   { path: '/app/node', name: 'node', full: true },
   { path: '/report', name: 'report', full: true },
-  { path: '/leaderboard', name: 'leaderboard', full: true },
+  // /leaderboard: points programme is built but disabled (404 while off), so it is not captured.
   { path: '/admin', name: 'admin', full: true },
+  { path: '/api', name: 'api', full: true },
+  { path: '/terms', name: 'terms', full: true },
+  { path: '/404', name: '404', full: true },
 ];
+// SCREENS_ONLY=landing,api limits the run to those page names.
+const only = process.env.SCREENS_ONLY?.split(',').map((s) => s.trim()).filter(Boolean);
+const SELECTED = only?.length ? PAGES.filter((p) => only.includes(p.name)) : PAGES;
 const WIDTHS = [
   { w: 1440, h: 900, tag: '1440' },
   { w: 390, h: 844, tag: '390' },
@@ -76,7 +82,7 @@ try {
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
-    for (const p of PAGES) {
+    for (const p of SELECTED) {
       console.log(`→ ${p.path} @ ${w}`);
       await page.goto(`${BASE}${p.path}`, { waitUntil: 'load' });
       await page.evaluate(() => document.fonts.ready.then(() => true));

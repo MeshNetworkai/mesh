@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { DEFAULT_GATEWAY, DEFAULT_OLLAMA, loadConfig, saveConfig, type NodeConfig } from './config.js';
 import { GatewayClient, GatewayError, type RegisterInput, type RegisterResult } from './gateway.js';
 import { describeSelection, selectModels } from './models.js';
-import { OllamaClient } from './ollama.js';
+import { OLLAMA_PRIVACY_ENV, OllamaClient } from './ollama.js';
 import { AGENT_VERSION, paths } from './paths.js';
 import { hasBrew, run, spawnDetached, systemInfo, which } from './system.js';
 import { c, out, table } from './ui.js';
@@ -92,7 +92,7 @@ export async function ensureOllamaRunning(client: OllamaClient, bin: string, wai
   }
   mkdirSync(paths.logsDir(), { recursive: true });
   out.step(`starting ollama serve (log: ${paths.ollamaLog()})`);
-  spawnDetached(bin, ['serve'], paths.ollamaLog());
+  spawnDetached(bin, ['serve'], paths.ollamaLog(), OLLAMA_PRIVACY_ENV);
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 500));

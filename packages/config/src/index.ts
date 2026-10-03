@@ -5,6 +5,13 @@ import { z } from 'zod';
 
 const bps = z.number().int().min(0).max(10_000);
 
+/** Request privacy tiers, in order of strictness (docs/PRIVACY.md). */
+export const PRIVACY_TIERS = ['trusted', 'network', 'upstream_zdr'] as const;
+export type PrivacyTier = (typeof PRIVACY_TIERS)[number];
+export function isPrivacyTier(v: unknown): v is PrivacyTier {
+  return typeof v === 'string' && (PRIVACY_TIERS as readonly string[]).includes(v);
+}
+
 export const StakeTierSchema = z.object({
   name: z.string().min(1),
   minStake: z.number().min(0),
@@ -83,6 +90,35 @@ export const TokenomicsSchema = z
         reputationMinJobs: z.number().int().min(1).default(5),
       })
       .default({}),
+    /**
+     * Request privacy tiers (docs/PRIVACY.md). `trusted` = nodes whose reward wallet is allowlisted,
+     * or that hold at least `trustedMinStakeTier` AND signed the operator pledge; `network` = any
+     * eligible node; `upstream_zdr` = OpenRouter with zero-data-retention providers only.
+     */
+    privacy: z
+      .object({
+        /** Tier used when neither the request nor the API key picks one. */
+        default: z.enum(PRIVACY_TIERS).default('trusted'),
+        /**
+         * Where a `trusted` request goes when no trusted node is online. `network` is only honoured
+         * when the tier came from this default; a request that asked for trusted explicitly (header,
+         * body or key) never silently drops to `network` and goes to `upstream_zdr` instead.
+         */
+        fallback: z.enum(['upstream_zdr', 'network']).default('upstream_zdr'),
+        /** Reward wallets whose nodes are trusted without staking or pledging. */
+        trustedWallets: z.array(z.string().min(1)).default([]),
+        /** Name of the stake tier (stakeTiers[].name) a wallet needs, together with the pledge, to be trusted. */
+        trustedMinStakeTier: z.string().min(1).default('gold'),
+        /** Which tiers clients may ask for. Disabling one makes requests for it a 400. */
+        tiers: z
+          .object({
+            trusted: z.boolean().default(true),
+            network: z.boolean().default(true),
+            upstream_zdr: z.boolean().default(true),
+          })
+          .default({}),
+      })
+      .default({}),
     /** Node network registration policy. */
     nodes: z
       .object({
@@ -100,10 +136,14 @@ export const TokenomicsSchema = z
      * Pre-launch points programme (apps/gateway/src/points.ts). Chain-agnostic: points accrue in the
      * gateway's points_ledger for credits received, credits spent, tokens served by a wallet's nodes
      * and referrals, and convert to MESH at TGE at a ratio set then. See docs/POINTS.md.
+     *
+     * Status: built, disabled. The owner decided not to run the programme at launch, so `enabled`
+     * defaults to false; when off the gateway 404s /points/*, /leaderboard/*, /referrals/*,
+     * /me/points and /me/referral, awards nothing, and the web app hides every points surface.
      */
     points: z
       .object({
-        enabled: z.boolean().default(true),
+        enabled: z.boolean().default(false),
         /** Points per $1 of credits received (distributions). */
         perUsdCredits: z.number().min(0).default(100),
         /** Points per $1 of credits spent on requests. */

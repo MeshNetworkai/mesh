@@ -15,7 +15,9 @@ import { LeaderboardPage } from './pages/Leaderboard';
 import { Privacy, Risk, Terms } from './pages/Legal';
 import { NodePage } from './pages/Node';
 import { NotFound } from './pages/NotFound';
+import { usePointsEnabled, useStats } from './lib/hooks';
 import { ReportPage } from './pages/Report';
+import { Stake } from './pages/Stake';
 import { StatsPage } from './pages/StatsPage';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -40,6 +42,15 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
     return this.props.children;
   }
+}
+
+/** /leaderboard exists only while the points programme is on (GET /stats pointsEnabled); otherwise it is a 404 like any unknown path. */
+function LeaderboardRoute() {
+  const { data } = useStats(60_000);
+  const pointsEnabled = usePointsEnabled();
+  if (pointsEnabled) return <LeaderboardPage />;
+  if (!data) return null; // stats still loading: avoid flashing a 404 that may turn into the page
+  return <NotFound />;
 }
 
 function ScrollToTop() {
@@ -67,7 +78,7 @@ export function App() {
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/risk" element={<Risk />} />
             <Route path="/report" element={<ReportPage />} />
-            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/leaderboard" element={<LeaderboardRoute />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Dashboard />} />
@@ -75,6 +86,7 @@ export function App() {
               <Route path="chat" element={<Chat />} />
               <Route path="stats" element={<StatsPage />} />
               <Route path="node" element={<NodePage />} />
+              <Route path="stake" element={<Stake />} />
             </Route>
             <Route path="/404" element={<NotFound />} />
             <Route path="*" element={<NotFound />} />

@@ -1,5 +1,5 @@
-import type { ModelPolicy, TokenomicsConfig } from '@mesh/config';
-import { networkTagFor } from '@mesh/config';
+import type { ModelPolicy, PrivacyTier, TokenomicsConfig } from '@mesh/config';
+import { isPrivacyTier, networkTagFor } from '@mesh/config';
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
 
@@ -23,6 +23,10 @@ export interface NodeRow {
   token_hash: string | null;
   agent_version: string | null;
   load_avg: number | null;
+  /** Operator pledge (docs/PRIVACY.md): when signed, by which chain's verifier. */
+  pledge_at: number | null;
+  pledge_signature: string | null;
+  pledge_chain: string | null;
 }
 
 export function onlineNodes(db: Db, now = nowSec()): NodeRow[] {
@@ -91,6 +95,69 @@ export function nodeReputation(db: Db, nodeId: string, routing: Partial<Pick<Rou
   };
 }
 
+// ---------------- privacy tiers (docs/PRIVACY.md) ----------------
+
+export type PrivacyConfig = TokenomicsConfig['privacy'];
+export type PrivacySource = 'header' | 'body' | 'key' | 'default';
+
+export interface PrivacyChoice {
+  tier: PrivacyTier;
+  /** Where the tier came from. `default` means nobody asked: config.privacy.fallback may apply. */
+  source: PrivacySource;
+}
+
+/** Human label the client sees in `mesh.servedBy`. */
+export type ServedBy = 'trusted node' | 'network node' | 'upstream (ZDR)' | 'upstream';
+
+/**
+ * Per-request tier: `X-Mesh-Privacy` header, then `mesh.privacy` in the body, then the API key's
+ * default, then config.privacy.default. Returns `{error}` for an unknown or disabled value instead
+ * of guessing (a privacy request must never be silently downgraded).
+ */
+export function resolvePrivacy(
+  input: { header?: string | string[] | undefined; body?: unknown; keyDefault?: string | null | undefined },
+  privacy: Pick<PrivacyConfig, 'default' | 'tiers'>,
+): PrivacyChoice | { error: string } {
+  const check = (raw: unknown, source: PrivacySource): PrivacyChoice | { error: string } | null => {
+    if (raw === undefined || raw === null || raw === '') return null;
+    const v = typeof raw === 'string' ? raw.trim().toLowerCase() : raw;
+    if (!isPrivacyTier(v)) return { error: `unknown privacy tier '${String(raw)}' (${source}); use trusted | network | upstream_zdr` };
+    if (!privacy.tiers[v]) return { error: `privacy tier '${v}' is disabled on this gateway` };
+    return { tier: v, source };
+  };
+  const header = Array.isArray(input.header) ? input.header[0] : input.header;
+  const bodyTier = input.body && typeof input.body === 'object' ? (input.body as { mesh?: { privacy?: unknown } }).mesh?.privacy : undefined;
+  return check(header, 'header') ?? check(bodyTier, 'body') ?? check(input.keyDefault, 'key') ?? (check(privacy.default, 'default') as PrivacyChoice);
+}
+
+/** Index of the stake tier named `privacy.trustedMinStakeTier` in ascending minStake order; null when no such tier. */
+export function trustedTierIndex(config: Pick<TokenomicsConfig, 'stakeTiers'> & { privacy: Pick<PrivacyConfig, 'trustedMinStakeTier'> }): number | null {
+  const sorted = [...config.stakeTiers].sort((a, b) => a.minStake - b.minStake);
+  const idx = sorted.findIndex((t) => t.name === config.privacy.trustedMinStakeTier);
+  return idx === -1 ? null : idx;
+}
+
+export type TrustedVia = 'allowlist' | 'stake+pledge';
+
+/**
+ * Whether a node may serve `trusted` jobs: its reward wallet is in `privacy.trustedWallets`, or the
+ * wallet holds at least the `trustedMinStakeTier` stake tier AND the node's operator signed the
+ * pledge (POST /nodes/:id/pledge). Stake is read from the per-epoch cache (`stakes.peek`).
+ */
+export function trustedVia(
+  deps: { config: Pick<TokenomicsConfig, 'stakeTiers'> & { privacy: Pick<PrivacyConfig, 'trustedWallets' | 'trustedMinStakeTier'> }; stakes?: TierSource },
+  node: Pick<NodeRow, 'wallet' | 'pledge_at'>,
+): TrustedVia | null {
+  if (deps.config.privacy.trustedWallets.includes(node.wallet)) return 'allowlist';
+  if (!node.pledge_at) return null;
+  const need = trustedTierIndex(deps.config);
+  if (need === null) return null;
+  const have = deps.stakes?.peek(node.wallet).tierIndex ?? 0;
+  return have >= need ? 'stake+pledge' : null;
+}
+
+export const isTrustedNode = (deps: Parameters<typeof trustedVia>[0], node: Pick<NodeRow, 'wallet' | 'pledge_at'>): boolean => trustedVia(deps, node) !== null;
+
 // ---------------- route decision ----------------
 
 export interface RouteDecision {
@@ -99,7 +166,16 @@ export interface RouteDecision {
   tag: string | null;
   /** Online, idle, reputable nodes advertising `tag`, best first. */
   candidates: string[];
-  reason: 'network_disabled' | 'not_network_model' | 'no_online_node' | 'node';
+  reason: 'network_disabled' | 'not_network_model' | 'no_online_node' | 'no_trusted_node' | 'upstream_requested' | 'node';
+  /** Tier the request is actually served under (`trusted` → `network` only via the default fallback). */
+  privacy: PrivacyTier;
+  /** What the client asked for (or the default). */
+  requested: PrivacyChoice;
+  /** Only nodes that pass `isTrustedNode` may claim the job. */
+  trustedOnly: boolean;
+  /** Upstream calls carry the ZDR-only provider preference. */
+  zdr: boolean;
+  servedBy: ServedBy;
 }
 
 /** Sync view of a wallet's stake tier (staking.ts `StakeResolver.peek`); absent → every node is on the base tier. */
@@ -107,19 +183,22 @@ export interface TierSource {
   peek(wallet: string): { tierIndex: number };
 }
 
+export interface RouteDeps {
+  db: Db;
+  config: { routing: Partial<RoutingConfig>; stakeTiers: TokenomicsConfig['stakeTiers']; privacy: PrivacyConfig };
+  stakes?: TierSource;
+}
+
 /**
  * Online, idle (not busy), reputable nodes advertising `tag`, excluding `exclude`. Best first:
  * higher stake tier of the reward wallet, then reputation (success rate, then faster first token),
- * then most recently seen.
+ * then most recently seen. `trustedOnly` keeps only nodes that may serve `trusted` jobs.
  */
-export function eligibleNodes(
-  deps: { db: Db; config: { routing: Partial<RoutingConfig> }; stakes?: TierSource },
-  tag: string,
-  opts: { exclude?: string | null; now?: number } = {},
-): NodeRow[] {
+export function eligibleNodes(deps: RouteDeps, tag: string, opts: { exclude?: string | null; now?: number; trustedOnly?: boolean } = {}): NodeRow[] {
   const routing = deps.config.routing;
   const scored = onlineNodes(deps.db, opts.now)
     .filter((n) => n.busy === 0 && n.node_id !== opts.exclude && nodeModels(n).includes(tag))
+    .filter((n) => !opts.trustedOnly || isTrustedNode(deps, n))
     .map((n) => ({ n, rep: nodeReputation(deps.db, n.node_id, routing), tier: deps.stakes?.peek(n.wallet).tierIndex ?? 0 }))
     .filter((x) => x.rep.eligible);
   scored.sort(
@@ -132,15 +211,57 @@ export function eligibleNodes(
   return scored.map((x) => x.n);
 }
 
-export function decideRoute(
-  deps: { db: Db; config: { routing: Partial<RoutingConfig> }; policy: ModelPolicy; stakes?: TierSource },
-  model: string,
-  now = nowSec(),
-): RouteDecision {
-  if (!deps.config.routing?.preferNetwork) return { target: 'openrouter', tag: null, candidates: [], reason: 'network_disabled' };
-  const tag = networkTagFor(deps.policy, model);
-  if (!tag) return { target: 'openrouter', tag: null, candidates: [], reason: 'not_network_model' };
+/** Upstream leg of a decision: ZDR unless the caller explicitly settled for `network`. */
+function upstreamDecision(reason: RouteDecision['reason'], tag: string | null, requested: PrivacyChoice): RouteDecision {
+  const zdr = requested.tier !== 'network';
+  return {
+    target: 'openrouter',
+    tag,
+    candidates: [],
+    reason,
+    privacy: zdr ? 'upstream_zdr' : 'network',
+    requested,
+    trustedOnly: false,
+    zdr,
+    servedBy: zdr ? 'upstream (ZDR)' : 'upstream',
+  };
+}
+
+/**
+ * Where a request goes. With the default `trusted` choice: a trusted node when one is online, else
+ * `config.privacy.fallback` — but `network` is only taken when nobody asked for trusted explicitly
+ * (source `default`); an explicit trusted request that cannot be honoured goes upstream with ZDR.
+ */
+export function decideRoute(deps: RouteDeps & { policy: ModelPolicy }, model: string, requested: PrivacyChoice = { tier: deps.config.privacy.default, source: 'default' }, now = nowSec()): RouteDecision {
+  const tag = deps.config.routing?.preferNetwork ? networkTagFor(deps.policy, model) : null;
+  if (!deps.config.routing?.preferNetwork) return upstreamDecision('network_disabled', null, requested);
+  if (!tag) return upstreamDecision('not_network_model', null, requested);
+  if (requested.tier === 'upstream_zdr') return upstreamDecision('upstream_requested', tag, requested);
+
+  const nodeDecision = (nodes: NodeRow[], privacy: 'trusted' | 'network'): RouteDecision => ({
+    target: 'node',
+    tag,
+    candidates: nodes.map((n) => n.node_id),
+    reason: 'node',
+    privacy,
+    requested,
+    trustedOnly: privacy === 'trusted',
+    // If every node fails and the request falls through to the upstream, keep ZDR unless the
+    // caller explicitly settled for `network`.
+    zdr: requested.tier !== 'network',
+    servedBy: privacy === 'trusted' ? 'trusted node' : 'network node',
+  });
+
+  if (requested.tier === 'trusted') {
+    const trusted = eligibleNodes(deps, tag, { now, trustedOnly: true });
+    if (trusted.length > 0) return nodeDecision(trusted, 'trusted');
+    if (deps.config.privacy.fallback === 'network' && requested.source === 'default') {
+      const any = eligibleNodes(deps, tag, { now });
+      if (any.length > 0) return nodeDecision(any, 'network');
+    }
+    return upstreamDecision('no_trusted_node', tag, requested);
+  }
   const nodes = eligibleNodes(deps, tag, { now });
-  if (nodes.length === 0) return { target: 'openrouter', tag, candidates: [], reason: 'no_online_node' };
-  return { target: 'node', tag, candidates: nodes.map((n) => n.node_id), reason: 'node' };
+  if (nodes.length === 0) return upstreamDecision('no_online_node', tag, requested);
+  return nodeDecision(nodes, 'network');
 }

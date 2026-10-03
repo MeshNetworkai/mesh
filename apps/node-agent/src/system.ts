@@ -67,9 +67,9 @@ export function run(cmd: string, args: string[], opts: { inherit?: boolean } = {
 }
 
 /** Starts a detached background process whose output goes to `logFile`. */
-export function spawnDetached(cmd: string, args: string[], logFile: string): number | undefined {
+export function spawnDetached(cmd: string, args: string[], logFile: string, env: Record<string, string> = {}): number | undefined {
   const fd = openSync(logFile, 'a');
-  const child = spawn(cmd, args, { detached: true, stdio: ['ignore', fd, fd], env: process.env });
+  const child = spawn(cmd, args, { detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...env } });
   child.unref();
   return child.pid;
 }

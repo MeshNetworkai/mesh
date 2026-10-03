@@ -145,12 +145,40 @@ function ReferralCard() {
   );
 }
 
+/** Pre-launch points tile. Rendered only while GET /stats says pointsEnabled (programme is built, disabled by default). */
+function PointsTile() {
+  const pts = useMyPoints();
+  const points = pts.data;
+  return (
+    <Tile
+      label={
+        <>
+          Points <EarnTip rules={points?.rules ?? null} />
+        </>
+      }
+      loading={pts.loading && !points}
+      value={points ? fmtPoints(points.points) : pts.error ? '—' : '—'}
+      delta={
+        !points
+          ? pts.error
+            ? 'Points unavailable'
+            : '—'
+          : points.delta24h > 0
+            ? `+${fmtPoints(points.delta24h)} · 24h${points.rank ? ` · #${fmtInt(points.rank)}` : ''}`
+            : points.rank
+              ? `No change · 24h · #${fmtInt(points.rank)}`
+              : `Earn before launch; converts to ${TOKENOMICS.ticker}`
+      }
+      deltaKind={points && points.delta24h > 0 ? 'up' : ''}
+    />
+  );
+}
+
 export function Dashboard() {
   const me = useMe();
   const st = useStats();
   const stats = st.data;
-  const pts = useMyPoints();
-  const points = pts.data;
+  const pointsEnabled = stats?.pointsEnabled === true;
 
   const lastDist = me.data?.ledger.find((r) => r.kind === 'distribution') ?? null;
   const series = stats?.series24h ?? null;
@@ -178,7 +206,7 @@ export function Dashboard() {
 
       {me.error && !me.data ? <Notice kind="bad">Could not load your account: {me.error}</Notice> : null}
 
-      <div className="tiles">
+      <div className="tiles dense">
         <Tile
           label="Balance"
           loading={loading}
@@ -211,27 +239,7 @@ export function Dashboard() {
           value={fmtInt(stats?.nodesOnline ?? null)}
           delta={stats ? `upstream ${stats.upstream}` : '—'}
         />
-        <Tile
-          label={
-            <>
-              Points <EarnTip rules={points?.rules ?? null} />
-            </>
-          }
-          loading={pts.loading && !points}
-          value={points ? fmtPoints(points.points) : pts.error ? '—' : '—'}
-          delta={
-            !points
-              ? pts.error
-                ? 'Points unavailable'
-                : '—'
-              : points.delta24h > 0
-                ? `+${fmtPoints(points.delta24h)} · 24h${points.rank ? ` · #${fmtInt(points.rank)}` : ''}`
-                : points.rank
-                  ? `No change · 24h · #${fmtInt(points.rank)}`
-                  : `Earn before launch; converts to ${TOKENOMICS.ticker}`
-          }
-          deltaKind={points && points.delta24h > 0 ? 'up' : ''}
-        />
+        {pointsEnabled ? <PointsTile /> : null}
         {showSavings ? (
           <Tile
             label="Saved on Mesh nodes"
@@ -271,24 +279,26 @@ export function Dashboard() {
         )}
       </div>
 
-      <ReferralCard />
+      {pointsEnabled ? <ReferralCard /> : null}
 
       <div className="row">
         <Link className="btn accent" to="/app/keys">
           Create API key
         </Link>
-        <Link className="btn secondary" to="/leaderboard">
-          Leaderboard
-        </Link>
+        {pointsEnabled ? (
+          <Link className="btn secondary" to="/leaderboard">
+            Leaderboard
+          </Link>
+        ) : null}
         <Link className="btn secondary" to="/app/chat">
           Open chat
         </Link>
         <Link className="btn ghost" to="/docs">
           Docs
         </Link>
-        <button className="btn primary" disabled title="Staking arrives in week 2">
-          Stake · week 2
-        </button>
+        <Link className="btn primary" to="/app/stake">
+          Stake
+        </Link>
       </div>
 
       <div className="stack sm">

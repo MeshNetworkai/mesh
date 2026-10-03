@@ -75,13 +75,53 @@ test.describe('signed-in app', () => {
 
   test('node page renders (public) with the install one-liner and the operator view when signed in', async ({ page }) => {
     await page.goto('/app/node');
-    await expect(page.getByText('Run a node')).toBeVisible();
+    await expect(page.locator('span.display', { hasText: 'Run a node' })).toBeVisible();
     await expect(page.getByLabel('What the installer does')).toBeVisible();
     await expect(page.locator('body')).toContainText('install-node.sh');
 
     await signIn(page);
     await page.goto('/app/node');
     await expect(page.getByText('Your nodes')).toBeVisible();
+  });
+
+  test('cookie session: no JWT in localStorage, survives a reload without the hint, sign out clears the cookie', async ({ page }) => {
+    await signIn(page);
+    await page.goto('/app');
+    await expect(page.getByText('Your credits')).toBeVisible();
+    // the app persists only {wallet, chain}; the JWT lives in the HttpOnly cookie
+    const stored = await page.evaluate(() => localStorage.getItem('mesh.session'));
+    expect(stored).toBeTruthy();
+    expect(JSON.parse(stored!)).not.toHaveProperty('token');
+    expect(await page.evaluate(() => document.cookie)).not.toContain('mesh_session='); // HttpOnly: invisible to scripts
+    expect(await page.evaluate(() => document.cookie)).toContain('mesh_csrf='); // the CSRF twin is readable on purpose
+
+    // Even with the hint gone, the cookie alone restores the session via GET /auth/session.
+    await page.evaluate(() => localStorage.removeItem('mesh.session'));
+    await page.reload();
+    await expect(page.getByText('Your credits')).toBeVisible();
+
+    // Sign out → POST /auth/logout clears the cookies; a reload shows the connect prompt.
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByText('Connect a wallet to see your credits')).toBeVisible();
+    // the logout request is fire-and-forget from the UI's point of view; wait for the cookie to go
+    await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_session');
+    await page.reload();
+    await expect(page.getByText('Connect a wallet to see your credits')).toBeVisible();
+  });
+
+  test('admin page: token → HttpOnly admin cookie, console works, reload keeps it, sign out drops it', async ({ page }) => {
+    await page.goto('/admin');
+    await page.getByLabel('Admin token').fill('e2e-admin-token');
+    await page.getByRole('button', { name: 'Open' }).click();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await expect(page.getByText('Recent epochs', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.cookie)).not.toContain('mesh_admin=');
+    expect((await page.context().cookies()).map((c) => c.name)).toContain('mesh_admin');
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible(); // cookie survived, no token re-entry
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByLabel('Admin token')).toBeVisible();
+    await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
   test('network page renders the public stats', async ({ page }) => {

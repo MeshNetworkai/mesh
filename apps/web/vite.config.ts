@@ -50,7 +50,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: { '/api': { target: 'http://localhost:8787', rewrite: (p) => p.replace(/^\/api/, '') } },
+    // `/api/<route>` -> gateway (dev convenience). `/api` itself is the API reference page of the SPA.
+    proxy: { '^/api/': { target: 'http://localhost:8787', rewrite: (p) => p.replace(/^\/api\//, '/') } },
   },
   build: {
     target: 'es2022',

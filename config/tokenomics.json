@@ -57,8 +57,15 @@
     "minSuccessRate": 0.8,
     "reputationMinJobs": 5
   },
+  "privacy": {
+    "default": "trusted",
+    "fallback": "upstream_zdr",
+    "trustedWallets": [],
+    "trustedMinStakeTier": "gold",
+    "tiers": { "trusted": true, "network": true, "upstream_zdr": true }
+  },
   "points": {
-    "enabled": true,
+    "enabled": false,
     "perUsdCredits": 100,
     "perUsdSpent": 50,
     "perNodeTokenK": 1,

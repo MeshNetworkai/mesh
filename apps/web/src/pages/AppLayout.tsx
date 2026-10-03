@@ -46,6 +46,9 @@ export function AppLayout() {
             <NavLink to="/app/node" className={cls}>
               Node
             </NavLink>
+            <NavLink to="/app/stake" className={cls}>
+              Stake
+            </NavLink>
           </nav>
           <div className="row">
             <NextEpochPill epochSeconds={stats?.epochSeconds} />

@@ -1,3 +1,4 @@
+import { PRIVACY_TIERS } from '@mesh/config';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createApiKey, getApiKey, listApiKeys, publicKeyView, revokeApiKey, updateApiKey } from '../auth.js';
@@ -6,20 +7,24 @@ import { nowSec } from '../db.js';
 import { microsToUsd, usdToMicros } from '../money.js';
 
 const name = z.string().trim().min(1).max(64);
+/** Default privacy tier for the key (docs/PRIVACY.md); null = use the gateway default. */
+const privacy = z.enum(PRIVACY_TIERS).nullable().optional();
 const CreateBody = z
   .object({
     name: name.optional(),
     /** legacy alias for name */
     label: name.optional(),
     spendLimitUsd: z.number().positive().nullable().optional(),
+    privacy,
   })
   .optional();
 const PatchBody = z
   .object({
     name: name.nullable().optional(),
     spendLimitUsd: z.number().positive().nullable().optional(),
+    privacy,
   })
-  .refine((b) => 'name' in b || 'spendLimitUsd' in b, { message: 'nothing to update' });
+  .refine((b) => 'name' in b || 'spendLimitUsd' in b || 'privacy' in b, { message: 'nothing to update' });
 
 export async function keyRoutes(app: FastifyInstance, ctx: AppContext) {
   const auth = requireSession(ctx);
@@ -30,13 +35,14 @@ export async function keyRoutes(app: FastifyInstance, ctx: AppContext) {
     const { wallet } = sessionOf(req);
     const b = parsed.data ?? {};
     const limit = b.spendLimitUsd == null ? null : usdToMicros(b.spendLimitUsd);
-    const { id, key, prefix, name } = createApiKey(ctx.db, wallet, { name: b.name ?? b.label ?? null, spendLimitUsdMicros: limit, pepper: ctx.env.KEY_PEPPER });
+    const { id, key, prefix, name } = createApiKey(ctx.db, wallet, { name: b.name ?? b.label ?? null, spendLimitUsdMicros: limit, pepper: ctx.env.KEY_PEPPER, privacy: b.privacy ?? null });
     return reply.code(201).send({
       id,
       key,
       prefix,
       name,
       spendLimitUsd: limit === null ? null : microsToUsd(limit),
+      privacy: b.privacy ?? null,
       note: 'Store this key now; it is not shown again.',
     });
   });
@@ -53,8 +59,9 @@ export async function keyRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const { wallet } = sessionOf(req);
     if (!getApiKey(ctx.db, wallet, id)) return reply.code(404).send({ error: 'not_found' });
-    const patch: { name?: string | null; spendLimitUsdMicros?: number | null } = {};
+    const patch: { name?: string | null; spendLimitUsdMicros?: number | null; privacy?: string | null } = {};
     if ('name' in parsed.data) patch.name = parsed.data.name ?? null;
+    if ('privacy' in parsed.data) patch.privacy = parsed.data.privacy ?? null;
     if ('spendLimitUsd' in parsed.data) {
       patch.spendLimitUsdMicros = parsed.data.spendLimitUsd == null ? null : usdToMicros(parsed.data.spendLimitUsd);
     }

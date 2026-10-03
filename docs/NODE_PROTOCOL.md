@@ -100,6 +100,22 @@ chain?, ...}`. Unsigned on a signed gateway → `401 signature_required`; wrong 
 → `401 bad_signature`; reused or expired nonce → `400 nonce_missing`. Re-registering an existing
 `nodeId` needs **both** the signature (or a link code) and the current node token.
 
+### 1c. Operator pledge (`GET` / `POST /nodes/:id/pledge`)
+
+To serve `trusted` jobs a node needs its reward wallet allowlisted (`config.privacy.trustedWallets`)
+**or** a stake at the `config.privacy.trustedMinStakeTier` tier (`gold`) **and** a signed operator
+pledge. Both calls take the **owning wallet's session JWT** (the node token is not accepted: the Mac
+never holds a key, so pledging happens in the web app, Node page → "Sign the operator pledge").
+
+- `GET /nodes/:id/pledge` → `{nodeId, wallet, message, signed, signedAt, chain, trusted, trustedVia,
+  allowlisted, requiredStakeTier, stakeTier, stakeOk}`. `message` is the exact text to sign
+  (`auth.ts:pledgeMessage`, reproduced in `docs/PRIVACY.md` §5): bound to the wallet and node id, no
+  nonce, first line `<domain> asks the operator of Mesh node <nodeId> to pledge:`.
+- `POST /nodes/:id/pledge {signature, chain?}` verifies the signature for the node's wallet and stores
+  `pledge_at`, `pledge_signature`, `pledge_chain`. Errors: `401 unauthorized` (not the owning wallet /
+  node token), `401 bad_signature`, `404 unknown_node`. Response is the same status object.
+- `GET /nodes/:id` and `GET /me/nodes` carry the same object under `pledge`.
+
 ## 2. Heartbeat
 
 `POST /nodes/:id/heartbeat` (node token), every **20 s**:
@@ -128,7 +144,6 @@ chain?, ...}`. Unsigned on a signed gateway → `401 signature_required`; wrong 
 {
   "jobId": "job_Qm3…",
   "model": "llama3.1:8b",
-  "requestedModel": "llama-3.1-8b",
   "messages": [{ "role": "user", "content": "…" }],
   "params": { "temperature": 0.2, "top_p": 0.9, "stop": ["\n\n"] },
   "maxTokens": 1024,
@@ -137,10 +152,18 @@ chain?, ...}`. Unsigned on a signed gateway → `401 signature_required`; wrong 
 }
 ```
 
-- `model` is the Ollama tag to run. `params` carries whatever OpenAI sampling params the client set
-  (`temperature`, `top_p`, `top_k`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`,
-  `repeat_penalty`, `response_format`); map them to Ollama `options`. `maxTokens` → `num_predict`.
+- **These seven fields are the whole job** (`network.ts:JOB_VIEW_FIELDS`; asserted by
+  `test/privacy.test.ts`). A node never receives the wallet, API key, request id, client IP, user
+  agent, the client-facing model name, or any client identifier. See `docs/PRIVACY.md` §1.
+- `model` is the Ollama tag to run. `messages` are reduced to `role` + `content` (string or
+  `{type:"text", text}` parts; OpenAI `name`, tool fields and non-text parts are stripped by the gateway).
+  `params` carries only whitelisted OpenAI sampling params (`temperature`, `top_p`, `top_k`, `stop`,
+  `seed`, `presence_penalty`, `frequency_penalty`, `repeat_penalty`, `response_format`); map them to
+  Ollama `options`. `maxTokens` → `num_predict`.
 - `deadlineMs`: abort generation if you have not finished by then; the gateway has already given up.
+- Privacy tiers (`docs/PRIVACY.md` §2): a job queued under the `trusted` tier is only offered to, and
+  only claimable by, nodes that are trusted (allowlisted wallet, or gold stake + signed pledge, §1c).
+  The job payload itself is identical across tiers; the node is not told which tier it is serving.
 - A pull also counts as liveness (updates `last_seen`), but keep heartbeating so `busy`/`models` stay fresh.
 - One long-poll per node at a time: a new pull replaces the previous waiter.
 - Nodes whose reputation is below the threshold (see §6) get `204` even when jobs are queued.
@@ -186,12 +209,20 @@ The gateway relays your chunks as standard OpenAI SSE (`chat.completion.chunk` w
 `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`, `cost`) plus a Mesh extension:
 
 ```json
-"mesh": { "route": "node", "nodeId": "node_3f9a…", "chip": "M3 Max", "jobId": "job_Qm3…", "attempt": 1 }
+"mesh": { "route": "node", "nodeId": "node_3f9a…", "chip": "M3 Max", "jobId": "job_Qm3…", "attempt": 1,
+          "privacy": "trusted", "servedBy": "trusted node" }
 ```
 
-Response headers: `x-mesh-route: node:<nodeId>` (or `openrouter`/`mock`) and, after a fallback,
-`x-mesh-fallback: <reason>`. Non-stream requests get the same `usage` and `mesh` fields in the
-completion JSON.
+`privacy` is the tier the reply was served under (`trusted | network | upstream_zdr`) and `servedBy`
+the label for it (`trusted node`, `network node`, `upstream (ZDR)`, `upstream`). Upstream-served
+replies (fallback or `upstream_zdr`) carry `"mesh": {"route": "openrouter", "privacy": …, "servedBy": …}`
+in a final chunk the gateway adds before `[DONE]` (it repeats the upstream's `usage`).
+
+Response headers: `x-mesh-route: node:<nodeId>` (or `openrouter`/`mock`), `x-mesh-privacy`,
+`x-mesh-served-by` and, after a fallback, `x-mesh-fallback: <reason>` (`no_trusted_node` when a
+trusted request found no trusted node online). Non-stream requests get the same `usage` and `mesh`
+fields in the completion JSON. Clients pick the tier with `X-Mesh-Privacy: trusted|network|upstream_zdr`
+or `mesh.privacy` in the body; see `docs/PRIVACY.md` §2.
 
 ## 6. Timeouts, retries, fallback (gateway side)
 
@@ -204,7 +235,9 @@ completion JSON.
 | Client disconnects | job abandoned; your next POST gets `409` | `failed`, `error=client_disconnected`, `node_fault=0` |
 
 A fallback is invisible to the client (one continuous response, served by OpenRouter, billed at
-OpenRouter cost). A re-queued job arrives at the second node with `attempt: 2` and the same payload.
+OpenRouter cost); the final chunk's `mesh.servedBy` says `upstream (ZDR)` / `upstream`. A re-queued
+job arrives at the second node with `attempt: 2` and the same payload; for a `trusted` job the second
+node must be trusted too, and the fallback keeps the ZDR provider preference.
 
 **Reputation.** Per node, over its last 100 scored jobs (`done` + node-fault failures):
 `successRate = done / scored` and `avgFirstTokenMs` (claim → first chunk). A node with at least
@@ -251,6 +284,13 @@ loop:
 Retry transient network errors on `chunk` with the same `seq`. Store `nodeId` + `nodeToken` locally.
 If the gateway answers `401` on heartbeat the token is gone (database reset): register again without
 `nodeId` to get a fresh identity (an existing id cannot be re-claimed without its token).
+
+**Agent privacy rules** (`docs/PRIVACY.md` §3; the reference agent does all of this and
+`apps/node-agent/test/privacy.test.ts` checks it): never write `messages` or deltas to disk or to a
+log (log ids, counts and timings only); call Ollama with `keep_alive` set and leave `OLLAMA_DEBUG`
+off (`mesh-node` sets `OLLAMA_NOHISTORY=1`, `OLLAMA_DEBUG=0` for the `ollama serve` it launches and in
+its launchd plist); drop every reference to the job's text once `done`/`fail` is sent; show operators
+counts and earnings only. A trusted node's operator has signed exactly these commitments (§1c).
 
 ## Known gaps
 

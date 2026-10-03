@@ -73,6 +73,7 @@ chmod 600 .env
 {
   echo "JWT_SECRET=$(openssl rand -hex 32)"
   echo "ADMIN_TOKEN=$(openssl rand -hex 24)"
+  echo "KEY_PEPPER=$(openssl rand -hex 32)"
 } >> .env
 nano .env
 ```
@@ -84,6 +85,10 @@ NODE_ENV=production
 AUTH_DOMAIN=api.example.com
 AUTH_URI=https://api.example.com
 CORS_ORIGINS=https://app.example.com          # the web app's origin; the browser cannot sign in without it
+KEY_PEPPER=<openssl rand -hex 32>             # API-key hash pepper (session 6); rotating it invalidates every key
+TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128        # peers whose X-Forwarded-For / CF-IPCountry we believe (Caddy on this host); add CDN ranges if it connects directly
+ADMIN_IP_ALLOWLIST=127.0.0.1/32,<your office or VPN /32>   # /admin/* and /health/alerts answer 403 from anywhere else (optional, recommended)
+# COOKIE_DOMAIN=.example.com                   # only if the web app and the API are on different subdomains AND you want one cookie for both; host-only by default
 OPENROUTER_API_KEY=sk-or-v1-...
 EPOCH_CRON=0 * * * *
 V1_RATE_LIMIT=120
@@ -96,8 +101,16 @@ ALERTS_ENABLED=true
 # never in production: ALLOW_DEV_LOGIN, NODES_REQUIRE_SIGNATURE=false
 ```
 
-The gateway **refuses to start** in production with the default secrets, `AUTH_DOMAIN=localhost…`
-or `CORS_ORIGINS=*` (it prints every problem; fix and `docker compose up -d` again).
+The gateway **refuses to start** in production with the default secrets (`JWT_SECRET`, `ADMIN_TOKEN`,
+`KEY_PEPPER`), `AUTH_DOMAIN=localhost…`, `CORS_ORIGINS=*` or `TRUSTED_PROXY_CIDRS=*` (it prints every
+problem; fix and `docker compose up -d` again).
+
+Cookie sessions (session 6): the browser holds the session as an `HttpOnly; Secure; SameSite=Lax`
+cookie set by the API host, so the web app and the API must be **same-site** (`app.example.com` +
+`api.example.com` is fine; `app.vercel.app` + `api.example.com` is not: the browser would drop the
+cookie). `CORS_ORIGINS` must name the exact web origin because credentialed CORS cannot use `*`.
+Upgrading from a build that kept the JWT in `localStorage` is seamless: the first page load trades
+the stored token for the cookie through `POST /auth/refresh` and forgets it.
 
 Chain settings:
 
@@ -158,6 +171,9 @@ api.example.com {
     respond @admin 404
 }
 EOF
+# The gateway also enforces ADMIN_IP_ALLOWLIST itself (session 6), so a proxy slip no longer exposes /admin/*.
+# To use the web Admin page remotely, replace the 404 rule with an IP matcher
+# (`@admin { path /admin/* not remote_ip <your /32> }`) and keep ADMIN_IP_ALLOWLIST as the second gate.
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl enable --now caddy && sudo systemctl reload caddy
 ```
@@ -337,13 +353,20 @@ API key:
 
 Admin token:
 1. `sed -i "s/^ADMIN_TOKEN=.*/ADMIN_TOKEN=$(openssl rand -hex 24)/" .env && docker compose up -d`
+   (admin cookies from `POST /admin/login` are JWTs signed with `JWT_SECRET`, 12 h; rotate `JWT_SECRET`
+   too if a browser session may have been stolen, otherwise they simply expire).
 2. Audit what it did: `jq '.recentAdminActions'` on the overview, especially `dev-login` (should not
-   exist in production: `ALLOW_DEV_LOGIN` is off) and `starter-credit(s)`.
+   exist in production: `ALLOW_DEV_LOGIN` is off), `starter-credit(s)`, `admin-login` and the
+   `admin-denied` / `admin-denied-ip` rows (every failed admin call is recorded with its IP and request id).
 3. Reverse unauthorized credits with negative `adjustment` rows if any (ledger `kind='adjustment'`).
 
 JWT secret (someone can mint sessions):
 1. `JWT_SECRET_PREVIOUS=` leave **empty** (do not honour the leaked one), set a new `JWT_SECRET`,
    `docker compose up -d`. Everyone signs in again; keys are unaffected.
+
+Key pepper (`KEY_PEPPER` leaked together with a DB dump): rotating it invalidates **every** API key
+(the stored HMACs no longer match), so only do it if the dump is confirmed: set the new value, restart,
+tell holders to create new keys. Without the pepper a dump of `api_keys.key_hash` is useless anyway.
 
 Node token: re-register that `nodeId` with the token + a fresh signed challenge (rotates), or
 `UPDATE nodes SET token_hash = NULL WHERE node_id = '<id>';` to force a new identity.

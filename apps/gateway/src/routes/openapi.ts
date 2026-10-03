@@ -6,14 +6,16 @@ import type { AppContext } from '../context.js';
 /**
  * GET /openapi.json — the OpenAPI 3.1 description of this gateway, parsed once from
  * `apps/gateway/openapi.yaml` (the single source; the web app bundles the same file for /api).
- * The first `servers[]` entry is rewritten to AUTH_URI when it is set, so the document that a
- * deployment serves points at itself.
+ * The first `servers[]` entry is rewritten to AUTH_URI when a real domain is configured, so the
+ * document a deployment serves points at itself.
  */
 export function loadOpenApi(ctx: Pick<AppContext, 'env'>): Record<string, unknown> {
   const file = new URL('../../openapi.yaml', import.meta.url);
   const doc = parse(readFileSync(file, 'utf8')) as Record<string, unknown> & { servers?: Array<{ url: string; description?: string }> };
-  if (ctx.env.AUTH_URI && Array.isArray(doc.servers) && doc.servers.length) {
-    doc.servers = [{ url: ctx.env.AUTH_URI.replace(/\/$/, ''), description: 'This gateway' }, ...doc.servers.slice(1)];
+  // AUTH_URI is derived from AUTH_DOMAIN (localhost:8787 in dev); only trust it once a real domain is configured.
+  const own = ctx.env.AUTH_URI?.replace(/\/$/, '');
+  if (own && !/localhost|127\.0\.0\.1/.test(own) && Array.isArray(doc.servers) && doc.servers.length) {
+    doc.servers = [{ url: own, description: 'This gateway' }, ...doc.servers.slice(1)];
   }
   return doc;
 }

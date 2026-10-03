@@ -1,10 +1,11 @@
-# Mesh gateway security review (session 5, 2026-10-03)
+# Mesh gateway security review (session 5, 2026-10-03; session 6 follow-up the same day)
 
 Scope: everything under `apps/gateway/src`, the node protocol (`docs/NODE_PROTOCOL.md`), the deploy
 path (`scripts/deploy-vps.md`, `docker-compose.yml`) and `.env.example`. Findings are listed by
 severity. "Fixed" means the change is in this tree with a test in
-`apps/gateway/test/security.test.ts` (28 tests); "Open" means it needs work outside this session's
-scope or a product decision, with a recommendation.
+`apps/gateway/test/security.test.ts` (28 tests) or `apps/gateway/test/session-hardening.test.ts`
+(15 tests, session 6); "Open" means it needs work outside this session's scope or a product decision,
+with a recommendation.
 
 Severity: **High** = a remote party can take money, credentials or someone else's rewards;
 **Medium** = abuse, denial of service or weakening of a control; **Low** = hygiene.
@@ -26,12 +27,14 @@ Severity: **High** = a remote party can take money, credentials or someone else'
 | 11 | Node job kept alive after client disconnect until timeout | Low | **Fixed** (relay closed on `close`) |
 | 12 | Epoch cron failure only logged | Medium | **Fixed** (`errors_log` + alert) |
 | 13 | `.env.example` missing the new knobs | Low | **Fixed** |
-| 14 | Session JWT in `localStorage` (XSS → token theft) | Medium | Open (cookie sessions) |
+| 14 | Session JWT in `localStorage` (XSS → token theft) | Medium | **Fixed** (HttpOnly cookie + CSRF double submit, session 6) |
 | 15 | Single-instance rate limits and relays | Low | Open (by design, one VPS) |
-| 16 | Node-agent / web cannot yet produce the registration signature | Medium | Open (next agent release) |
-| 17 | `/admin/*` exposure relies on the reverse proxy | Medium | Open (keep the Caddy rule; add IP allowlist) |
-| 18 | API-key hash lookup is unsalted SHA-256 | Low | Accepted (keys are 192-bit random) |
-| 19 | Geo-block trusts `CF-IPCountry`/`X-Country` headers | Medium | Open (proxy must strip client copies; documented) |
+| 16 | Node-agent / web cannot yet produce the registration signature | Medium | **Fixed** (link codes) |
+| 17 | `/admin/*` exposure relies on the reverse proxy | Medium | **Fixed** (`ADMIN_IP_ALLOWLIST` in-gateway, admin cookie, full audit, session 6) |
+| 18 | API-key hash lookup is unsalted SHA-256 | Low | **Fixed** (HMAC with `KEY_PEPPER`, lazy rehash, session 6) |
+| 19 | Geo-block trusts `CF-IPCountry`/`X-Country` headers | Medium | **Fixed** (headers believed only from `TRUSTED_PROXY_CIDRS`, session 6) |
+| 20 | `trustProxy: true` believed `X-Forwarded-For` from anyone | Medium | **Fixed** (`TRUSTED_PROXY_CIDRS`, session 6) |
+| 21 | No request id on responses / in error bodies | Low | **Fixed** (`x-request-id` echoed or minted, session 6) |
 
 Checked and found sound (no change): nonce replay, SQL injection surface, job claim races, upstream
 error handling never charging, model policy enforcement, API key revocation.
@@ -163,14 +166,47 @@ Added `CORS_ORIGINS`, `JWT_SECRET_PREVIOUS`, `ALLOW_DEV_LOGIN`, `NODES_REQUIRE_S
 `NODE_REGISTER_RATE_LIMIT`, `BODY_LIMIT_BYTES`, alert and Telegram variables, with one-line
 explanations.
 
-### 14. Session JWT in `localStorage` — Medium — Open
+### 14. Session JWT in `localStorage` — Medium — Fixed (session 6)
 
-`apps/web/src/lib/auth.tsx` stores the 7-day session in `localStorage`; any XSS in the web app (or a
-malicious browser extension) can read it and spend credits via `POST /keys`. Mitigations in place:
-no `dangerouslySetInnerHTML`, CSP is the web host's job, keys created in the browser are also kept
-in `localStorage` (`keystore.ts`) so the exposure is the same class. Recommendation: `httpOnly`
-`SameSite=Strict` cookie sessions with a CSRF token for state-changing routes, and shorten the
-session to 24 h with refresh. Tracked for the cookie-sessions item in `docs/STATUS.md`.
+`apps/web/src/lib/auth.tsx` stored the 7-day session in `localStorage`; any XSS in the web app (or a
+malicious browser extension) could read it and spend credits via `POST /keys`.
+
+Fix (gateway `auth.ts`, `context.ts`, `routes/auth.ts`, `server.ts`; web `lib/api.ts`, `lib/auth.tsx`):
+
+- `POST /auth/verify`, `/auth/refresh` (and dev-only `/admin/dev-login`) set `mesh_session=<jwt>` as
+  `HttpOnly; SameSite=Lax; Path=/; Max-Age=7d`, `Secure` when `COOKIE_SECURE` (default: production),
+  plus a readable `mesh_csrf` cookie (random 192-bit, same attributes minus HttpOnly). The JSON body
+  still carries `token` so CLI / SDK clients keep using `Authorization: Bearer`. Bearer wins over the
+  cookie when both are present, so a stale cookie never confuses an API client.
+- `requireSession` accepts either. `GET /auth/session` answers who the cookie says you are (the web
+  app's boot check); `POST /auth/logout` clears both cookies (stateless JWT: bearer clients just
+  drop the token).
+- CSRF (`server.ts:csrfApplies`): every non-GET/HEAD/OPTIONS request that is **cookie**-authenticated
+  (carries `mesh_session` or `mesh_admin` and no `Authorization` / `x-admin-token` header) must send
+  `X-Mesh-CSRF` equal to the `mesh_csrf` cookie, else `403 csrf_mismatch` before any handler runs.
+  Exempt: `/auth/nonce`, `/auth/verify`, `/admin/login`, `/nodes/register*` (signature / token
+  auth) and `/v1/*` (API-key bearer). Because the rule is "any state change with a cookie", new
+  session routes (`/stake`, `/points`, `/referrals`, …) are covered without opting in (the points
+  routes answer 404 while `points.enabled` is false; see `docs/POINTS.md`). Header-
+  authenticated clients are immune by construction and skip the check.
+- CORS now sends `Access-Control-Allow-Credentials: true`; the browser requires an explicit origin
+  for that, so `CORS_ORIGINS` must list the web app (it had to anyway). `SameSite=Lax` means the web
+  app and the API must be same-site (`app.example.com` + `api.example.com`); the runbook says so.
+- Web: `request()` always uses `credentials: 'include'`, adds `X-Mesh-CSRF` from the cookie on
+  state changes, and sends no bearer for the session (the `COOKIE_SESSION` sentinel replaces the
+  JWT in the existing `(token, …)` call signatures so pages did not change). `localStorage` keeps
+  only `{wallet, chain}` (a render hint; `GET /auth/session` confirms it on boot and a 401 clears
+  it). A legacy entry that still contains a JWT is traded for the cookie once via `/auth/refresh`
+  and then dropped. "Sign out" calls `/auth/logout`. The session is still 7 days: shortening it is
+  a product call (`SESSION_TTL_SEC` is a constant in `auth.ts`, not an env var), the refresh path
+  already exists.
+
+Residual: `keystore.ts` keeps API keys the user created in the browser in `localStorage`; those
+are per-key spend-limited and revocable, and the user chose to store them. Tests: cookie flags,
+GET-with-cookie, POST without / with wrong / with matching CSRF on `/keys` (POST, PATCH, DELETE),
+`/nodes/link`, refresh and logout, bearer + stale cookie, exempt routes, CORS preflight with
+credentials, Playwright: reload without the hint, HttpOnly invisible to `document.cookie`, sign out
+clears the cookie (`apps/web/e2e/app.spec.ts`).
 
 ### 15. Single-instance limits — Low — Open (by design)
 
@@ -186,26 +222,86 @@ setup --link <code>` registers with it (`docs/NODE_PROTOCOL.md §1`). `--wallet`
 gateways with `NODES_REQUIRE_SIGNATURE=false` (dev/demo). Do **not** set that in production: it
 reopens #1.
 
-### 17. `/admin/*` exposure — Medium — Open
+### 17. `/admin/*` exposure — Medium — Fixed (session 6)
 
 Admin routes live on the same listener as the public API; the Caddyfile returns 404 for
-`/admin/*` and the compose file binds the gateway to `127.0.0.1`. Keep both. Recommendation: in
-addition, allow `/admin/*` only from `127.0.0.1` inside the gateway (one `onRequest` check on
-`req.ip`) once the admin web page (`apps/web/src/pages/Admin.tsx`, in progress) has decided how it
-reaches the API (SSH tunnel vs. authenticated route).
+`/admin/*` and the compose file binds the gateway to `127.0.0.1`. Both stay as defence in depth.
+Added in the gateway:
 
-### 18. Unsalted SHA-256 for API keys / node tokens — Low — Accepted
+- `ADMIN_IP_ALLOWLIST` (CIDRs): an `onRequest` hook answers `403 forbidden` for `/admin/*` and
+  `/health/alerts` from any other client IP, before auth runs, and writes an `admin-denied-ip`
+  audit row with the IP, path and request id. Unset = not enforced (dev). `req.ip` honours
+  `X-Forwarded-For` only from `TRUSTED_PROXY_CIDRS` (#20), so a client cannot spoof its way in.
+- `POST /admin/login` (admin token in `x-admin-token`, bearer or `{token}` body) sets `mesh_admin`,
+  an `HttpOnly` cookie holding a 12-hour JWT with `aud: mesh-admin` (never the token itself), plus
+  the `mesh_csrf` cookie; `requireAdmin` accepts the header or that cookie; `GET /admin/session`
+  checks it; `POST /admin/logout` clears it. `verifySession` rejects any JWT with an audience and
+  `verifyAdminSession` requires it, so neither cookie can impersonate the other. The web Admin page
+  now sends the token exactly once and holds nothing afterwards (reload keeps you signed in).
+- Audit: handlers keep their payload rows (`run-epoch`, `starter-credits`, …); an `onResponse` hook
+  on the admin plugin records every other call as `admin-call` (2xx mutations such as login/logout)
+  or `admin-denied` (any non-2xx: wrong token, 404, 400, CSRF failure) with method, path, status,
+  IP, auth method and request id. Successful `GET`s (the overview polls every 30 s) are logged, not
+  persisted, so the "recent actions" list stays readable.
 
-Keys are `mesh_sk_` + 24 random bytes (192 bits) and tokens `mesh_nt_` + 24 random bytes. A dump of
-`api_keys.key_hash` cannot be brute-forced; salting adds nothing for high-entropy secrets and would
-break the O(1) lookup. Keep.
+Tests: cookie login / forged cookie / wallet cookie on admin, CSRF on admin mutations, allowlist
+403 + audit, forwarded-for from trusted vs untrusted peers, Playwright admin page flow.
 
-### 19. Geo-block header trust — Medium — Open (documented)
+### 18. Unsalted SHA-256 for API keys / node tokens — Low — Fixed for API keys (session 6)
 
-`geoblock.ts` trusts `CF-IPCountry` / `X-Country`. Behind Cloudflare that header is authoritative;
-without Cloudflare the Caddyfile strips client-sent copies and may set `X-Country` from MaxMind.
-If the proxy is misconfigured a client can send `X-Country: FR` and bypass the block. The runbook's
-pre-flight includes a curl that proves the header is stripped.
+Keys are `mesh_sk_` + 24 random bytes (192 bits), so a dump of `api_keys.key_hash` was never
+brute-forceable; the remaining concern was a dump **plus** a partially known key (logs, screenshots)
+being confirmable offline. `hashApiKey(key, pepper)` is now `h1$` + HMAC-SHA256(`KEY_PEPPER`, key):
+without the server-side pepper the column is inert, and the lookup stays O(1) (no per-row salt).
+Migration is lazy: `lookupApiKey` tries the peppered hash, then the legacy sha256; a legacy hit is
+rewritten to the peppered form in the same call (`UPDATE … WHERE key_hash = <old>`), so the table
+converts itself as keys are used, with no downtime and no plaintext ever needed. Revoked legacy
+rows are not resurrected. `KEY_PEPPER` is required (≥ 32 chars, non-default) in production; rotating
+it invalidates every key, so the runbook treats it like `JWT_SECRET`.
+
+Node tokens (`mesh_nt_`, `nodes.token_hash`) keep plain sha256 for now: `routes/nodes.ts` is owned by
+the node-protocol work; the same `hashApiKey`-style pepper can be applied there with the same lazy
+rehash (open, Low).
+
+### 19. Geo-block header trust — Medium — Fixed (session 6)
+
+`geoblock.ts` trusted `CF-IPCountry` / `X-Country` from anyone. Now `geoBlockHook` takes
+`trustedPeer(ip)` and ignores the headers unless the **TCP peer** (`req.socket.remoteAddress`, never
+a forwarded value) is in `TRUSTED_PROXY_CIDRS`. A direct client claiming `X-Country: FR` is neither
+trusted nor blocked by its own header; a blocked country reported by the proxy is still 451. The
+Caddy `request_header -…` lines and the pre-flight curl stay as the second layer (a proxy that
+forwards a client's copy would still be believed, because the proxy is trusted).
+
+### 20. `trustProxy: true` — Medium — Fixed (session 6)
+
+Fastify was configured to believe `X-Forwarded-For` from any peer, so `req.ip` (rate-limit keys,
+the new admin allowlist, audit rows) could be set by the client. `trustProxy` is now the
+`TRUSTED_PROXY_CIDRS` list (default: loopback + RFC 1918 + ULA, i.e. Caddy on the same host or docker
+network; `*` restores trust-everyone and is refused in production). Add your CDN's ranges if it
+connects to the gateway directly.
+
+### 21. Request ids — Low — Fixed (session 6)
+
+Every response carries `x-request-id` (CORS-exposed): the proxy's `x-request-id` when present,
+otherwise a UUID. Error bodies outside `/v1` already included `requestId`; the 403s from the CSRF
+and allowlist hooks do too, and `req.log` lines carry `reqId`, so a user report can be matched to
+a log line and an `admin_actions` / `errors_log` row.
+
+## Session 6: cookie sessions and admin hardening (what landed, verified against the tree)
+
+| Item | Where in the code | Status |
+| --- | --- | --- |
+| Session JWT moved from `localStorage` to an `HttpOnly` `mesh_session` cookie + `mesh_csrf` double submit (#14) | `apps/gateway/src/context.ts:setSessionCookies`, `server.ts:csrfApplies`, `apps/web/src/lib/auth.tsx` (keeps only `{wallet, chain}` as a hint) | Done |
+| `ADMIN_IP_ALLOWLIST` enforced in-gateway, denials audited (#17) | `server.ts` `onRequest` hook, `env.ts:adminIpAllowlist`, `db.ts:recordAdminAction('admin-denied-ip')` | Done |
+| Admin cookie session (`mesh_admin`, 12 h, `aud: mesh-admin`) + full admin audit (#17) | `auth.ts:ADMIN_SESSION_TTL_SEC`, `routes/admin.ts` (`/admin/login`, `/admin/session`, `/admin/logout`, `onResponse` audit) | Done |
+| Peppered API-key hashes `h1$HMAC-SHA256(KEY_PEPPER, key)` with lazy rehash of legacy sha256 rows (#18) | `auth.ts:hashApiKey`, `auth.ts:lookupApiKey`, `env.ts` (`KEY_PEPPER` required ≥ 32 chars in production) | Done for API keys; node tokens still plain sha256 (open, Low) |
+| Proxy trust: `trustProxy` = `TRUSTED_PROXY_CIDRS`, geo headers believed only from trusted peers (#19, #20) | `server.ts`, `env.ts:trustedProxyCidrs`, `netaddr.ts:cidrMatcher`, `geoblock.ts` | Done |
+| `x-request-id` on every response and in error bodies (#21) | `server.ts` (`requestIdHeader`, `genReqId`, `onSend`) | Done |
+| `.env.example` documents `KEY_PEPPER`, `TRUSTED_PROXY_CIDRS`, `ADMIN_IP_ALLOWLIST`, `COOKIE_SECURE`, `COOKIE_DOMAIN` | `.env.example` | Done |
+
+Tests: `apps/gateway/test/session-hardening.test.ts` (15) and `security.test.ts` (28), plus the
+Playwright flows in `apps/web/e2e/app.spec.ts` (reload without the hint, `HttpOnly` invisible to
+`document.cookie`, sign out clears the cookie, admin page login).
 
 ## Checked and sound
 
@@ -233,3 +329,60 @@ pre-flight includes a curl that proves the header is stripped.
   `UPDATE nodes SET token_hash=NULL WHERE node_id=?` to force a new identity.
 - `GET /health/alerts` (admin) shows what the monitor sees; `GET /admin/overview.recentErrors` the
   last 50 errors.
+- `ADMIN_IP_ALLOWLIST` is the in-gateway gate for `/admin/*`; when you need the web Admin page from
+  a new network, add that /32 (restart) rather than loosening the Caddy rule.
+- Rotate `KEY_PEPPER` only on a confirmed DB-dump + pepper leak: it invalidates every API key.
+- Session cookies are `SameSite=Lax`, host-only to the API hostname: keep the web app and the API
+  on the same registrable domain, or set `COOKIE_DOMAIN` deliberately.
+
+## Still open after session 6
+
+- #15 single-instance limits (by design).
+- Node-token pepper (see #18).
+- Session TTL is still 7 days with refresh; shortening to 24 h is a one-constant product decision.
+- Web `keystore.ts` keeps user-created API keys in `localStorage` by the user's choice.
+
+## Privacy (session 7, 2026-10-03)
+
+Scope: requests served by third-party Macs. Full write-up in `docs/PRIVACY.md`; this section records
+what changed in the gateway and the node agent and what remains open. Tests:
+`apps/gateway/test/privacy.test.ts` (20) and `apps/node-agent/test/privacy.test.ts` (6).
+
+| # | Area | Severity | Status |
+| --- | --- | --- | --- |
+| P1 | Node job payload carried the client-facing model name; messages forwarded verbatim (OpenAI `name`, tool ids, image parts) | Medium | **Fixed** (`jobView` is exactly `JOB_VIEW_FIELDS`; `sanitizeMessages` keeps role + text only; params whitelisted; test plants identifiers and asserts none survive) |
+| P2 | Any eligible node could serve any request | Medium | **Fixed** (privacy tiers: `trusted` jobs are claimable only by trusted nodes, enforced in the claim `UPDATE`; explicit trusted never degrades to `network`; fallback is the ZDR upstream) |
+| P3 | Upstream calls made no data-retention request | Low | **Fixed** (`provider.data_collection: "deny"` on every upstream call unless the caller chose `network`; `mesh` block stripped from the upstream body) |
+| P4 | Node agent could in principle log job content | Low | **Fixed** (log lines carry ids/counts/timings only, asserted; buffers scrubbed after each job; `keep_alive`, `OLLAMA_NOHISTORY=1`, `OLLAMA_DEBUG=0`) |
+| P5 | Trusted status had no operator commitment | Medium | **Fixed** (`POST /nodes/:id/pledge`: wallet-signed pledge bound to node id; `pledge_at`/`pledge_signature`/`pledge_chain` stored; trusted = allowlist, or gold stake + pledge) |
+| P6 | Plaintext visible to the serving machine; memory inspection by its operator | High | **Open by nature** (documented in PRIVACY.md §4; policy control via pledge + stake + revocation; confidential compute on the roadmap, §6) |
+| P7 | Client `user` field passes through to OpenRouter | Low | Open (standard OpenAI field; documented; callers can omit it) |
+
+Details:
+
+- **Tier resolution** (`routing.ts:resolvePrivacy`): header `X-Mesh-Privacy` > body `mesh.privacy` >
+  API key default (`api_keys.privacy`, `PATCH /keys/:id`) > `config.privacy.default` (`trusted`). An
+  unknown or disabled value is `400 invalid_privacy_tier`; nothing is coerced. `config.privacy.fallback
+  = "network"` is honoured only for the implicit default, never for an explicit trusted request.
+- **Claim enforcement** (`network.ts`): `jobs.privacy` is stored; `tryClaim` and `pull` add
+  `AND (privacy != 'trusted' OR <trusted> = 1)`; long-poll waiters record their trust at wait time and
+  a trusted job skips untrusted waiters. The broker's trust callback is `routing.ts:isTrustedNode`,
+  reading the per-epoch stake cache, so a wallet that unstakes loses trusted status at the next epoch.
+- **Pledge** (`auth.ts:pledgeMessage`): nonce-free by design (stable, reviewable text identical to the
+  docs), bound to wallet + node id, first line distinct from sign-in and registration so
+  `parseLoginMessage` rejects it and a pledge signature cannot register or log in. Only the owning
+  wallet's session may read or sign it; a node token is refused.
+- **Response transparency**: `x-mesh-privacy`, `x-mesh-served-by`, `x-mesh-fallback: no_trusted_node`,
+  and `mesh.privacy` / `mesh.servedBy` in the final chunk for node- and upstream-served replies alike.
+- **Honesty in copy**: landing privacy block, Docs "Privacy tiers", the legal privacy page and the
+  Node page say that the serving machine sees plaintext and that trusted is a policy tier; "fully
+  private" does not appear.
+
+Operating guidance:
+
+- Allowlist a wallet (`config.privacy.trustedWallets`) only for machines you control; it bypasses stake
+  and pledge.
+- To drop a node from the trusted tier immediately: `UPDATE nodes SET pledge_at = NULL WHERE node_id = ?`
+  (stake-based trust) or remove it from the allowlist and restart. Re-pledging is one signature.
+- Keep `OLLAMA_DEBUG` unset on any `ollama serve` you run yourself; with it the server log contains
+  request bodies.

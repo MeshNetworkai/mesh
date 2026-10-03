@@ -226,8 +226,17 @@ export function Privacy() {
             <Clause n="1" title="Prompts and replies are not stored">
               <p>
                 The gateway relays your request to a Mesh node or to the upstream provider and relays the reply back. It does not write the prompt
-                or the reply to disk, to a database or to a log. Nodes run with logging off and are required by the terms not to keep job content.
-                Once the reply has been sent, the content is gone from our side.
+                or the reply to disk, to a database or to a log. Before a node sees a job the gateway removes everything but the model, the
+                messages (role and text only) and sampling settings: no wallet, API key, IP address, user agent or request id. The node agent
+                writes only job ids, token counts and timings to its log and discards the text once the reply is sent.
+              </p>
+              <p>
+                What we cannot change: the machine that runs the model must hold your prompt in plaintext while it generates the reply, and a
+                determined operator of that machine could inspect its memory. That is why requests carry a privacy tier. <b>Trusted</b> nodes
+                have staked and signed the operator pledge not to log, store, forward or inspect job content; <b>network</b> means any online
+                node; <b>upstream (ZDR)</b> sends the request to OpenRouter restricted to zero-data-retention providers. The default is trusted,
+                and a trusted request that no trusted node can take goes to the ZDR upstream, never to another node. See docs/PRIVACY.md in the
+                repository for the full threat model.
               </p>
             </Clause>
             <Clause n="2" title="What is logged per request">
@@ -269,8 +278,9 @@ export function Privacy() {
             </Clause>
             <Clause n="6" title="Third parties">
               <p>
-                Requests for models not served by the Mesh network go to OpenRouter under its own terms and privacy policy, which apply to the
-                content of those requests. The response headers and the reply tell you which path served you. Wallet connections go through the
+                Requests for models not served by the Mesh network, and requests on the upstream (ZDR) tier, go to OpenRouter under its own
+                terms and privacy policy, which apply to the content of those requests; on the trusted and upstream (ZDR) tiers we ask OpenRouter
+                to use only providers that do not retain data. The response headers and the reply tell you which path served you. Wallet connections go through the
                 wallet software you choose. We do not use analytics scripts, advertising trackers or third-party fonts on this site.
               </p>
             </Clause>

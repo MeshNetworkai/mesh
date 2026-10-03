@@ -37,8 +37,8 @@ public enum Format {
 
     /// `M3 Max · 64 GB`
     public static func machine(chip: String?, ramGb: Double?) -> String {
-        let c = (chip?.isEmpty == false) ? chip! : nil
-        let r = (ramGb ?? 0) > 0 ? ram(ramGb) : nil
+        let c: String? = (chip?.isEmpty == false) ? chip : nil
+        let r: String? = (ramGb ?? 0) > 0 ? ram(ramGb) : nil
         switch (c, r) {
         case let (c?, r?): return "\(c) \u{00B7} \(r)"
         case let (c?, nil): return c

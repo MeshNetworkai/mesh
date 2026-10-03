@@ -28,6 +28,7 @@ Usage
 
 Files   ~/.mesh/config.json (0600)  ~/.mesh/logs/  ~/.mesh/paused
 Env     GATEWAY_URL  MESH_LINK_CODE  MESH_HOME  OLLAMA_HOST_URL  NO_COLOR
+Privacy logs hold job ids, token counts and timings only; prompts and replies never touch disk (docs/PRIVACY.md)
 `;
 
 interface Args {
@@ -166,6 +167,7 @@ async function cmdStatus(flags: Args['flags']) {
       ['machine', `${cfg.chip} · ${cfg.ramGb} GB`],
       ['wallet', cfg.wallet],
       ['gateway', cfg.gateway],
+      ['privacy', 'counts only; no prompts or replies are kept on this machine'],
     ]),
   );
   if (error) {

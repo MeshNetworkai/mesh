@@ -2004,17 +2004,15 @@ table.schema tr:last-child td {
 table.schema td.k {
   white-space: nowrap;
   padding-right: 12px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+}
+table.schema td.k .req {
+  margin-left: 6px;
 }
 table.schema td.t {
   font-size: 12px;
   color: var(--muted);
   padding-right: 12px;
-  overflow-wrap: anywhere;
-  max-width: 18ch;
+  white-space: nowrap;
 }
 table.schema td.d {
   width: 100%;
@@ -2054,6 +2052,13 @@ table.schema table.schema {
 }
 
 /* ---------- points, referrals, leaderboard ---------- */
+/* Six tiles in one row: slightly smaller figures so a $xx.xxx balance does not wrap. */
+.tiles.dense .tile {
+  padding: 18px 18px;
+}
+.tiles.dense .tile .n {
+  font-size: clamp(24px, 2.2vw, 30px);
+}
 .bigrow .desc .note {
   display: inline-block;
   margin-top: 6px;
@@ -2157,7 +2162,7 @@ table.schema table.schema {
   flex-wrap: wrap;
 }
 .refcard .claim .input {
-  width: 10ch;
+  width: 12ch;
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }

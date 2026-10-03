@@ -14,11 +14,23 @@ export async function devLogin(wallet = WALLET): Promise<{ token: string; wallet
   return res.json() as Promise<{ token: string; wallet: string; chain: string }>;
 }
 
-/** Install the session in localStorage before any page script runs (the app reads `mesh.session` on boot). */
+/**
+ * Sign the browser in the way the app does since cookie sessions: dev-login through the page's own
+ * request context, so the gateway's `mesh_session` (HttpOnly) + `mesh_csrf` cookies land in the
+ * browser's jar, plus the {wallet, chain} hint the app keeps in localStorage (never the JWT).
+ * Returns the bearer token too, for direct API assertions from the test runner.
+ */
 export async function signIn(page: Page, wallet = WALLET) {
-  const session = await devLogin(wallet);
+  const res = await page.request.post(`${GATEWAY_URL}/admin/dev-login`, {
+    headers: { 'x-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+    data: { wallet },
+  });
+  if (!res.ok()) throw new Error(`dev-login ${res.status()}: ${await res.text()}`);
+  const session = (await res.json()) as { token: string; wallet: string; chain: string };
+  const names = (await page.context().cookies(GATEWAY_URL)).map((c) => c.name);
+  if (!names.includes('mesh_session') || !names.includes('mesh_csrf')) throw new Error(`dev-login did not set the session cookies (got ${names.join(',')})`);
   await page.addInitScript((s) => {
-    localStorage.setItem('mesh.session', JSON.stringify({ token: s.token, wallet: s.wallet, chain: s.chain }));
+    localStorage.setItem('mesh.session', JSON.stringify({ wallet: s.wallet, chain: s.chain }));
   }, session);
   return session;
 }

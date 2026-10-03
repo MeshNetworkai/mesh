@@ -55,6 +55,23 @@ export function toOllamaOptions(params: Record<string, unknown> | undefined, max
   return out;
 }
 
+/**
+ * Drop every reference to prompt and reply text once a job is over so the GC can reclaim it. JS
+ * strings cannot be overwritten in place, so this is "zero the handles": the job's message objects
+ * are emptied and the arrays truncated; the runner's own delta buffer is cleared the same way. Nothing
+ * from a job is ever written to disk (docs/PRIVACY.md).
+ */
+export function scrubJob(job: Job, ...extra: Array<{ length: number; [i: number]: { content: unknown } }>): void {
+  for (const list of [job.messages, ...extra]) {
+    if (!list) continue;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m && typeof m === 'object') (m as { content: unknown }).content = '';
+    }
+    list.length = 0;
+  }
+}
+
 /** Remaining budget in ms for a job, or null when it has no deadline. */
 export function deadlineBudget(deadlineMs: number | null | undefined, receivedAt: number): number | null {
   if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return null;
@@ -126,15 +143,18 @@ export async function runJob(job: Job, gateway: GatewayClient, nodeId: string, o
     else if (!flushTimer) flushTimer = setTimeout(flush, batchMs);
   };
 
+  const ollamaMessages = toOllamaMessages(job.messages);
   const finish = async (result: RunResult): Promise<RunResult> => {
     if (deadlineTimer) clearTimeout(deadlineTimer);
     if (flushTimer) clearTimeout(flushTimer);
+    buf = '';
+    scrubJob(job, ollamaMessages);
     return result;
   };
 
   try {
     const final = await ollama.chatStream(
-      { model: job.model, messages: toOllamaMessages(job.messages), options: toOllamaOptions(job.params, job.maxTokens), signal: ac.signal },
+      { model: job.model, messages: ollamaMessages, options: toOllamaOptions(job.params, job.maxTokens), signal: ac.signal },
       onDelta,
     );
     flush();
@@ -143,7 +163,8 @@ export async function runJob(job: Job, gateway: GatewayClient, nodeId: string, o
     const body = { promptTokens: final.promptTokens, completionTokens: final.completionTokens, finishReason: finishReasonOf(final.doneReason) };
     await gateway.done(nodeId, job.jobId, body);
     const durationMs = now() - started;
-    log(`job ${job.jobId} done model=${job.model} tokens=${body.promptTokens}+${body.completionTokens} chunks=${chunks} ${durationMs}ms`);
+    // Log lines carry ids, counts and timings only: never message or reply text (privacy.test.ts).
+    log(`job ${job.jobId} done model=${job.model} tokens=${body.promptTokens}+${body.completionTokens} chunks=${chunks} chars=${chars} ${durationMs}ms`);
     return finish({ jobId: job.jobId, ok: true, ...body, chunks, chars, durationMs });
   } catch (err) {
     const e = err as Error;

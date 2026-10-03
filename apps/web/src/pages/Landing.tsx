@@ -6,6 +6,7 @@ import { PUBLIC_API_URL, STORAGE, TOKENOMICS } from '../config';
 import { useAuth } from '../lib/auth';
 import { fmtCost, fmtInt } from '../lib/format';
 import { useStats } from '../lib/hooks';
+import { STAKING_TARGET } from '../lib/staking';
 import { installOneLiner } from './Node';
 
 const ROWS = [
@@ -29,7 +30,9 @@ const ROWS = [
   {
     word: 'Stake',
     desc: `Lock ${TOKENOMICS.ticker} to earn a bigger share and move your node to the front of the queue.`,
-    live: false,
+    // "Week 2" until the staking contract address is in the deploy json.
+    live: STAKING_TARGET !== null,
+    to: '/app/stake',
   },
 ];
 
@@ -37,16 +40,17 @@ export function Landing() {
   const { data: stats, loading, error } = useStats();
   const { session, openModal } = useAuth();
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
+  // Kept only while the points programme is on (built, disabled by default).
   const [params] = useSearchParams();
   useEffect(() => {
     const ref = params.get('ref');
-    if (!ref) return;
+    if (!ref || !stats?.pointsEnabled) return;
     try {
       localStorage.setItem(STORAGE.referralCode, ref.trim().toUpperCase().slice(0, 6));
     } catch {
       /* ignore */
     }
-  }, [params]);
+  }, [params, stats?.pointsEnabled]);
   const avgCost = stats && stats.requestsLast24h > 0 ? stats.spendLast24hUsd / stats.requestsLast24h : null;
 
   return (
@@ -125,7 +129,7 @@ export function Landing() {
               )}
               <p className="desc">
                 {r.desc}
-                {'note' in r && typeof r.note === 'string' ? (
+                {stats?.pointsEnabled && 'note' in r && typeof r.note === 'string' ? (
                   <>
                     <br />
                     <Link className="note" to="/leaderboard?board=points">
@@ -146,15 +150,18 @@ export function Landing() {
       <section aria-label="Privacy statement">
         <div className="ink">
           <span className="glow" aria-hidden="true" />
-          <p className="eyebrow">Private by design</p>
+          <p className="eyebrow">Privacy, stated plainly</p>
           <h2 className="display d-l">
-            What you ask
+            You choose who
             <br />
-            stays yours.
+            sees a prompt.
           </h2>
           <p>
-            Requests for the open models go to Macs the network knows, running with logging off and nothing kept after the reply. Other
-            models go to OpenRouter at cost. Under every reply you can see which path answered and what it cost.
+            The gateway strips every request down to the model and the messages before a node sees it: no wallet, key, IP or user agent.
+            It never stores prompts or replies, and neither does the node agent. What no one can promise is that the machine running the
+            model does not see your text: it has to. So you pick the tier per request. <b>Trusted</b> nodes have staked and signed the
+            operator pledge; <b>any node</b> is cheapest; <b>upstream (ZDR)</b> skips the network for zero-data-retention providers. Every
+            reply says which one answered.
           </p>
           <div className="stats">
             <div>
@@ -166,7 +173,7 @@ export function Landing() {
               <b>{loading && !stats ? <Skeleton w="6ch" /> : fmtCost(avgCost)}</b>
             </div>
             <div>
-              <span className="eyebrow">Prompts stored</span>
+              <span className="eyebrow">Prompts stored by Mesh</span>
               <b>0</b>
             </div>
             <div>

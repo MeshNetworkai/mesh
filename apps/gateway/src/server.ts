@@ -13,6 +13,7 @@ import { adminIpAllowlist, corsOrigin, loadEnv, productionProblems, trustedProxy
 import { geoBlockHook } from './geoblock.js';
 import { cidrMatcher } from './netaddr.js';
 import { JobBroker } from './network.js';
+import { isTrustedNode } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { keyRoutes } from './routes/keys.js';
@@ -42,7 +43,9 @@ export function createContext(opts: BuildOptions = {}): AppContext {
   const config = opts.context?.config ?? loadTokenomics();
   const adapter = opts.context?.adapter ?? createAdapter(config, { mock: env.MESH_ADAPTER === 'mock' });
   const db = opts.context?.db ?? openDb(env.MESH_DB_PATH);
-  const broker = opts.context?.broker ?? new JobBroker(db, () => config.routing);
+  const stakes = opts.context?.stakes ?? new StakeResolver({ adapter, config });
+  // Trusted-tier jobs (docs/PRIVACY.md) may only be claimed by trusted nodes; the broker asks here.
+  const broker = opts.context?.broker ?? new JobBroker(db, () => config.routing, (node) => isTrustedNode({ config, stakes }, node));
   // Jobs left queued/running by a previous process can never complete: fail them now.
   broker.reapExpired(Number.MAX_SAFE_INTEGER);
   return {
@@ -55,7 +58,7 @@ export function createContext(opts: BuildOptions = {}): AppContext {
     policy: opts.context?.policy ?? loadModelPolicy(),
     upstream: opts.context?.upstream ?? createUpstream(env),
     nonces: opts.context?.nonces ?? new NonceStore(db),
-    stakes: opts.context?.stakes ?? new StakeResolver({ adapter, config }),
+    stakes,
   };
 }
 

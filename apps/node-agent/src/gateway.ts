@@ -51,6 +51,8 @@ export interface Job {
   maxTokens?: number | null;
   /** Absolute unix ms when > 1e12, otherwise a budget in ms from receipt. */
   deadlineMs?: number | null;
+  /** 1, or 2 when the gateway re-queued the job after another node failed. */
+  attempt?: number;
 }
 
 export interface NodeStats {

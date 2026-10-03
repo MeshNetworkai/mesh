@@ -47,7 +47,7 @@ $0.06/M to the node). Replace `app.example.com` and `api.example.com` before pos
 
 7. What this is not. It is not yield, not income, and the credits are not a promise. If nobody trades, no fees are collected and no credits are distributed that hour. The stats page shows every epoch, including the empty ones.
 
-8. Where it is still rough. One gateway, one SQLite file, one operator. The chain adapter and node payouts are the next steps and are listed in the docs as such. Sessions live in the browser. We will say when these change.
+8. Where it is still rough. One gateway, one SQLite file, one operator. The chain adapter and node payouts are the next steps and are listed in the docs as such. We will say when these change.
 
 9. Everything is open: the gateway, the node agent, the tokenomics file, the epoch history. Read the docs at app.example.com/docs, check the numbers at api.example.com/stats, and tell us what breaks.
 

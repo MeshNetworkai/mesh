@@ -1,6 +1,6 @@
 import { NavLink, Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { useMe } from '../lib/hooks';
+import { useMe, usePointsEnabled } from '../lib/hooks';
 import { fmtUsd } from '../lib/format';
 
 function BalancePill() {
@@ -14,6 +14,7 @@ function BalancePill() {
 
 export function TopNav() {
   const { session, openModal } = useAuth();
+  const pointsEnabled = usePointsEnabled();
   const cls = ({ isActive }: { isActive: boolean }) => `navlink${isActive ? ' on' : ''}`;
   return (
     <nav className="topnav" aria-label="Primary">
@@ -39,9 +40,11 @@ export function TopNav() {
       <NavLink to="/report" className={cls}>
         Report
       </NavLink>
-      <NavLink to="/leaderboard" className={cls}>
-        Ranks
-      </NavLink>
+      {pointsEnabled ? (
+        <NavLink to="/leaderboard" className={cls}>
+          Ranks
+        </NavLink>
+      ) : null}
       <NavLink to="/docs" className={cls}>
         Docs
       </NavLink>

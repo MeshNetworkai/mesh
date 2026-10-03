@@ -1,5 +1,20 @@
 /** Minimal Ollama HTTP client: /api/tags, /api/pull (streamed progress) and /api/chat (streamed). */
 
+/**
+ * How long Ollama keeps the model loaded after a reply. Set per request so the operator's own
+ * OLLAMA_KEEP_ALIVE does not matter: weights stay warm for the next job, but a KV cache for a finished
+ * prompt is dropped by Ollama once the request ends; nothing is persisted (docs/PRIVACY.md).
+ */
+export const DEFAULT_KEEP_ALIVE = '5m';
+
+/**
+ * Environment the agent sets when it launches `ollama serve` itself (setup) and for the launchd
+ * service. Ollama's server never writes prompt or reply text to disk with these: OLLAMA_NOHISTORY
+ * disables the interactive readline history file (~/.ollama/history) and OLLAMA_DEBUG=0 keeps the
+ * server log at request metadata (method, path, status, timing) rather than request bodies.
+ */
+export const OLLAMA_PRIVACY_ENV: Record<string, string> = { OLLAMA_NOHISTORY: '1', OLLAMA_DEBUG: '0' };
+
 export interface OllamaMessage {
   role: string;
   content: string;
@@ -75,13 +90,13 @@ export class OllamaClient {
    * final message. Rejects on HTTP/stream errors or when `signal` aborts.
    */
   async chatStream(
-    req: { model: string; messages: OllamaMessage[]; options?: OllamaChatOptions; signal?: AbortSignal },
+    req: { model: string; messages: OllamaMessage[]; options?: OllamaChatOptions; signal?: AbortSignal; keepAlive?: string },
     onDelta: (text: string) => void,
   ): Promise<OllamaFinal> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: req.model, messages: req.messages, stream: true, options: req.options ?? {} }),
+      body: JSON.stringify({ model: req.model, messages: req.messages, stream: true, options: req.options ?? {}, keep_alive: req.keepAlive ?? DEFAULT_KEEP_ALIVE }),
       signal: req.signal,
     });
     if (!res.ok) {

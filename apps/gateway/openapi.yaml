@@ -65,7 +65,7 @@ paths:
                 geoBlock: [AE, US, GB]
                 time: 1759487020
         '503':
-          description: Database check failed. Same body with `ok: false`.
+          description: 'Database check failed. Same body with `ok: false`.'
   /stats:
     get:
       tags: [Public]
@@ -97,6 +97,7 @@ paths:
                 networkPricePerMTokens: 0.02
                 networkSavingsUsd24h: 9.87
                 showSavings: true
+                pointsEnabled: false
                 nodeRewardUsdPerMTokens: 0.06
                 series24h:
                   - { hour: 1759402800, feesUsd: 14.2, creditsDistributedUsd: 7.1, requests: 210, spendUsd: 0.17 }
@@ -428,6 +429,7 @@ paths:
               properties:
                 name: { type: string, maxLength: 64, description: Shown in the dashboard. }
                 spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: Lifetime cap in USD; null for none. }
+                privacy: { $ref: '#/components/schemas/PrivacyTier', description: 'Default privacy tier for requests with this key (docs/PRIVACY.md); omitted = gateway default (trusted).' }
             example: { name: laptop, spendLimitUsd: 5 }
       responses:
         '201':
@@ -443,8 +445,9 @@ paths:
                   prefix: { type: string }
                   name: { type: [string, 'null'] }
                   spendLimitUsd: { type: [number, 'null'] }
+                  privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }] }
                   note: { type: string }
-              example: { id: 3, key: mesh_sk_7f3a2c91e4b8d0f6a5c3e9b1d7f2a8c4, prefix: mesh_sk_7f3a, name: laptop, spendLimitUsd: 5, note: 'Store this key now; it is not shown again.' }
+              example: { id: 3, key: mesh_sk_7f3a2c91e4b8d0f6a5c3e9b1d7f2a8c4, prefix: mesh_sk_7f3a, name: laptop, spendLimitUsd: 5, privacy: null, note: 'Store this key now; it is not shown again.' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
     get:
@@ -484,6 +487,7 @@ paths:
               properties:
                 name: { type: [string, 'null'], maxLength: 64 }
                 spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: null clears the cap. }
+                privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }], description: 'Default privacy tier; null clears it (gateway default).' }
             example: { spendLimitUsd: 10 }
       responses:
         '200':
@@ -542,7 +546,7 @@ paths:
     get:
       tags: [Inference]
       summary: Models your key can use
-      description: The upstream catalogue filtered by the model policy, plus network models served by Macs in the Mesh network (`mesh_network: true`).
+      description: 'The upstream catalogue filtered by the model policy, plus network models served by Macs in the Mesh network (`mesh_network: true`).'
       operationId: listModels
       security: [{ apiKey: [] }]
       responses:
@@ -571,12 +575,19 @@ paths:
       description: |
         Same request and response shape as OpenAI. Set `stream: true` for server-sent events.
 
-        * When an idle Mesh node advertises the model, it serves the request and you pay the flat network price
+        * Privacy tier (docs/PRIVACY.md): `X-Mesh-Privacy: trusted | network | upstream_zdr`, or `mesh.privacy` in the body,
+          else the key's default, else the gateway default (`trusted`). `trusted` = only nodes whose operator staked and
+          signed the pledge (or allowlisted); if none is online the request goes to the upstream with zero-data-retention
+          providers only, never to another node. `network` = any eligible node. `upstream_zdr` = skip the network.
+          The machine that runs the model sees the prompt in plaintext whichever tier you pick. Unknown value → `400 invalid_privacy_tier`.
+        * When an idle Mesh node of the right tier advertises the model, it serves the request and you pay the flat network price
           ($0.02 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
         * Otherwise the request goes to the upstream provider at its list price and `x-mesh-route` names the upstream.
-          If a node failed before any output reached you, `x-mesh-fallback` carries the reason.
+          If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
+        * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
+          (`trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
         * Non-streamed replies set `x-mesh-cost-usd` and `x-mesh-balance-usd`. Streamed replies carry `usage.cost`
-          (USD) in the final chunk, plus `mesh: { route, nodeId, listCostUsd, savedUsd }` when a node served it.
+          (USD) in the final chunk, plus `mesh: { route, nodeId, privacy, servedBy, listCostUsd, savedUsd }` when a node served it.
         * Failed requests are never charged. Rate limit: 120 requests per minute per key.
       operationId: createChatCompletion
       security: [{ apiKey: [] }]
@@ -603,10 +614,12 @@ paths:
           description: Completion (JSON) or `text/event-stream` when `stream` is true.
           headers:
             x-mesh-route: { description: '`node:<nodeId>` or the upstream name.', schema: { type: string } }
-            x-mesh-cost-usd: { description: Charged for this request (non-stream only). schema: { type: string } }
-            x-mesh-balance-usd: { description: Balance after this request (non-stream only). schema: { type: string } }
-            x-mesh-saved-usd: { description: List price minus what you paid when a node served it (non-stream only). schema: { type: string } }
-            x-mesh-fallback: { description: Reason a node attempt was abandoned before output. schema: { type: string } }
+            x-mesh-cost-usd: { description: 'Charged for this request (non-stream only).', schema: { type: string } }
+            x-mesh-balance-usd: { description: 'Balance after this request (non-stream only).', schema: { type: string } }
+            x-mesh-saved-usd: { description: 'List price minus what you paid when a node served it (non-stream only).', schema: { type: string } }
+            x-mesh-fallback: { description: 'Reason a node attempt was abandoned before output, or `no_trusted_node`.', schema: { type: string } }
+            x-mesh-privacy: { description: 'Tier the reply was served under.', schema: { $ref: '#/components/schemas/PrivacyTier' } }
+            x-mesh-served-by: { description: '`trusted node`, `network node`, `upstream (ZDR)` or `upstream`.', schema: { type: string } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChatCompletion' }
@@ -620,7 +633,7 @@ paths:
                     message: { role: assistant, content: "Either side can end the agreement with 30 days' notice, but fees already invoiced stay payable." }
                     finish_reason: stop
                 usage: { prompt_tokens: 212, completion_tokens: 31, total_tokens: 243, cost: 0.0000049 }
-                mesh: { route: node, nodeId: node_7kd2pq9f, chip: M2 Pro, listCostUsd: 0.000039, savedUsd: 0.000034 }
+                mesh: { route: node, nodeId: node_7kd2pq9f, chip: M2 Pro, privacy: trusted, servedBy: trusted node, listCostUsd: 0.000039, savedUsd: 0.000034 }
             text/event-stream:
               schema: { type: string }
               example: |
@@ -830,6 +843,50 @@ paths:
                 lastSeen: 1759487010
                 createdAt: 1759300000
                 offlineAfterSec: 60
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/pledge:
+    get:
+      tags: [Nodes]
+      summary: Operator pledge text and status
+      description: |
+        The exact pledge text the node's reward wallet signs to serve `trusted` requests (docs/PRIVACY.md §5), plus the
+        current status. Owning wallet session only; a node token is refused (the Mac never holds a key).
+      operationId: getNodePledge
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      responses:
+        '200':
+          description: Pledge text and status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PledgeText' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Nodes]
+      summary: Sign the operator pledge
+      description: Stores the owning wallet's signature over the pledge text. Trusted = allowlisted wallet, or gold stake + pledge.
+      operationId: signNodePledge
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature]
+              properties:
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+      responses:
+        '200':
+          description: Updated status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PledgeText' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /nodes/{id}/heartbeat:
@@ -1143,6 +1200,7 @@ components:
         networkPricePerMTokens: { type: number }
         networkSavingsUsd24h: { type: number }
         showSavings: { type: boolean }
+        pointsEnabled: { type: boolean, description: 'Points / leaderboard / referral programme is live. Built but disabled by default; the related routes answer 404 when false.' }
         nodeRewardUsdPerMTokens: { type: number }
         series24h: { type: array, items: { $ref: '#/components/schemas/HourPoint' } }
         epochSeconds: { type: integer }
@@ -1264,7 +1322,7 @@ components:
       type: object
       required: [token, wallet, chain, expiresIn, expiresInSec]
       properties:
-        token: { type: string, description: JWT. Send as `Authorization: Bearer <token>`. }
+        token: { type: string, description: 'JWT. Send as `Authorization: Bearer <token>`.' }
         wallet: { type: string }
         chain: { type: string, enum: [solana, evm] }
         expiresIn: { type: string, example: 7d }
@@ -1313,6 +1371,11 @@ components:
         spentUsd: { type: number }
         created_at: { $ref: '#/components/schemas/UnixSeconds' }
         revoked: { type: boolean }
+        privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }], description: 'Default tier for requests with this key; null = gateway default.' }
+    PrivacyTier:
+      type: string
+      enum: [trusted, network, upstream_zdr]
+      description: Request privacy tier (docs/PRIVACY.md).
     UsageWindow:
       type: object
       properties:
@@ -1388,9 +1451,11 @@ components:
         cost: { type: number, description: USD charged for this request. }
     MeshRoute:
       type: object
-      description: Present when a Mesh node served the request.
+      description: How the reply was served. Node fields are present when a Mesh node served it.
       properties:
-        route: { type: string, enum: [node] }
+        route: { type: string, description: '`node`, or the upstream name (`openrouter`).' }
+        privacy: { $ref: '#/components/schemas/PrivacyTier' }
+        servedBy: { type: string, enum: [trusted node, network node, upstream (ZDR), upstream] }
         nodeId: { type: string }
         chip: { type: string }
         listCostUsd: { type: number, description: What the upstream would have charged. }
@@ -1445,14 +1510,40 @@ components:
         lastSeen: { $ref: '#/components/schemas/UnixSeconds' }
         createdAt: { $ref: '#/components/schemas/UnixSeconds' }
         offlineAfterSec: { type: integer }
+        pledge: { $ref: '#/components/schemas/NodePledge' }
+    NodePledge:
+      type: object
+      description: Operator pledge status and whether the node may serve `trusted` jobs (docs/PRIVACY.md §5).
+      properties:
+        signed: { type: boolean }
+        signedAt: { oneOf: [{ $ref: '#/components/schemas/UnixSeconds' }, { type: 'null' }] }
+        chain: { type: [string, 'null'] }
+        trusted: { type: boolean }
+        trustedVia: { type: [string, 'null'], enum: [allowlist, stake+pledge, null] }
+        allowlisted: { type: boolean }
+        requiredStakeTier: { type: [string, 'null'], description: Stake tier name needed together with the pledge. }
+        stakeTier: { type: [string, 'null'] }
+        stakeOk: { type: boolean }
+    PledgeText:
+      allOf:
+        - { $ref: '#/components/schemas/NodePledge' }
+        - type: object
+          properties:
+            nodeId: { type: string }
+            wallet: { type: string }
+            message: { type: string, description: The exact text the owning wallet signs. }
     Job:
       type: object
+      description: |
+        Exactly what a node receives (docs/PRIVACY.md §1): no wallet, API key, request id, IP, user agent or client-facing
+        model name. `messages` are role + content only.
+      additionalProperties: false
+      required: [jobId, model, messages, params, maxTokens, deadlineMs, attempt]
       properties:
         jobId: { type: string }
-        model: { type: string }
-        tag: { type: string, description: Ollama tag to run. }
+        model: { type: string, description: Ollama tag to run. }
         messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } }
-        params: { type: object, additionalProperties: true }
+        params: { type: object, additionalProperties: true, description: Whitelisted sampling params only. }
         maxTokens: { type: integer }
         deadlineMs: { type: integer, description: Unix ms after which the job is failed. }
         attempt: { type: integer }

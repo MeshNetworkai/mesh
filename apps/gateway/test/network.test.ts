@@ -143,7 +143,9 @@ describe('node protocol: end to end', () => {
     const pulled = await n.pull(2000);
     expect(pulled.statusCode).toBe(200);
     const job = pulled.json();
-    expect(job).toMatchObject({ model: 'llama3.1:8b', requestedModel: 'llama-3.1-8b', maxTokens: 77, params: { temperature: 0.2 }, attempt: 1 });
+    // The node sees the Ollama tag, never the client-facing model name or anything about the caller (privacy.test.ts).
+    expect(job).toMatchObject({ model: 'llama3.1:8b', maxTokens: 77, params: { temperature: 0.2 }, attempt: 1 });
+    expect(job).not.toHaveProperty('requestedModel');
     expect(job.messages).toEqual([{ role: 'user', content: 'hello node' }]);
     expect(job.deadlineMs).toBeGreaterThan(Date.now());
     expect(job.jobId).toMatch(/^job_/);
@@ -302,7 +304,9 @@ describe('node protocol: failure handling', () => {
     expect(res.headers['x-mesh-fallback']).toBe('first_token_timeout');
     const events = sse(res.body);
     expect(events.map((e) => e.choices?.[0]?.delta?.content ?? '').join('')).toContain('Mesh mock upstream');
-    expect(events[events.length - 1].mesh).toBeUndefined();
+    // Upstream-served: the final chunk says so (no node fields).
+    expect(events[events.length - 1].mesh).toEqual({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
+    expect(events[events.length - 1].mesh.nodeId).toBeUndefined();
     expect(app.ctx.db.prepare(`SELECT status, error, node_fault FROM jobs WHERE job_id = ?`).get(job.jobId)).toEqual({ status: 'fallback', error: 'first_token_timeout', node_fault: 1 });
     expect((await n.chunk(job.jobId, 0, 'too late')).statusCode).toBe(409);
     expect((await n.done(job.jobId)).statusCode).toBe(409);
@@ -324,7 +328,7 @@ describe('node protocol: failure handling', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-mesh-route']).toBe('mock');
     expect(res.json().choices[0].message.content).toContain('Mesh mock upstream');
-    expect(res.json().mesh).toBeUndefined();
+    expect(res.json().mesh).toEqual({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
     expect((app.ctx.db.prepare(`SELECT status FROM jobs`).get() as { status: string }).status).toBe('fallback');
   });
 

@@ -64,15 +64,19 @@ function woffToSfnt(buf) {
   return out;
 }
 
-function fontBuffer(pkg, file) {
-  const p = require.resolve(`${pkg}/files/${file}`);
-  return woffToSfnt(readFileSync(p));
+// resvg-js 2.x loads fonts from paths only, so the converted files go to a cache dir next to node_modules.
+const fontDir = resolve(webRoot, 'node_modules/.cache/mesh-og-fonts');
+mkdirSync(fontDir, { recursive: true });
+function fontFile(pkg, file) {
+  const out = resolve(fontDir, file.replace(/\.woff$/, '.ttf'));
+  writeFileSync(out, woffToSfnt(readFileSync(require.resolve(`${pkg}/files/${file}`))));
+  return out;
 }
-const fontBuffers = [
-  fontBuffer('@fontsource/onest', 'onest-latin-300-normal.woff'),
-  fontBuffer('@fontsource/onest', 'onest-latin-500-normal.woff'),
-  fontBuffer('@fontsource/inter', 'inter-latin-400-normal.woff'),
-  fontBuffer('@fontsource/jetbrains-mono', 'jetbrains-mono-latin-400-normal.woff'),
+const fontFiles = [
+  fontFile('@fontsource/onest', 'onest-latin-300-normal.woff'),
+  fontFile('@fontsource/onest', 'onest-latin-500-normal.woff'),
+  fontFile('@fontsource/inter', 'inter-latin-400-normal.woff'),
+  fontFile('@fontsource/jetbrains-mono', 'jetbrains-mono-latin-400-normal.woff'),
 ];
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -147,7 +151,7 @@ function touchIconSvg() {
 }
 
 function render(svg, width, file) {
-  const r = new Resvg(svg, { fitTo: { mode: 'width', value: width }, font: { fontBuffers, loadSystemFonts: false, defaultFontFamily: 'Inter' } });
+  const r = new Resvg(svg, { fitTo: { mode: 'width', value: width }, font: { fontFiles, loadSystemFonts: false, defaultFontFamily: 'Inter' } });
   const png = r.render().asPng();
   writeFileSync(file, png);
   console.log(`wrote ${file} (${(png.length / 1024).toFixed(1)} kB)`);

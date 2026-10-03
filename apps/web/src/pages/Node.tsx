@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Empty, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
+import { Empty, Modal, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
 import { MOCK, PUBLIC_API_URL, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { fmtAgo, fmtCompact, fmtCost, fmtInt, shortAddr } from '../lib/format';
+import { fmtAgo, fmtCompact, fmtCost, fmtDate, fmtInt, shortAddr } from '../lib/format';
 import { useCopy, useMyNodes, useNodes } from '../lib/hooks';
-import { errorMessage } from '../lib/toast';
-import type { LinkCode, NodeView } from '../lib/types';
+import { errorMessage, useToast } from '../lib/toast';
+import type { LinkCode, NodePledge, NodeView, PledgeText } from '../lib/types';
 
 /**
  * The exact one-liner. The script is served by this web origin; the bundle comes from the gateway.
@@ -23,8 +23,18 @@ const STEPS: Array<[string, string]> = [
   ['Link', 'Click "Link a Mac": your wallet signs once, here in the browser, and you get a one-time code (15 min).'],
   ['Ollama', 'The installer adds Ollama with Homebrew if it is missing, makes sure it runs, and pulls llama3.1:8b (14B on 32 GB+).'],
   ['Register', 'mesh-node setup --link <code> registers the Mac to your wallet. No key ever touches the machine.'],
-  ['Service', 'Starts the node in the background and at login (launchd). mesh-node status shows earnings.'],
+  ['Service', 'Starts the node in the background and at login (launchd). mesh-node status shows counts and earnings only.'],
 ];
+
+/** One-line status for the pledge card. */
+export function pledgeSummary(p: NodePledge | undefined): { tone: 'ok' | 'warn' | 'off'; text: string } {
+  if (!p) return { tone: 'off', text: 'Pledge status unavailable' };
+  if (p.trusted && p.trustedVia === 'allowlist') return { tone: 'ok', text: 'Trusted · allowlisted wallet' };
+  if (p.trusted) return { tone: 'ok', text: `Trusted · ${p.stakeTier ?? 'staked'} stake + pledge` };
+  if (p.signed && !p.stakeOk) return { tone: 'warn', text: `Pledged · needs ${p.requiredStakeTier ?? 'a higher'} stake to be trusted` };
+  if (!p.signed && p.stakeOk) return { tone: 'warn', text: 'Stake ok · sign the pledge to be trusted' };
+  return { tone: 'off', text: `Not trusted · needs ${p.requiredStakeTier ?? 'gold'} stake and the pledge` };
+}
 
 export const LINK_CODE_TTL_SEC = 15 * 60;
 
@@ -146,7 +156,107 @@ function statusOf(n: NodeView): 'online' | 'busy' | 'offline' {
   return 'offline';
 }
 
-function NodeCard({ n }: { n: NodeView }) {
+/**
+ * "Operator pledge": the owner signs a fixed text (docs/PRIVACY.md) with the reward wallet. Together with
+ * a gold stake (or an allowlisted wallet) that makes the node eligible for `trusted` jobs. Mock mode signs
+ * through the same flow without a real wallet.
+ */
+function PledgeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
+  const { token, signMessage } = useAuth();
+  const toast = useToast();
+  const [text, setText] = useState<PledgeText | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<'idle' | 'loading' | 'signing' | 'saving'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const pledge = text ?? n.stats?.pledge;
+  const summary = pledgeSummary(pledge);
+
+  const show = async () => {
+    if (!token) return;
+    setError(null);
+    setBusy('loading');
+    try {
+      setText(await api.getPledge(token, n.nodeId));
+      setOpen(true);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy('idle');
+    }
+  };
+
+  const sign = async () => {
+    if (!token || !text) return;
+    setError(null);
+    try {
+      setBusy('signing');
+      const { signature, chain } = MOCK ? { signature: 'mock', chain: 'solana' as const } : await signMessage(text.message);
+      setBusy('saving');
+      const res = await api.signPledge(token, n.nodeId, { signature, chain });
+      setText(res);
+      setOpen(false);
+      toast.ok(res.trusted ? 'Pledge signed: this node now serves trusted requests' : 'Pledge signed. It becomes trusted once the stake requirement is met.');
+      onChanged();
+    } catch (err) {
+      const msg = errorMessage(err);
+      setError(/reject|denied|cancel/i.test(msg) ? 'Signature cancelled.' : msg);
+    } finally {
+      setBusy('idle');
+    }
+  };
+
+  const pillCls = summary.tone === 'ok' ? 'pill sm' : summary.tone === 'warn' ? 'pill sm warn' : 'pill sm off';
+  return (
+    <div className="stack sm" aria-label="Operator pledge">
+      <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
+        <span className={pillCls} title={pledge?.signedAt ? `signed ${fmtDate(pledge.signedAt)}` : undefined}>
+          <span className={`dot${summary.tone === 'ok' ? ' dot-live' : ''}`} aria-hidden="true" />
+          {summary.text}
+        </span>
+        {pledge?.signed ? (
+          <button className="btn ghost sm" onClick={show} disabled={busy !== 'idle'}>
+            View pledge
+          </button>
+        ) : (
+          <button className="btn secondary sm" onClick={show} disabled={busy !== 'idle' || !token} aria-busy={busy !== 'idle'}>
+            {busy === 'loading' ? <Spinner /> : null}
+            Sign the operator pledge
+          </button>
+        )}
+      </div>
+      {error ? <Notice kind="bad">{error}</Notice> : null}
+      {open && text ? (
+        <Modal title="Operator pledge" onClose={() => setOpen(false)}>
+          <p className="small muted">
+            Signing this with <span className="mono">{shortAddr(text.wallet, 5, 4)}</span> commits you, as the operator of{' '}
+            <span className="mono">{shortAddr(text.nodeId, 9, 4)}</span>, to the four points below. With a {text.requiredStakeTier ?? 'gold'} stake (or an
+            allowlisted wallet) the node then receives <b>trusted</b> requests. No transaction, no fee.
+          </p>
+          <pre className="mono small" style={{ whiteSpace: 'pre-wrap', margin: 0, padding: 12, border: '1px solid var(--line)', borderRadius: 8 }}>
+            {text.message}
+          </pre>
+          <p className="small muted">
+            We cannot technically prevent an operator from inspecting memory on their own machine; the pledge, the stake at risk and the ability to
+            revoke trusted status are what back the trusted tier. {MOCK ? 'Mock mode: nothing is signed or stored.' : ''}
+          </p>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn ghost" onClick={() => setOpen(false)}>
+              {text.signed ? 'Close' : 'Cancel'}
+            </button>
+            {!text.signed ? (
+              <button type="button" className="btn primary" onClick={sign} disabled={busy !== 'idle'} aria-busy={busy !== 'idle'}>
+                {busy !== 'idle' ? <Spinner /> : null}
+                {busy === 'signing' ? 'Sign in your wallet…' : busy === 'saving' ? 'Saving…' : 'Sign with wallet'}
+              </button>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
+
+function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
   const status = statusOf(n);
   const st = n.stats;
   const chip = n.chip ?? st?.chip ?? null;
@@ -205,6 +315,7 @@ function NodeCard({ n }: { n: NodeView }) {
           <dd className="pos">{st ? fmtCost(st.earnedUsdTotal) : <Skeleton w="6ch" />}</dd>
         </div>
       </dl>
+      <PledgeCard n={n} onChanged={onChanged} />
     </article>
   );
 }
@@ -236,6 +347,11 @@ export function NodePage() {
           <p className="small muted" style={{ margin: 0 }}>
             Earnings are shown as $ credits today, settled from the treasury share of trading fees; they move to {TOKENOMICS.ticker} once the
             token layer ships. Apple Silicon with 16 GB+ is the target; Linux works with Ollama installed.
+          </p>
+          <p className="small muted" style={{ margin: 0 }}>
+            What you see here, in <code className="mono">mesh-node status</code> and in the menu bar app is counts and earnings only. Jobs arrive
+            without any detail about who sent them, and the agent never writes a prompt or reply to disk. Stake gold and sign the operator pledge
+            below to serve <b>trusted</b> requests.
           </p>
         </div>
         <ol className="nodesteps" aria-label="What the installer does">
@@ -293,7 +409,7 @@ export function NodePage() {
       ) : (
         <div className="nodecards">
           {nodes.map((n) => (
-            <NodeCard key={n.nodeId} n={n} />
+            <NodeCard key={n.nodeId} n={n} onChanged={() => void mine.reload()} />
           ))}
         </div>
       )}

@@ -262,6 +262,18 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS referrals_referrer ON referrals(referrer, created_at);
     `,
   },
+  {
+    // Request privacy tiers (docs/PRIVACY.md): per-key default tier, the tier a job was queued under
+    // (trusted jobs are only claimable by trusted nodes), and the operator pledge per node.
+    id: 8,
+    sql: `
+    ALTER TABLE api_keys ADD COLUMN privacy TEXT;
+    ALTER TABLE jobs ADD COLUMN privacy TEXT NOT NULL DEFAULT 'network';
+    ALTER TABLE nodes ADD COLUMN pledge_at INTEGER;
+    ALTER TABLE nodes ADD COLUMN pledge_signature TEXT;
+    ALTER TABLE nodes ADD COLUMN pledge_chain TEXT;
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

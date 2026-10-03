@@ -120,16 +120,19 @@ echo "nodeId=$NODE_ID token=${NODE_TOKEN:0:14}... heartbeatEverySec=$(echo "$REG
 curl -s -X POST "$BASE/nodes/$NODE_ID/heartbeat" -H "authorization: Bearer $NODE_TOKEN" -H 'content-type: application/json' \
   -d '{"models":["llama3.1:8b"],"busy":false,"loadAvg":1.2}'; echo
 
-step "client asks for llama-3.1-8b (a network model) -> gateway queues a job for the node (request runs in background)"
+step "client asks for llama-3.1-8b (a network model) on the 'network' privacy tier -> gateway queues a job for the node (request runs in background)"
+# The demo node is unstaked and unpledged, so it is not 'trusted' (the default tier; docs/PRIVACY.md). Ask for 'network' explicitly.
 curl -sN -D "$DB_DIR/client.headers" -o "$DB_DIR/client.sse" -X POST "$BASE/v1/chat/completions" -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -H 'x-mesh-privacy: network' \
   -d '{"model":"llama-3.1-8b","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"Who served this?"}]}' &
 CLIENT_PID=$!
 
 step "node long-polls GET /nodes/$NODE_ID/jobs/next and claims the job"
 JOB=$(curl -s "$BASE/nodes/$NODE_ID/jobs/next?wait=10000" -H "authorization: Bearer $NODE_TOKEN")
 JOB_ID=$(echo "$JOB" | json jobId)
-echo "jobId=$JOB_ID model=$(echo "$JOB" | json model) requestedModel=$(echo "$JOB" | json requestedModel) maxTokens=$(echo "$JOB" | json maxTokens)"
+echo "jobId=$JOB_ID model=$(echo "$JOB" | json model) maxTokens=$(echo "$JOB" | json maxTokens) attempt=$(echo "$JOB" | json attempt)"
 echo "messages: $(echo "$JOB" | json messages)"
+echo "(that is the whole job: no wallet, key, IP or user agent reaches the node — docs/PRIVACY.md)"
 
 step "node streams chunks (POST .../chunk {seq, delta}) then finishes (POST .../done)"
 SEQ=0
@@ -143,7 +146,7 @@ curl -s -X POST "$BASE/nodes/$NODE_ID/jobs/$JOB_ID/done" -H "authorization: Bear
 
 step "client received one continuous SSE stream"
 wait "$CLIENT_PID" || true
-grep -i '^x-mesh-route' "$DB_DIR/client.headers" || true
+grep -i '^x-mesh-route\|^x-mesh-privacy\|^x-mesh-served-by' "$DB_DIR/client.headers" || true
 grep '^data:' "$DB_DIR/client.sse" | grep -v '\[DONE\]' | sed 's/^data: //' \
   | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let out="",u=null,m=null;for(const l of d.trim().split("\n")){const j=JSON.parse(l);out+=j.choices?.[0]?.delta?.content??"";if(j.usage)u=j.usage;if(j.mesh)m=j.mesh}console.log("text:",out);console.log("usage:",JSON.stringify(u));console.log("mesh:",JSON.stringify(m))})'
 

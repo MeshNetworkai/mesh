@@ -22,6 +22,8 @@ export interface JobRow {
   wallet: string;
   api_key_id: number | null;
   status: JobStatus;
+  /** 'trusted' jobs are only claimable by trusted nodes (docs/PRIVACY.md). */
+  privacy: 'trusted' | 'network';
   payload: string;
   max_tokens: number;
   deadline_ms: number;
@@ -41,9 +43,42 @@ export interface JobRow {
   finished_ms: number | null;
 }
 
+/** A message as a node receives it: role and content only (OpenAI `name` and anything else is dropped). */
+export interface JobMessage {
+  role: string;
+  content: string | Array<{ type: 'text'; text: string }> | null;
+}
+
 export interface JobPayload {
-  messages: unknown[];
+  messages: JobMessage[];
   params: Record<string, unknown>;
+}
+
+/** Exactly the fields a node is sent (docs/NODE_PROTOCOL.md §3, docs/PRIVACY.md). Nothing else may be added. */
+export const JOB_VIEW_FIELDS = ['jobId', 'model', 'messages', 'params', 'maxTokens', 'deadlineMs', 'attempt'] as const;
+
+/**
+ * Reduce client messages to what a model needs. Everything that could identify the caller or the
+ * application (`name`, tool ids, provider-specific extras) is removed; multimodal parts other than
+ * text are dropped because nodes only run text models.
+ */
+export function sanitizeMessages(messages: unknown[]): JobMessage[] {
+  const out: JobMessage[] = [];
+  for (const m of messages) {
+    if (!m || typeof m !== 'object') continue;
+    const { role, content } = m as { role?: unknown; content?: unknown };
+    if (typeof role !== 'string') continue;
+    if (typeof content === 'string' || content === null || content === undefined) {
+      out.push({ role, content: content ?? null });
+    } else if (Array.isArray(content)) {
+      const parts: Array<{ type: 'text'; text: string }> = [];
+      for (const p of content) {
+        if (p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string') parts.push({ type: 'text', text: (p as { text: string }).text });
+      }
+      out.push({ role, content: parts });
+    }
+  }
+  return out;
 }
 
 export interface JobUsage {
@@ -126,6 +161,8 @@ export class JobRelay {
 interface Waiter {
   nodeId: string;
   tags: Set<string>;
+  /** Evaluated when the node started waiting: may it take `trusted` jobs? */
+  trusted: boolean;
   resolve: (job: JobRow | null) => void;
 }
 
@@ -134,9 +171,12 @@ export interface CreateJobInput {
   tag: string;
   wallet: string;
   apiKeyId: number | null;
-  payload: JobPayload;
+  /** Raw client messages + whitelisted params; `create` sanitises the messages before storing. */
+  payload: { messages: unknown[]; params: Record<string, unknown> };
   maxTokens: number;
   deadlineMs: number;
+  /** `trusted` restricts claiming to nodes the `isTrusted` callback approves. Default `network`. */
+  privacy?: 'trusted' | 'network';
   excludeNodeId?: string | null;
   parentJobId?: string | null;
   attempt?: number;
@@ -149,6 +189,8 @@ export class JobBroker {
   constructor(
     private db: Db,
     private routing: () => Pick<RoutingConfig, 'minSuccessRate' | 'reputationMinJobs'>,
+    /** Whether a node may claim `trusted` jobs (routing.ts `isTrustedNode`). Absent → no node is trusted. */
+    private isTrusted: (node: NodeRow) => boolean = () => false,
   ) {}
 
   relay(jobId: string): JobRelay | undefined {
@@ -163,10 +205,13 @@ export class JobBroker {
   create(input: CreateJobInput): { job: JobRow; relay: JobRelay } {
     const jobId = `job_${randomBytes(9).toString('base64url')}`;
     const ms = Date.now();
+    const privacy = input.privacy ?? 'network';
+    // The stored payload is exactly what the node will see: sanitised messages + whitelisted params.
+    const payload: JobPayload = { messages: sanitizeMessages(input.payload.messages), params: input.payload.params };
     this.db
       .prepare(
-        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, attempt, created_at, created_ms)
-         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, privacy, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, attempt, created_at, created_ms)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         jobId,
@@ -174,7 +219,8 @@ export class JobBroker {
         input.tag,
         input.wallet,
         input.apiKeyId,
-        JSON.stringify(input.payload),
+        privacy,
+        JSON.stringify(payload),
         input.maxTokens,
         input.deadlineMs,
         input.excludeNodeId ?? null,
@@ -190,7 +236,8 @@ export class JobBroker {
     for (let i = 0; i < this.waiters.length; i++) {
       const w = this.waiters[i];
       if (!w.tags.has(input.tag) || w.nodeId === input.excludeNodeId) continue;
-      const claimed = this.tryClaim(jobId, w.nodeId);
+      if (privacy === 'trusted' && !w.trusted) continue;
+      const claimed = this.tryClaim(jobId, w.nodeId, w.trusted);
       if (claimed) {
         this.waiters.splice(i, 1);
         w.resolve(claimed);
@@ -200,13 +247,20 @@ export class JobBroker {
     return { job, relay };
   }
 
-  /** Atomic claim: exactly one node can move a job queued→running. Marks the node busy. */
-  tryClaim(jobId: string, nodeId: string): JobRow | null {
+  /**
+   * Atomic claim: exactly one node can move a job queued→running. Marks the node busy. A `trusted`
+   * job is only claimable when `trusted` is true for the claiming node (enforced in the UPDATE, so a
+   * race between a trusted and an untrusted poller can never hand plaintext to the wrong machine).
+   */
+  tryClaim(jobId: string, nodeId: string, trusted = false): JobRow | null {
     const ms = Date.now();
     const tx = this.db.transaction(() => {
       const res = this.db
-        .prepare(`UPDATE jobs SET status = 'running', node_id = ?, claimed_ms = ? WHERE job_id = ? AND status = 'queued' AND (exclude_node_id IS NULL OR exclude_node_id != ?)`)
-        .run(nodeId, ms, jobId, nodeId);
+        .prepare(
+          `UPDATE jobs SET status = 'running', node_id = ?, claimed_ms = ?
+           WHERE job_id = ? AND status = 'queued' AND (exclude_node_id IS NULL OR exclude_node_id != ?) AND (privacy != 'trusted' OR ? = 1)`,
+        )
+        .run(nodeId, ms, jobId, nodeId, trusted ? 1 : 0);
       if (res.changes !== 1) return null;
       this.db.prepare(`UPDATE nodes SET busy = 1, last_seen = ? WHERE node_id = ?`).run(Math.floor(ms / 1000), nodeId);
       return this.get(jobId);
@@ -224,20 +278,22 @@ export class JobBroker {
     const tags = new Set(nodeModels(node));
     if (tags.size === 0) return null;
     if (!nodeReputation(this.db, node.node_id, this.routing()).eligible) return null;
+    const trusted = this.isTrusted(node);
     const placeholders = [...tags].map(() => '?').join(',');
     const queued = this.db
       .prepare(
         `SELECT job_id FROM jobs WHERE status = 'queued' AND tag IN (${placeholders}) AND (exclude_node_id IS NULL OR exclude_node_id != ?)
+           AND (privacy != 'trusted' OR ? = 1)
          ORDER BY created_ms ASC`,
       )
-      .all(...tags, node.node_id) as Array<{ job_id: string }>;
+      .all(...tags, node.node_id, trusted ? 1 : 0) as Array<{ job_id: string }>;
     for (const q of queued) {
-      const job = this.tryClaim(q.job_id, node.node_id);
+      const job = this.tryClaim(q.job_id, node.node_id, trusted);
       if (job) return job;
     }
     if (waitMs <= 0) return null;
     return new Promise<JobRow | null>((resolve) => {
-      const waiter: Waiter = { nodeId: node.node_id, tags, resolve: (j) => resolve(j) };
+      const waiter: Waiter = { nodeId: node.node_id, tags, trusted, resolve: (j) => resolve(j) };
       // A node re-polling replaces its previous waiter (one long-poll per node).
       this.waiters = this.waiters.filter((w) => w.nodeId !== node.node_id);
       this.waiters.push(waiter);

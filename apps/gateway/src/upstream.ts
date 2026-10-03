@@ -10,10 +10,37 @@ export interface Usage {
   cost?: number;
 }
 
+export interface ChatOptions {
+  /**
+   * Zero data retention: only route to providers that do not store prompts or completions
+   * (OpenRouter `provider.data_collection = "deny"`, docs/PRIVACY.md). Fewer providers qualify, so a
+   * model can become unavailable under ZDR; that surfaces as an upstream 404/error, never as a silent
+   * downgrade.
+   */
+  zdr?: boolean;
+}
+
 export interface Upstream {
   readonly name: 'openrouter' | 'mock';
-  chat(body: Record<string, unknown>): Promise<Response>;
+  chat(body: Record<string, unknown>, opts?: ChatOptions): Promise<Response>;
   models(): Promise<Response>;
+}
+
+/** Mesh-only request fields that must never reach a provider. */
+const MESH_ONLY_FIELDS = ['mesh'] as const;
+
+/**
+ * Body as sent to OpenRouter: Mesh extensions removed, `usage.include` on, and with `zdr` the
+ * ZDR-only provider preference merged into any `provider` object the client sent.
+ */
+export function upstreamBody(body: Record<string, unknown>, opts: ChatOptions = {}): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...body, usage: { include: true } };
+  for (const k of MESH_ONLY_FIELDS) delete out[k];
+  if (opts.zdr) {
+    const provider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider) ? (body.provider as Record<string, unknown>) : {};
+    out.provider = { ...provider, data_collection: 'deny' };
+  }
+  return out;
 }
 
 /** Thrown by OpenRouterUpstream when the network call fails or times out. */
@@ -92,10 +119,9 @@ export class OpenRouterUpstream implements Upstream {
     }
   }
 
-  async chat(body: Record<string, unknown>): Promise<Response> {
+  async chat(body: Record<string, unknown>, opts: ChatOptions = {}): Promise<Response> {
     // Always ask OpenRouter to include usage + cost in the (final) response/chunk.
-    const payload = { ...body, usage: { include: true } };
-    return this.call('/chat/completions', { method: 'POST', body: JSON.stringify(payload) });
+    return this.call('/chat/completions', { method: 'POST', body: JSON.stringify(upstreamBody(body, opts)) });
   }
 
   async models(): Promise<Response> {
@@ -129,7 +155,7 @@ export class MockUpstream implements Upstream {
   readonly name = 'mock' as const;
   constructor(private chunkDelayMs = 15) {}
 
-  async chat(body: Record<string, unknown>): Promise<Response> {
+  async chat(body: Record<string, unknown>, _opts: ChatOptions = {}): Promise<Response> {
     const model = typeof body.model === 'string' && body.model ? body.model : MOCK_MODEL;
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const promptChars = JSON.stringify(messages).length;
