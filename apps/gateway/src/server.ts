@@ -16,6 +16,7 @@ import { JobBroker } from './network.js';
 import { isTrustedNode, reputationConfig } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
+import { guestRoutes } from './routes/guest.js';
 import { installRoutes, type InstallOptions } from './routes/install.js';
 import { keyRoutes } from './routes/keys.js';
 import { meRoutes } from './routes/me.js';
@@ -184,7 +185,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
     // Cookie sessions: the browser only sends/accepts cookies cross-origin when this is set and the
     // origin is explicit (CORS_ORIGINS); `*` cannot be combined with credentials by the browser.
     credentials: true,
-    exposedHeaders: ['x-mesh-cost-usd', 'x-mesh-balance-usd', 'x-mesh-route', 'x-mesh-fallback', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after', 'x-request-id'],
+    exposedHeaders: ['x-mesh-cost-usd', 'x-mesh-balance-usd', 'x-mesh-route', 'x-mesh-fallback', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after', 'x-request-id', 'x-guest-remaining', 'x-mesh-privacy', 'x-mesh-served-by'],
   });
   await app.register(rateLimit, { global: false });
 
@@ -210,6 +211,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(meRoutes, ctx);
   await app.register(stakeRoutes, ctx);
   await app.register(v1Routes, ctx);
+  await app.register(guestRoutes, ctx);
   await app.register(adminRoutes, ctx);
   await app.register(nodeRoutes, ctx);
   await app.register(pointsRoutes, ctx);

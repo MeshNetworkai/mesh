@@ -704,6 +704,122 @@ paths:
               example: { error: { message: 'This API key reached its spend limit ($5). Raise it with PATCH /keys/3.', type: insufficient_quota, code: key_spend_limit_reached, param: null } }
         '502': { $ref: '#/components/responses/OpenAIUpstream' }
 
+  /v1/guest/quota:
+    get:
+      tags: [Inference]
+      summary: Guest chat quota
+      description: |
+        How many free guest messages the caller's IP has left today (`POST /v1/guest/chat`). No auth.
+        `404` when guest chat is disabled on this gateway (`config.guest.enabled`).
+      operationId: getGuestQuota
+      responses:
+        '200':
+          description: Quota for this client IP.
+          headers:
+            x-guest-remaining: { description: Messages left in the current 24h window., schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [remaining, limit, enabled]
+                properties:
+                  remaining: { type: integer }
+                  limit: { type: integer, description: '`config.guest.messagesPerDay`' }
+                  enabled: { type: boolean }
+                  resetAt: { type: integer, description: Unix seconds when the window resets. }
+                  maxTokens: { type: integer }
+                  maxInputChars: { type: integer }
+                  model: { type: string, description: Model used when the request names none. }
+              example: { remaining: 4, limit: 5, enabled: true, resetAt: 1759573420, maxTokens: 400, maxInputChars: 2000, model: llama-3.1-8b }
+        '404':
+          description: Guest chat is disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/guest/chat:
+    post:
+      tags: [Inference]
+      summary: Guest chat (free, no wallet)
+      description: |
+        A few free messages a day for visitors who have not connected a wallet. No auth; the quota is per client IP
+        (`config.guest.messagesPerDay`, default 5 per rolling 24h) and the reply is always `text/event-stream` in exactly
+        the shape `/v1/chat/completions` streams (OpenAI chunks, a final chunk with `usage` + `mesh`, then `data: [DONE]`).
+
+        * Served under the `network` privacy tier: an idle Mesh node first, else the upstream with zero-data-retention providers.
+        * `max_tokens` is capped at `config.guest.maxTokens` (default 400) and the total characters of all `messages[].content`
+          at `config.guest.maxInputChars` (default 2,000). Only `messages`, `model` and `max_tokens` are forwarded.
+        * `model` is optional and defaults to `config.guest.model`; it must pass the model policy.
+        * Nobody is billed: the treasury pays. Upstream-served messages appear as `guest_chat` rows in the treasury ledger and
+          `/report` shows `totals.guestChat`; node rewards accrue to the serving node as for any job.
+        * Every reply carries `x-guest-remaining`. When the quota is used up the response is `429 guest_quota_exhausted`
+          (plain `{ error, message }` shape, `retry-after` set). The per-IP rate limit (120/min) applies as well.
+        * A failed request (upstream error, model not found) does not consume a message.
+        * `404` when guest chat is disabled on this gateway.
+      operationId: createGuestChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 40
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: { type: string, enum: [system, user, assistant] }
+                      content: { type: string }
+                model: { type: string, description: Optional; defaults to the gateway's guest model. }
+                max_tokens: { type: integer, description: Capped at the guest limit. }
+            example:
+              messages: [{ role: user, content: What is Mesh? }]
+      responses:
+        '200':
+          description: '`text/event-stream`, same chunk shape as `/v1/chat/completions` with `stream: true`.'
+          headers:
+            x-guest-remaining: { description: Messages left after this one., schema: { type: string } }
+            x-mesh-route: { description: '`node:<nodeId>` or the upstream name.', schema: { type: string } }
+            x-mesh-privacy: { description: Tier the reply was served under (`network` or `upstream_zdr`)., schema: { $ref: '#/components/schemas/PrivacyTier' } }
+            x-mesh-served-by: { description: '`network node`, `upstream (ZDR)`.', schema: { type: string } }
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400':
+          description: Invalid or too-long input (`invalid_messages`, `input_too_long`, `invalid_model`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '403':
+          description: '`model_not_allowed`: not in the model policy.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '404':
+          description: Guest chat is disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`guest_quota_exhausted` (daily free messages used up) or the per-IP rate limit.'
+          headers:
+            x-guest-remaining: { schema: { type: string } }
+            retry-after: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: guest_quota_exhausted }
+                  message: { type: string, example: Connect a wallet to keep chatting }
+                  remaining: { type: integer }
+                  limit: { type: integer }
+                  resetAt: { type: integer }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
   /nodes/register/challenge:
     post:
       tags: [Nodes]

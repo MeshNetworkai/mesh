@@ -341,6 +341,35 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     );
     `,
   },
+  {
+    // Guest chat (routes/guest.ts): per-IP daily message counters that survive restarts, and a new
+    // treasury kind `guest_chat` for what the free messages cost. SQLite cannot alter a CHECK, so the
+    // treasury ledger is rebuilt in place (ids and rows preserved, indexes recreated).
+    id: 12,
+    sql: `
+    CREATE TABLE IF NOT EXISTS guest_quota (
+      ip_hash       TEXT PRIMARY KEY,
+      window_start  INTEGER NOT NULL,
+      used          INTEGER NOT NULL DEFAULT 0,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS guest_quota_window ON guest_quota(window_start);
+
+    CREATE TABLE treasury_ledger_v12 (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind        TEXT NOT NULL CHECK (kind IN ('fee_share','node_reward_accrual','buyback','ops','other','guest_chat')),
+      usd_micros  INTEGER NOT NULL,
+      ref         TEXT,
+      created_at  INTEGER NOT NULL
+    );
+    INSERT INTO treasury_ledger_v12 (id, kind, usd_micros, ref, created_at)
+      SELECT id, kind, usd_micros, ref, created_at FROM treasury_ledger;
+    DROP TABLE treasury_ledger;
+    ALTER TABLE treasury_ledger_v12 RENAME TO treasury_ledger;
+    CREATE INDEX IF NOT EXISTS treasury_created ON treasury_ledger(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS treasury_kind_ref ON treasury_ledger(kind, ref) WHERE ref IS NOT NULL;
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

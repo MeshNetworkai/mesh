@@ -81,6 +81,11 @@
     "inviteRequired": false,
     "batchSize": 200
   },
+  "guest": {
+    "enabled": true,
+    "messagesPerDay": 5,
+    "maxTokens": 400
+  },
   "points": {
     "enabled": false,
     "perUsdCredits": 100,
