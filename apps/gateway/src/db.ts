@@ -283,6 +283,64 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     ALTER TABLE jobs ADD COLUMN requester_wallet TEXT;
     `,
   },
+  {
+    // Spot-check verification (verification.ts, docs/NODE_PROTOCOL.md §10): a sampled job is re-run on a
+    // second node / the upstream and compared. `jobs.check_of` marks the re-run (internal, never in the
+    // node-facing job view). A mismatch withholds the primary node's reward (node_rewards.status) and
+    // repeated mismatches quarantine the node (nodes.quarantined_at) until an admin clears it.
+    id: 10,
+    sql: `
+    ALTER TABLE jobs ADD COLUMN check_of TEXT;
+    ALTER TABLE nodes ADD COLUMN quarantined_at INTEGER;
+    ALTER TABLE nodes ADD COLUMN quarantine_reason TEXT;
+    ALTER TABLE node_rewards ADD COLUMN status TEXT NOT NULL DEFAULT 'accrued';
+    CREATE TABLE IF NOT EXISTS verifications (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id        TEXT NOT NULL,
+      check_job_id  TEXT,
+      primary_node  TEXT NOT NULL,
+      check_node    TEXT NOT NULL,
+      score         REAL,
+      verdict       TEXT NOT NULL CHECK (verdict IN ('ok','suspect','mismatch','inconclusive')),
+      reasons       TEXT NOT NULL DEFAULT '[]',
+      primary_tokens INTEGER,
+      check_tokens  INTEGER,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS verifications_job ON verifications(job_id);
+    CREATE INDEX IF NOT EXISTS verifications_primary ON verifications(primary_node, created_at);
+    `,
+  },
+  {
+    // Public beta gating (routes/auth.ts, routes/admin.ts, docs/RUNBOOK.md): waitlist, invite codes and
+    // the wallets admitted so far. Codes are stored in clear so an admin can read them back to send.
+    id: 11,
+    sql: `
+    CREATE TABLE IF NOT EXISTS waitlist (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet      TEXT,
+      email       TEXT,
+      created_at  INTEGER NOT NULL,
+      invited_at  INTEGER,
+      code        TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS waitlist_wallet ON waitlist(wallet) WHERE wallet IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS waitlist_email ON waitlist(email) WHERE email IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS waitlist_created ON waitlist(invited_at, created_at);
+    CREATE TABLE IF NOT EXISTS invite_codes (
+      code        TEXT PRIMARY KEY,
+      uses_left   INTEGER NOT NULL,
+      created_by  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS admissions (
+      wallet       TEXT PRIMARY KEY,
+      admitted_at  INTEGER NOT NULL,
+      via          TEXT NOT NULL,
+      code         TEXT
+    );
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

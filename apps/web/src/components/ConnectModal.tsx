@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { MOCK, TOKENOMICS } from '../config';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { useBeta } from '../lib/hooks';
 import { EVM_WALLETS, evmInstalled, getSolanaAdapters, solanaReady } from '../lib/wallets';
-import { Modal, Spinner } from './ui';
+import { Modal, Notice, Spinner } from './ui';
 
 export function ConnectModal() {
   const auth = useAuth();
+  const beta = useBeta();
   const [, bump] = useState(0);
 
   // Adapters report readiness asynchronously; re-render once they settle.
@@ -38,6 +41,29 @@ export function ConnectModal() {
         Signing proves you hold the wallet. It costs nothing and sends no transaction. {TOKENOMICS.ticker} lives on{' '}
         <span className="mono">{TOKENOMICS.chain}</span>.
       </p>
+      {auth.inviteNeeded ? (
+        <div className="stack sm" aria-label="Invite code">
+          <Notice kind="warn">
+            Mesh is in {beta?.label?.toLowerCase() ?? 'beta'} and this wallet is not on the list yet. Enter your invite code, then sign again. No code?{' '}
+            <Link to="/#waitlist" onClick={auth.closeModal}>
+              Join the waitlist
+            </Link>
+            .
+          </Notice>
+          <input
+            id="invite-code"
+            className="input mono"
+            placeholder="ABCDE-FGHJK"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            value={auth.invite}
+            onChange={(e) => auth.setInvite(e.target.value.toUpperCase())}
+            aria-label="Invite code"
+            disabled={busy}
+          />
+        </div>
+      ) : null}
       <div className="row between">
         <span className="eyebrow">Chain</span>
         <div className="seg" role="tablist" aria-label="Chain">

@@ -905,6 +905,52 @@ footer.site a:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* Public beta marker: next to the logo and in the hero eyebrow. */
+.pill.beta {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+  line-height: 1.5;
+}
+.topnav .logo .pill.beta {
+  margin-left: -2px;
+}
+.hero .eyebrow .pill.beta {
+  vertical-align: middle;
+  margin-left: 8px;
+}
+/* Landing waitlist form (beta with inviteRequired). */
+.waitlist {
+  width: min(100%, 520px);
+  margin-inline: auto;
+}
+.waitlist .keybox .input {
+  flex: 1;
+}
+.waitlist .fine {
+  margin-top: 8px;
+}
+/* Admin: invite codes list */
+.codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+.codes code {
+  display: block;
+  padding: 6px 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: center;
+}
 .dot-live {
   animation: pulse 1.8s ease-in-out infinite;
 }

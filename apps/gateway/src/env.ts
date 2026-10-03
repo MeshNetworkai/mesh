@@ -57,6 +57,8 @@ const EnvSchema = z.object({
   AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
   /** Registrations per hour per IP on /nodes/register (+ /challenge). */
   NODE_REGISTER_RATE_LIMIT: z.coerce.number().int().positive().default(10),
+  /** Requests per minute per IP on POST /waitlist (public beta waitlist). */
+  WAITLIST_RATE_LIMIT: z.coerce.number().int().positive().default(5),
   /** Override config.nodes.requireSignature (dev/demo convenience). */
   NODES_REQUIRE_SIGNATURE: bool.optional(),
   /**

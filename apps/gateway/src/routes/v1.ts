@@ -199,7 +199,9 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
       liveRelay = relay;
       req.log.info({ jobId: job.job_id, tag, attempt, exclude }, 'network job queued');
       const createdMs = Date.now();
+      /** Non-stream reply body (what the client gets) and, for every mode, the full text kept in memory for a possible spot check. */
       const text: string[] = [];
+      const full: string[] = [];
       let nodeId: string | null = null;
       let servedBy: RouteDecision['servedBy'] = route.servedBy;
       let sent = 0;
@@ -222,6 +224,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
             writeHeaders(nodeId ?? 'unknown', servedBy);
             write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: sent === 0 ? { role: 'assistant', content: ev.delta } : { content: ev.delta }, finish_reason: null }] }));
           } else text.push(ev.delta);
+          full.push(ev.delta);
           sent++;
         } else if (ev.type === 'done') {
           usage = ev.usage;
@@ -255,6 +258,8 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
           if (node) addNodeReward(ctx.db, { wallet: node.wallet, nodeId, jobId: job.job_id, tokens, usdMicros: reward });
         })();
         syncPoints(ctx.db, ctx.config.points); // node operator's points for the tokens served
+        // Spot-check verification (verification.ts): decided now, run in the background after the reply is out.
+        const verifying = node && ctx.verifier ? ctx.verifier.maybeSchedule({ job: ctx.broker.get(job.job_id) ?? job, nodeId, nodeWallet: node.wallet, text: full.join(''), usage }) : false;
         const usageOut = { ...u, cost: microsToUsd(cost) };
         const mesh = {
           route: 'node',
@@ -266,7 +271,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
           servedBy,
           ...(pricing.showSavings ? { listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved) } : {}),
         };
-        req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy }, 'chat completion (node)');
+        req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy, verifying }, 'chat completion (node)');
         if (stream) {
           writeHeaders(nodeId, servedBy);
           write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }], usage: usageOut, mesh }));

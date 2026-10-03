@@ -62,7 +62,24 @@
     "fallback": "upstream_zdr",
     "trustedWallets": [],
     "trustedMinStakeTier": "gold",
-    "tiers": { "trusted": true, "network": true, "upstream_zdr": true }
+    "tiers": {
+      "trusted": true,
+      "network": true,
+      "upstream_zdr": true
+    }
+  },
+  "verification": {
+    "enabled": true,
+    "sampleRate": 0.05,
+    "minJobsBeforeTrust": 20,
+    "mismatchPenalty": 3,
+    "quarantineAfterMismatches": 2
+  },
+  "beta": {
+    "enabled": true,
+    "label": "Beta",
+    "inviteRequired": false,
+    "batchSize": 200
   },
   "points": {
     "enabled": false,

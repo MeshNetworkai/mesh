@@ -314,7 +314,27 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
           <dt>Earned · total</dt>
           <dd className="pos">{st ? fmtCost(st.earnedUsdTotal) : <Skeleton w="6ch" />}</dd>
         </div>
+        {st?.verification && st.verification.enabled !== false ? (
+          <div title="Spot checks: a sample of your jobs is re-run elsewhere and compared. ok / suspect / mismatch">
+            <dt>Spot checks</dt>
+            <dd className="mono">
+              {st.verification.checked === 0 ? (
+                <span className="muted">none yet</span>
+              ) : (
+                <>
+                  <span className="pos">{st.verification.ok}</span> / {st.verification.suspect} / <span className={st.verification.mismatch ? 'neg' : ''}>{st.verification.mismatch}</span>
+                </>
+              )}
+            </dd>
+          </div>
+        ) : null}
       </dl>
+      {st?.verification?.quarantined ? (
+        <Notice kind="bad">
+          This node is quarantined after repeated spot-check mismatches and receives no jobs. Reason: {st.verification.quarantineReason ?? 'verification mismatches'}. Check the Mac
+          (model files, Ollama version, nothing modifying the agent) and ask us to clear it.
+        </Notice>
+      ) : null}
       <PledgeCard n={n} onChanged={onChanged} />
     </article>
   );

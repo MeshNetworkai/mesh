@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { GATEWAY_URL } from '../playwright.config';
 import { balanceUsd, parseUsd, signIn } from './helpers';
 
 test.describe('landing', () => {
@@ -12,6 +13,59 @@ test.describe('landing', () => {
     await expect(readout.locator('b').first()).toContainText('$100');
     await expect(readout).toContainText('Epoch 02'); // one epoch run → next is 02
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
+  });
+
+  test('beta: pill next to the logo and in the hero, waitlist CTA joins the list, invite field appears after invite_required', async ({ page }) => {
+    await page.goto('/');
+    // config/tokenomics.json: beta.enabled + inviteRequired → pill + waitlist instead of the big connect button.
+    const pills = page.locator('.pill.beta');
+    await expect(pills.first()).toBeVisible();
+    await expect(pills).toHaveCount(2);
+    await expect(pills.first()).toHaveText('Beta');
+    const form = page.locator('form#waitlist');
+    await expect(form).toBeVisible();
+    await page.getByLabel('Wallet address or e-mail').fill('e2e-first@example.com');
+    await form.getByRole('button', { name: 'Join the waitlist' }).click();
+    await expect(page.locator('#waitlist')).toContainText(/You are on the list at position \d+/);
+    // Idempotent: the same e-mail is not added twice.
+    const res = await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-first@example.com' } });
+    expect(await res.json()).toMatchObject({ alreadyListed: true });
+
+    // A wallet that was never admitted gets the invite field after the gateway says so (simulated 403 through the modal state).
+    await page.getByRole('button', { name: 'Connect wallet' }).first().click();
+    await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
+    await expect(page.getByLabel('Invite code')).toHaveCount(0); // only after invite_required
+  });
+});
+
+test.describe('beta admin', () => {
+  test('admin page: waitlist section lists the entry, "Admit next" mints a code the gateway accepts, invites mint codes', async ({ page }) => {
+    await page.request.post(`${GATEWAY_URL}/waitlist`, { data: { email: 'e2e-admit@example.com' } });
+    await page.goto('/admin');
+    await page.getByLabel('Admin token').fill('e2e-admin-token');
+    await page.getByRole('button', { name: 'Open' }).click();
+    await expect(page.getByText('Waitlist · admit the next batch')).toBeVisible();
+    await expect(page.getByLabel('Waitlist entries')).toContainText('e2e-admit@example.com');
+    await page.getByLabel('How many to admit').fill('50');
+    await page.getByRole('button', { name: /Admit next/ }).click();
+    const admitted = page.getByLabel('Waitlist', { exact: true });
+    await expect(admitted).toContainText('admitted. Send each code');
+    const code = await admitted.locator('tbody tr', { hasText: 'e2e-admit@example.com' }).locator('td').nth(1).textContent();
+    expect(code).toMatch(/^[A-Z2-9]{5}-[A-Z2-9]{5}$/);
+    // The code admits a wallet: a sign-in without it is refused, with it accepted (mock adapter signature).
+    const sign = (wallet: string, message: string) => Buffer.from(`${wallet}:${message}`, 'utf8').toString('base64'); // MockAdapter.sign
+    let nonce = await (await page.request.post(`${GATEWAY_URL}/auth/nonce`, { data: { wallet: 'e2e_invited' } })).json();
+    const denied = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_invited', signature: sign('e2e_invited', nonce.message), message: nonce.message } });
+    expect(denied.status()).toBe(403);
+    expect((await denied.json()).error).toBe('invite_required');
+    nonce = await (await page.request.post(`${GATEWAY_URL}/auth/nonce`, { data: { wallet: 'e2e_invited' } })).json();
+    const ok = await page.request.post(`${GATEWAY_URL}/auth/verify`, { data: { wallet: 'e2e_invited', signature: sign('e2e_invited', nonce.message), message: nonce.message, invite: code } });
+    expect(ok.status()).toBe(200);
+    expect(await ok.json()).toMatchObject({ wallet: 'e2e_invited', admitted: true });
+
+    await page.getByLabel('Number of codes').fill('3');
+    await page.getByRole('button', { name: 'Mint' }).click();
+    await expect(page.getByLabel('Invite codes').locator('code')).toHaveCount(3);
   });
 });
 

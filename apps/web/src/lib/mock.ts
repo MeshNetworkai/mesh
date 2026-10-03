@@ -3,7 +3,14 @@
 import type {
   AdminAction,
   AdminOverview,
+  AdminWaitlist,
+  AdmitResult,
   ApiKey,
+  BetaInfo,
+  InvitesResult,
+  NodeVerification,
+  WaitlistEntry,
+  WaitlistJoin,
   Board,
   ClaimResult,
   CreatedKey,
@@ -201,6 +208,8 @@ export const mockStats = async (): Promise<Stats> => {
     networkSavingsUsd24h: 412.37,
     showSavings: true,
     pointsEnabled: false, // mirrors config/tokenomics.json: the programme is built but disabled
+    beta: MOCK_BETA,
+    verificationEnabled: true,
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
@@ -227,9 +236,123 @@ export const mockNodes = async (): Promise<NodesSummary> => {
   };
 };
 
-export const mockSession = async (): Promise<Session> => {
+// ---------- public beta (mirrors config/tokenomics.json → beta) ----------
+
+export const MOCK_BETA: BetaInfo = { enabled: true, label: 'Beta', inviteRequired: true };
+const ADMITTED_KEY = 'mesh.mock.admitted';
+
+/**
+ * Mock sign-in honours the beta gate once: the first attempt without a code gets the gateway's
+ * `403 invite_required`, any non-empty code (or an earlier admission, remembered in localStorage) lets
+ * the wallet in. Screenshots pre-seed the session hint, so they never hit the gate.
+ */
+export const mockSession = async (invite?: string | null): Promise<Session> => {
   await sleep(500);
+  let admitted = false;
+  try {
+    admitted = localStorage.getItem(ADMITTED_KEY) === '1';
+  } catch {
+    /* ignore */
+  }
+  if (MOCK_BETA.inviteRequired && !admitted) {
+    if (!invite?.trim()) throw new ApiError(403, 'Mesh is in beta: this wallet needs an invite code to sign in. Join the waitlist or enter your code.', 'invite_required');
+    if (invite.trim().toLowerCase() === 'wrong') throw new ApiError(403, 'Unknown invite code.', 'invite_invalid');
+    try {
+      localStorage.setItem(ADMITTED_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }
   return { token: 'mock.jwt.token', wallet: MOCK_WALLET, chain: TOKENOMICS.chain };
+};
+
+const waitlist: WaitlistEntry[] = (() => {
+  const out: WaitlistEntry[] = [];
+  const t0 = now() - 3 * 86_400;
+  const emails = ['ana@example.com', null, 'dev@fastmail.com', null, 'ollie@proton.me', null, 'kim@hey.com', null, null, 'sam@example.org'];
+  const wallets = [null, '7xKqA2fPq9Lm3nR8sT1vW5yZ0bC4dE6gH8jK1mN3pQ9f', null, '0x8f1c2b3a4d5e6f708192a3b4c5d6e7f8091a2be21c', null, 'Ab3dEf5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5dE7fQz1m', null, '0x3a9b8c7d6e5f40312a1b0c9d8e7f6a5b4c3d2e1f0a9b', 'DqT4uV6wX8yZ0aB2cD4eF6gH8jK0mN2pQ4rS6tU8vW0x', null];
+  for (let i = 0; i < 10; i++) {
+    const invited = i < 3;
+    out.push({ id: 1 + i, email: emails[i], wallet: wallets[i], createdAt: t0 + i * 9_000, invitedAt: invited ? t0 + 86_400 : null, code: invited ? mockInviteCode() : null });
+  }
+  return out;
+})();
+let nextWaitlistId = 11;
+let liveCodes = 4;
+let liveUses = 7;
+let admittedCount = 212;
+
+function mockInviteCode(): string {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 10; i++) s += A[Math.floor(Math.random() * A.length)];
+  return `${s.slice(0, 5)}-${s.slice(5)}`;
+}
+
+function waitlistCounts() {
+  const waiting = waitlist.filter((e) => !e.invitedAt).length;
+  return { total: waitlist.length, waiting, invited: waitlist.length - waiting, admitted: admittedCount, liveCodes, liveUses };
+}
+
+export const mockJoinWaitlist = async (input: { wallet?: string; email?: string }): Promise<WaitlistJoin> => {
+  await sleep(400);
+  const email = input.email?.trim().toLowerCase() || null;
+  const wallet = input.wallet?.trim() || null;
+  if (!email && !wallet) throw new ApiError(400, 'wallet or email is required', 'bad_request');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new ApiError(400, 'not an e-mail address', 'bad_request');
+  const existing = waitlist.find((e) => (email && e.email === email) || (wallet && e.wallet === wallet));
+  const entry = existing ?? { id: nextWaitlistId++, email, wallet, createdAt: now(), invitedAt: null, code: null };
+  if (!existing) waitlist.push(entry);
+  const position = entry.invitedAt ? 0 : waitlist.filter((e) => !e.invitedAt && e.id <= entry.id).length;
+  return { ok: true, position, alreadyListed: Boolean(existing), beta: MOCK_BETA };
+};
+
+export const mockAdminWaitlist = async (token: string, status: 'waiting' | 'invited' | 'all'): Promise<AdminWaitlist> => {
+  await sleep(300);
+  requireMockAdmin(token);
+  const entries = waitlist.filter((e) => (status === 'waiting' ? !e.invitedAt : status === 'invited' ? Boolean(e.invitedAt) : true));
+  return { counts: waitlistCounts(), beta: { ...MOCK_BETA, batchSize: 200 }, entries };
+};
+
+export const mockAdminAdmitWaitlist = async (token: string, n = 200): Promise<AdmitResult> => {
+  await sleep(600);
+  requireMockAdmin(token);
+  const picked = waitlist.filter((e) => !e.invitedAt).slice(0, n);
+  const ts = now();
+  for (const e of picked) {
+    e.invitedAt = ts;
+    e.code = mockInviteCode();
+    if (e.wallet) admittedCount++;
+  }
+  pushAdminAction('waitlist-admit', { requested: n, admitted: picked.length });
+  return { requested: n, admitted: picked.length, entries: picked.map((e) => ({ ...e })), counts: waitlistCounts() };
+};
+
+export const mockAdminInvites = async (token: string, count: number, uses: number): Promise<InvitesResult> => {
+  await sleep(350);
+  requireMockAdmin(token);
+  const codes = Array.from({ length: count }, () => mockInviteCode());
+  liveCodes += count;
+  liveUses += count * uses;
+  pushAdminAction('invites', { count, uses });
+  return { count, uses, codes };
+};
+
+// ---------- spot-check verification (docs/NODE_PROTOCOL.md §10) ----------
+
+const verificationOf = new Map<string, NodeVerification>([
+  ['node_7Kd2pQ9f', { checked: 41, ok: 39, suspect: 2, mismatch: 0, inconclusive: 0, lastVerdict: 'ok', lastAt: now() - 2_700, quarantined: false, quarantinedAt: null, quarantineReason: null, enabled: true, sampleRate: 0.05 }],
+  ['node_3Ab8xR2m', { checked: 6, ok: 3, suspect: 1, mismatch: 2, inconclusive: 0, lastVerdict: 'mismatch', lastAt: now() - 7_200, quarantined: true, quarantinedAt: now() - 7_100, quarantineReason: '2 verification mismatches (last: job job_Rt8m: primary_repeated_char_run)', enabled: true, sampleRate: 0.05 }],
+]);
+const emptyVerification = (): NodeVerification => ({ checked: 0, ok: 0, suspect: 0, mismatch: 0, inconclusive: 0, lastVerdict: null, lastAt: null, quarantined: false, quarantinedAt: null, quarantineReason: null, enabled: true, sampleRate: 0.05 });
+
+export const mockAdminClearQuarantine = async (token: string, nodeId: string): Promise<{ nodeId: string; quarantined: boolean }> => {
+  await sleep(300);
+  requireMockAdmin(token);
+  const v = verificationOf.get(nodeId) ?? emptyVerification();
+  verificationOf.set(nodeId, { ...v, quarantined: false, quarantinedAt: null, quarantineReason: null });
+  pushAdminAction('quarantine-clear', { nodeId });
+  return { nodeId, quarantined: false };
 };
 
 export const mockMe = async (): Promise<Me> => {
@@ -522,6 +645,8 @@ export const mockNodeStats = async (nodeId: string): Promise<NodeStats> => {
     ramGb: n.ramGb,
     models: n.models,
     pledge: pledgeOf(nodeId),
+    verification: verificationOf.get(nodeId) ?? emptyVerification(),
+    quarantined: verificationOf.get(nodeId)?.quarantined ?? false,
   };
 };
 
@@ -758,7 +883,35 @@ export const mockAdminOverview = async (token: string): Promise<AdminOverview> =
       { wallet: '0x8f1c2b3a4d5e6f708192a3b4c5d6e7f8091a2be21c', balanceUsd: 12.4, earnedUsd: 12.4, usedUsd: 0 },
       { wallet: '0x3a9b8c7d6e5f40312a1b0c9d8e7f6a5b4c3d2e1f0a9b', balanceUsd: 9.02, earnedUsd: 30.5, usedUsd: 21.48 },
     ],
-    nodes: nodes.map((n) => ({ nodeId: n.nodeId, wallet: n.nodeId === 'node_7Kd2pQ9f' ? '7xKqA2fPq9Lm3nR8sT1vW5yZ0bC4dE6gH8jK1mN3pQ9f' : '0x8f1c2b3a4d5e6f708192a3b4c5d6e7f8091a2be21c', url: '-', models: n.models, chip: n.chip, ramGb: n.ramGb, busy: n.status === 'busy', lastSeen: n.lastSeen ?? 0, online: n.status !== 'offline' })),
+    nodes: nodes.map((n) => ({
+      nodeId: n.nodeId,
+      wallet: n.nodeId === 'node_7Kd2pQ9f' ? '7xKqA2fPq9Lm3nR8sT1vW5yZ0bC4dE6gH8jK1mN3pQ9f' : '0x8f1c2b3a4d5e6f708192a3b4c5d6e7f8091a2be21c',
+      url: '-',
+      models: n.models,
+      chip: n.chip,
+      ramGb: n.ramGb,
+      busy: n.status === 'busy',
+      lastSeen: n.lastSeen ?? 0,
+      online: n.status !== 'offline',
+      quarantined: verificationOf.get(n.nodeId)?.quarantined ?? false,
+      verification: verificationOf.get(n.nodeId) ?? emptyVerification(),
+    })),
+    verification: {
+      checked: 1_046,
+      ok: 1_001,
+      suspect: 38,
+      mismatch: 5,
+      inconclusive: 2,
+      quarantinedNodes: [...verificationOf.values()].filter((v) => v.quarantined).length,
+      recent: [
+        { id: 1046, jobId: 'job_Qm3xT9', checkJobId: 'job_Vk2pL1', primaryNode: 'node_7Kd2pQ9f', checkNode: 'node_9Xy1Lm4q', score: 0.93, verdict: 'ok', reasons: [], createdAt: now() - 2_700 },
+        { id: 1045, jobId: 'job_Hd8wQ2', checkJobId: null, primaryNode: 'node_2Pq7Zr5k', checkNode: 'upstream:openrouter', score: 0.41, verdict: 'ok', reasons: [], createdAt: now() - 4_100 },
+        { id: 1044, jobId: 'job_Rt8mN3', checkJobId: 'job_Ab1cD2', primaryNode: 'node_3Ab8xR2m', checkNode: 'node_7Kd2pQ9f', score: 0.01, verdict: 'mismatch', reasons: ['primary_repeated_char_run', 'similarity_0.01'], createdAt: now() - 7_200 },
+        { id: 1043, jobId: 'job_Ww4eR7', checkJobId: 'job_Zz9yX8', primaryNode: 'node_9Xy1Lm4q', checkNode: 'node_7Kd2pQ9f', score: 0.17, verdict: 'suspect', reasons: ['similarity_0.17'], createdAt: now() - 9_900 },
+      ],
+      config: { enabled: true, sampleRate: 0.05, minJobsBeforeTrust: 20, mismatchPenalty: 3, quarantineAfterMismatches: 2 },
+    },
+    beta: { ...MOCK_BETA, batchSize: 200, ...waitlistCounts() },
     recentErrors: admin.errors,
     recentAdminActions: [...admin.actions].sort((a, b) => b.id - a.id).slice(0, 50),
   };

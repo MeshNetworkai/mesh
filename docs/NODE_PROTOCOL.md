@@ -23,6 +23,11 @@ node                                        gateway                             
 
 `POST /nodes/register` (no auth). Two ways to prove who gets paid:
 
+> **Public beta** (`config.beta.inviteRequired`, `docs/RUNBOOK.md` "Public beta rollout"): the reward
+> wallet must already be *admitted* — it signed in to the web app with an invite code, or an admin
+> admitted it from the waitlist — else registration answers `403 invite_required`. The link-code flow
+> (A) satisfies this by construction, since the wallet signed in first.
+
 **A. Link code (default; what the installer and `mesh-node setup --link` do).** The wallet signs in the
 browser; the Mac only ever sees a short one-time code.
 
@@ -243,28 +248,91 @@ node must be trusted too, and the fallback keeps the ZDR provider preference.
 `successRate = done / scored` and `avgFirstTokenMs` (claim → first chunk). A node with at least
 `routing.reputationMinJobs` (5) scored jobs and `successRate < routing.minSuccessRate` (0.8) is
 excluded from routing and from pulling until newer jobs lift it back. Client-fault failures do not count.
+A spot-check `mismatch` (§10) on one of the window's jobs adds `verification.mismatchPenalty` (3)
+failures to `scored`; a quarantined node is excluded regardless of its rate.
 
 ## 7. Money
 
 - **User price** for a network-served request: `requestPricing.networkPricePerMTokens` ($0.02) per 1M
   total tokens (prompt + completion), debited from the user's credits as `kind='usage'`.
 - **Node reward**: `nodeRewards.usdPerMTokens` ($0.06) per 1M total tokens per completed job, written to
-  the `node_rewards` ledger (`wallet, node_id, job_id, kind='node_reward', tokens, usd_micros`). Rewards
+  the `node_rewards` ledger (`wallet, node_id, job_id, kind='node_reward', tokens, usd_micros, status`). Rewards
   are USD-denominated accruals; on-chain payout from the treasury share is a later step
-  (`kind='payout'` rows will offset them). Failed / fallback jobs earn nothing.
+  (`kind='payout'` rows will offset them). Failed / fallback jobs earn nothing. A job whose spot check
+  (§10) came back `mismatch` has its row set to `status='withheld'` and earns nothing either.
 
 ## 8. Stats
 
 - `GET /nodes/:id` — node token **or** a wallet session (JWT) owning the node:
-  `{status: idle|busy|offline, online, uptimePct24h, jobs24h, jobsDone24h, jobsFailed24h, tokens24h, earnedUsd24h, earnedUsdTotal, reputation: {jobs, successRate, avgFirstTokenMs, eligible, window, minSuccessRate}, models, chip, ramGb, loadAvg, agentVersion, lastSeen, createdAt}`.
+  `{status: idle|busy|offline, online, quarantined, uptimePct24h, jobs24h, jobsDone24h, jobsFailed24h, tokens24h, earnedUsd24h, earnedUsdTotal, reputation: {jobs, successRate, avgFirstTokenMs, mismatches, eligible, window, minSuccessRate}, verification: {…, §10}, models, chip, ramGb, loadAvg, agentVersion, lastSeen, createdAt}`.
   `uptimePct24h` = minute-buckets with ≥1 heartbeat ÷ minutes in the window (24 h, capped at the node's age).
 - `GET /me/nodes` (session) — the wallet's nodes with the same view, plus `earnedUsdTotal`.
 - `GET /nodes` (public) — `online/total/busy/idle`, `chips`, `models`, `jobs24h`, `servedByNetwork24h`,
   `tokens24h`, `servedByNetworkPercent`. No wallets or tokens.
+- Verification counters per node: §10.
 - `GET /stats` (public) — `servedByNetworkPercent` (24 h, real), `servedByNetwork24h`, `jobs24h`,
   `networkTokens24h`, `networkPricePerMTokens`, `nodeRewardUsdPerMTokens`.
 
-## 9. Agent loop (reference)
+## 10. Spot-check verification
+
+Strangers run nodes, so the gateway checks a sample of the work (`apps/gateway/src/verification.ts`,
+`config/tokenomics.json → verification`, tests in `test/verification.test.ts`). Nothing here changes
+what a node does; it only changes what happens to a node that returns bad answers.
+
+```json
+"verification": { "enabled": true, "sampleRate": 0.05, "minJobsBeforeTrust": 20, "mismatchPenalty": 3, "quarantineAfterMismatches": 2 }
+```
+
+**What is checked.** After a network job completes and the client has its reply, the gateway draws a
+random number per job. With probability `sampleRate` (5 %) — or **3×** that for a node with fewer than
+`minJobsBeforeTrust` (20) scored jobs — it re-runs the *same* job: identical anonymised payload
+(`jobs.payload`, §3), `temperature: 0`, same `maxTokens`, same privacy tier, `excludeNodeId` set to the
+primary node. The re-run goes to another eligible node of the same tier (a `trusted` job is only
+re-checked by another trusted node), or to the upstream (OpenRouter under ZDR, or the mock) when no
+second node is online. **Never checked:** a `trusted` job served by the requester's own node (owner
+rule), and check jobs themselves. The check node sees an ordinary job — the seven fields of §3, nothing
+marking it as a check — and is paid the normal reward for it; the client is not billed for the check.
+
+**How outputs are compared** (`compareOutputs`): three cheap heuristics, lenient on purpose because
+the client's request may have sampled at a high temperature.
+
+| Check | Rule | Effect |
+| --- | --- | --- |
+| Garbage | primary output empty, > 5 % U+FFFD / control characters, a run of ≥ 40 identical characters, < 8 % distinct words over ≥ 12 words, or < 30 % letters/digits over ≥ 40 chars | `mismatch` on its own |
+| Token-count sanity | the two `completionTokens` must agree within 50 % (smaller ≥ half the larger); the primary's claimed count must be within 5× of `chars / 4` | claim implausible → `mismatch`; counts disagree → `suspect` (or `mismatch` with the next row) |
+| Similarity | Jaccard over word bigrams (unigrams for texts under 4 words), 0..1 | `< 0.2` → `suspect`; `< 0.05` **and** token counts disagree → `mismatch` |
+
+If the check could not run at all (second node failed and the upstream errored) the row is
+`inconclusive` and nothing happens.
+
+**Consequences.** Every check is a row in `verifications` (`job_id, check_job_id, primary_node,
+check_node, score, verdict ok|suspect|mismatch|inconclusive, reasons`). A `mismatch`:
+
+1. withholds the primary node's reward for that job — the `node_rewards` row is marked
+   `status='withheld'`, its treasury accrual is reversed, and it counts for nothing in `earnedUsd*`,
+   `/report` or the admin totals;
+2. counts as `mismatchPenalty` (3) node-fault failures in the reputation window (§6), so one mismatch on
+   a node with four successes drops it to 4/7 = 57 % and below the 80 % routing threshold;
+3. after `quarantineAfterMismatches` (2) mismatches within the window the node is **quarantined**:
+   `nodes.quarantined_at` is set, it is excluded from routing, `GET /nodes/:id/jobs/next` returns `204`
+   even with jobs queued, and it stays that way until an admin clears it
+   (`POST /admin/nodes/:id/quarantine/clear`; `POST /admin/nodes/:id/quarantine {reason}` quarantines
+   by hand).
+
+`suspect` has no consequence beyond the row; it is there so a pattern is visible before it becomes
+mismatches. Operators see their counters on `GET /nodes/:id` → `verification`
+`{checked, ok, suspect, mismatch, inconclusive, lastVerdict, lastAt, quarantined, quarantinedAt,
+quarantineReason, enabled, sampleRate}` and on the web Node page; the admin overview carries the
+network-wide counts, the latest verdicts and a per-node column, plus a "Clear" button for quarantines.
+
+**What this does and does not catch.** It catches a node that returns nothing, noise, a stuck loop,
+inflated token counts or an answer to a different question; it does not prove an answer is *good*,
+and two honest nodes running the same weights at temperature 0 can still differ in wording, which is
+why `suspect` is the floor for mere disagreement. Spot checks are a sampling control, not a per-job
+guarantee: at 5 % a bad node is expected to be caught within its first few dozen jobs (sooner while
+it is new, at 15 %).
+
+## 11. Agent loop (reference)
 
 ```
 token = load() or register()

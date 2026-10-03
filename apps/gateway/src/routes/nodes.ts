@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { verifierFor, type Chain } from '@mesh/chain-adapter';
 import { bearer, pledgeMessage, registerMessage, safeEqual, verifySession } from '../auth.js';
+import { inviteRequired, isAdmitted } from '../beta.js';
+import { nodeVerificationStats } from '../verification.js';
 import { requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { jwtSecrets } from '../env.js';
@@ -172,6 +174,7 @@ export function nodeStatsView(ctx: AppContext, node: NodeRow) {
     agentVersion: node.agent_version,
     models: nodeModels(node),
     uptimePct24h: uptimePct24h(ctx.db, node, now),
+    quarantined: node.quarantined_at !== null,
     jobs24h: s24.jobs,
     jobsDone24h: s24.done,
     jobsFailed24h: s24.failed,
@@ -183,9 +186,12 @@ export function nodeStatsView(ctx: AppContext, node: NodeRow) {
       jobs: rep.jobs,
       successRate: rep.successRate,
       avgFirstTokenMs: rep.avgFirstTokenMs,
-      eligible: rep.eligible,
+      mismatches: rep.mismatches,
+      eligible: rep.eligible && node.quarantined_at === null,
       minSuccessRate: ctx.config.routing.minSuccessRate,
     },
+    /** Spot-check verification (docs/NODE_PROTOCOL.md §10): how often this node's work was re-checked and what came of it. */
+    verification: { ...nodeVerificationStats(ctx.db, node), enabled: ctx.config.verification.enabled, sampleRate: ctx.config.verification.sampleRate },
     lastSeen: node.last_seen,
     createdAt: node.created_at,
     offlineAfterSec: NODE_ONLINE_SEC,
@@ -354,6 +360,14 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
         return reply.code(401).send({ error: 'bad_signature', message: 'signature does not match the registration challenge for this wallet/nodeId' });
       }
       walletVerified = true;
+    }
+
+    // ---- beta gate: node operators must be admitted wallets too (docs/RUNBOOK.md "Public beta rollout") ----
+    if (inviteRequired(ctx.config.beta) && !isAdmitted(ctx.db, wallet)) {
+      return reply.code(403).send({
+        error: 'invite_required',
+        message: `Mesh is in ${ctx.config.beta.label.toLowerCase()}: the reward wallet must sign in to the web app with an invite code before it can register a node.`,
+      });
     }
 
     if (nodeId) {

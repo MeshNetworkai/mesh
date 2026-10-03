@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
-import type { RoutingConfig } from './routing.js';
-import { NODE_ONLINE_SEC, nodeModels, nodeReputation, type NodeRow } from './routing.js';
+import type { ReputationConfig } from './routing.js';
+import { NODE_ONLINE_SEC, isQuarantined, nodeModels, nodeReputation, type NodeRow } from './routing.js';
 
 /**
  * Job broker for the Mesh node network (see docs/NODE_PROTOCOL.md).
@@ -35,6 +35,11 @@ export interface JobRow {
   node_id: string | null;
   exclude_node_id: string | null;
   parent_job_id: string | null;
+  /**
+   * Set on a spot-check re-run (verification.ts): the job id this one verifies. INTERNAL — never part
+   * of the node-facing job view; a node cannot tell a check from a client request.
+   */
+  check_of: string | null;
   attempt: number;
   prompt_tokens: number | null;
   completion_tokens: number | null;
@@ -188,6 +193,8 @@ export interface CreateJobInput {
   requesterWallet?: string | null;
   excludeNodeId?: string | null;
   parentJobId?: string | null;
+  /** Verification re-run of this job id (stored in `jobs.check_of`, never sent to a node). */
+  checkOf?: string | null;
   attempt?: number;
 }
 
@@ -197,7 +204,7 @@ export class JobBroker {
 
   constructor(
     private db: Db,
-    private routing: () => Pick<RoutingConfig, 'minSuccessRate' | 'reputationMinJobs'>,
+    private routing: () => ReputationConfig,
     /** Whether a node may claim `trusted` jobs (routing.ts `isTrustedNode`). Absent → no node is trusted. */
     private isTrusted: (node: NodeRow) => boolean = () => false,
   ) {}
@@ -220,8 +227,8 @@ export class JobBroker {
     const payload: JobPayload = { messages: sanitizeMessages(input.payload.messages), params: input.payload.params };
     this.db
       .prepare(
-        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, privacy, requester_wallet, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, attempt, created_at, created_ms)
-         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO jobs (job_id, model, tag, wallet, api_key_id, status, privacy, requester_wallet, payload, max_tokens, deadline_ms, exclude_node_id, parent_job_id, check_of, attempt, created_at, created_ms)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         jobId,
@@ -236,6 +243,7 @@ export class JobBroker {
         input.deadlineMs,
         input.excludeNodeId ?? null,
         input.parentJobId ?? null,
+        input.checkOf ?? null,
         input.attempt ?? 1,
         Math.floor(ms / 1000),
         ms,
@@ -292,6 +300,8 @@ export class JobBroker {
   async pull(node: NodeRow, waitMs: number): Promise<JobRow | null> {
     const tags = new Set(nodeModels(node));
     if (tags.size === 0) return null;
+    // Quarantined (verification.ts) or below the reputation threshold: nothing, even when jobs are queued.
+    if (isQuarantined(node)) return null;
     if (!nodeReputation(this.db, node.node_id, this.routing()).eligible) return null;
     const trusted = this.isTrusted(node);
     const placeholders = [...tags].map(() => '?').join(',');

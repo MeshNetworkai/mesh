@@ -1,6 +1,7 @@
 import { MockAdapter } from '@mesh/chain-adapter';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { betaView } from '../beta.js';
 import type { AppContext } from '../context.js';
 import { dbOk, nowSec } from '../db.js';
 import { microsToUsd } from '../money.js';
@@ -162,6 +163,10 @@ export function computeStats(ctx: AppContext) {
     showSavings: ctx.config.requestPricing.showSavings,
     /** Points/leaderboard/referral programme: built but disabled by default; the web app hides every points surface when false. */
     pointsEnabled: ctx.config.points.enabled,
+    /** Public beta gating: the web app shows the pill and swaps the CTA for the waitlist when `inviteRequired`. */
+    beta: betaView(ctx.config.beta),
+    /** Spot-check verification is on: a sampled fraction of node work is re-checked (docs/NODE_PROTOCOL.md §10). */
+    verificationEnabled: ctx.config.verification.enabled,
     nodeRewardUsdPerMTokens: ctx.config.nodeRewards.usdPerMTokens,
     series24h: hourlySeries(ctx, now),
     epochSeconds: ctx.config.epochSeconds,

@@ -329,6 +329,7 @@ paths:
                 chain: { type: string, enum: [solana, evm], description: Defaults to the gateway's configured chain. }
                 nonce: { type: string, description: Optional; defaults to the newest live nonce for the wallet. }
                 message: { type: string, maxLength: 2000, description: Optional echo of the signed message for precise error messages. }
+                invite: { type: string, maxLength: 64, description: 'Beta: invite code for a wallet that has never been admitted (`403 invite_required` says when one is needed). Consumed once; the wallet stays admitted.' }
             example:
               wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
               signature: 3xT1…Qk9b
@@ -352,6 +353,42 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: 'Public beta: `invite_required` (the signature is fine but this wallet has not been admitted; retry with `invite`, or join `POST /waitlist`) or `invite_invalid` (`reason`: `invalid` | `exhausted`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: invite_required, message: 'Mesh is in beta: this wallet needs an invite code to sign in. Join the waitlist or enter your code.', statusCode: 403, beta: { enabled: true, label: Beta, inviteRequired: true } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /waitlist:
+    post:
+      tags: [Auth]
+      summary: Join the beta waitlist
+      description: Public, rate-limited (5/min per IP). Takes a wallet or an e-mail; idempotent per identifier. `position` is 1-based among entries not yet invited (0 once invited). `404` when the beta is not running.
+      operationId: waitlistJoin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wallet: { type: string, minLength: 8, maxLength: 128 }
+                email: { type: string, format: email }
+            example: { email: you@example.com }
+      responses:
+        '200':
+          description: Listed.
+          content:
+            application/json:
+              example: { ok: true, position: 184, alreadyListed: false, beta: { enabled: true, label: Beta, inviteRequired: true } }
+        '400':
+          description: Neither wallet nor e-mail, or an invalid e-mail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The beta waitlist is closed.
         '429': { $ref: '#/components/responses/RateLimited' }
   /auth/refresh:
     post:

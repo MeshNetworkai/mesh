@@ -27,7 +27,12 @@ export interface NodeRow {
   pledge_at: number | null;
   pledge_signature: string | null;
   pledge_chain: string | null;
+  /** Set when spot-check verification (verification.ts) quarantined the node; cleared by an admin. */
+  quarantined_at: number | null;
+  quarantine_reason: string | null;
 }
+
+export const isQuarantined = (node: Pick<NodeRow, 'quarantined_at'>): boolean => node.quarantined_at !== null && node.quarantined_at !== undefined;
 
 export function onlineNodes(db: Db, now = nowSec()): NodeRow[] {
   return db
@@ -47,10 +52,12 @@ export function nodeModels(row: Pick<NodeRow, 'models'>): string[] {
 // ---------------- reputation ----------------
 
 export interface Reputation {
-  /** Jobs scored (done + node-fault failures) in the window. */
+  /** Jobs scored (done + node-fault failures + mismatch penalties) in the window. */
   jobs: number;
   done: number;
   failed: number;
+  /** Verification mismatches among the window's jobs; each counts as `mismatchPenalty` failures. */
+  mismatches: number;
   /** done / jobs; 1 when nothing scored yet. */
   successRate: number;
   /** Mean claim → first chunk latency over completed jobs, ms; null when none. */
@@ -60,17 +67,27 @@ export interface Reputation {
 }
 
 export type RoutingConfig = TokenomicsConfig['routing'];
+export type VerificationConfig = TokenomicsConfig['verification'];
 
-export function nodeReputation(db: Db, nodeId: string, routing: Partial<Pick<RoutingConfig, 'minSuccessRate' | 'reputationMinJobs'>> = {}): Reputation {
+/** What reputation needs from config: the routing thresholds plus the verification mismatch penalty. */
+export type ReputationConfig = Partial<Pick<RoutingConfig, 'minSuccessRate' | 'reputationMinJobs'>> & { mismatchPenalty?: number };
+
+/** `mismatchPenalty` folded into the routing thresholds (what `JobBroker` and `eligibleNodes` pass to `nodeReputation`). */
+export function reputationConfig(config: { routing: Partial<RoutingConfig>; verification?: Pick<VerificationConfig, 'mismatchPenalty'> }): ReputationConfig {
+  return { ...config.routing, mismatchPenalty: config.verification?.mismatchPenalty };
+}
+
+export function nodeReputation(db: Db, nodeId: string, routing: ReputationConfig = {}): Reputation {
   const minSuccessRate = routing.minSuccessRate ?? 0.8;
   const minJobs = routing.reputationMinJobs ?? 5;
+  const penalty = routing.mismatchPenalty ?? 3;
   const rows = db
     .prepare(
-      `SELECT status, claimed_ms, first_chunk_ms FROM jobs
+      `SELECT job_id, status, claimed_ms, first_chunk_ms FROM jobs
        WHERE node_id = ? AND (status = 'done' OR ((status = 'failed' OR status = 'fallback') AND node_fault = 1))
        ORDER BY created_ms DESC LIMIT ?`,
     )
-    .all(nodeId, REPUTATION_WINDOW) as Array<{ status: string; claimed_ms: number | null; first_chunk_ms: number | null }>;
+    .all(nodeId, REPUTATION_WINDOW) as Array<{ job_id: string; status: string; claimed_ms: number | null; first_chunk_ms: number | null }>;
   let done = 0;
   let latSum = 0;
   let latN = 0;
@@ -83,12 +100,21 @@ export function nodeReputation(db: Db, nodeId: string, routing: Partial<Pick<Rou
       }
     }
   }
-  const jobs = rows.length;
+  // Spot-check mismatches on the window's jobs (verification.ts): each one is `penalty` extra failures.
+  const mismatches = rows.length
+    ? (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM verifications WHERE primary_node = ? AND verdict = 'mismatch' AND job_id IN (${rows.map(() => '?').join(',')})`)
+          .get(nodeId, ...rows.map((r) => r.job_id)) as { n: number }
+      ).n
+    : 0;
+  const jobs = rows.length + mismatches * penalty;
   const successRate = jobs === 0 ? 1 : done / jobs;
   return {
     jobs,
     done,
     failed: jobs - done,
+    mismatches,
     successRate: Math.round(successRate * 10_000) / 10_000,
     avgFirstTokenMs: latN ? Math.round(latSum / latN) : null,
     eligible: jobs < minJobs || successRate >= minSuccessRate,
@@ -192,7 +218,7 @@ export interface TierSource {
 
 export interface RouteDeps {
   db: Db;
-  config: { routing: Partial<RoutingConfig>; stakeTiers: TokenomicsConfig['stakeTiers']; privacy: PrivacyConfig };
+  config: { routing: Partial<RoutingConfig>; stakeTiers: TokenomicsConfig['stakeTiers']; privacy: PrivacyConfig; verification?: Pick<VerificationConfig, 'mismatchPenalty'> };
   stakes?: TierSource;
 }
 
@@ -200,12 +226,13 @@ export interface RouteDeps {
  * Online, idle (not busy), reputable nodes advertising `tag`, excluding `exclude`. Best first:
  * higher stake tier of the reward wallet, then reputation (success rate, then faster first token),
  * then most recently seen. `trustedOnly` keeps only nodes that may serve `trusted` jobs for
- * `requesterWallet` (allowlisted, gold + pledged, or owned by that wallet).
+ * `requesterWallet` (allowlisted, gold + pledged, or owned by that wallet). Quarantined nodes
+ * (verification.ts) are never candidates.
  */
 export function eligibleNodes(deps: RouteDeps, tag: string, opts: { exclude?: string | null; now?: number; trustedOnly?: boolean; requesterWallet?: string | null } = {}): NodeRow[] {
-  const routing = deps.config.routing;
+  const routing = reputationConfig(deps.config);
   const scored = onlineNodes(deps.db, opts.now)
-    .filter((n) => n.busy === 0 && n.node_id !== opts.exclude && nodeModels(n).includes(tag))
+    .filter((n) => n.busy === 0 && !isQuarantined(n) && n.node_id !== opts.exclude && nodeModels(n).includes(tag))
     .filter((n) => !opts.trustedOnly || isTrustedNode(deps, n, opts.requesterWallet))
     .map((n) => ({ n, rep: nodeReputation(deps.db, n.node_id, routing), tier: deps.stakes?.peek(n.wallet).tierIndex ?? 0 }))
     .filter((x) => x.rep.eligible);

@@ -1,11 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { BetaPill } from '../components/Nav';
 import { Readout } from '../components/Readout';
-import { Skeleton, Terminal } from '../components/ui';
+import { Notice, Skeleton, Spinner, Terminal } from '../components/ui';
 import { PUBLIC_API_URL, STORAGE, TOKENOMICS } from '../config';
+import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtCost, fmtInt } from '../lib/format';
 import { useStats } from '../lib/hooks';
+import { errorMessage } from '../lib/toast';
+import type { BetaInfo } from '../lib/types';
 import { STAKING_TARGET } from '../lib/staking';
 import { installOneLiner } from './Node';
 
@@ -36,9 +40,80 @@ const ROWS = [
   },
 ];
 
+/**
+ * Beta CTA: wallet or e-mail → POST /waitlist. Shown instead of "Connect wallet" while
+ * `beta.inviteRequired`; people who already hold a code sign in from the small link under it.
+ */
+export function WaitlistForm({ beta, onConnect }: { beta: BetaInfo; onConnect: () => void }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ position: number; alreadyListed: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const v = value.trim();
+    if (!v) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.joinWaitlist(v.includes('@') ? { email: v } : { wallet: v });
+      setDone({ position: r.position, alreadyListed: r.alreadyListed });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (done) {
+    return (
+      <div className="waitlist stack sm" id="waitlist" aria-live="polite">
+        <Notice kind="ok">
+          {done.alreadyListed ? 'You are already on the list' : 'You are on the list'}
+          {done.position > 0 ? ` at position ${fmtInt(done.position)}` : ''}. Invites go out in batches; the code arrives at the address or wallet you gave.
+        </Notice>
+        <p className="small muted fine">
+          Already have a code?{' '}
+          <button type="button" className="linkbtn" onClick={onConnect}>
+            Connect wallet
+          </button>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <form className="waitlist stack sm" id="waitlist" onSubmit={submit}>
+      <div className="keybox">
+        <input
+          id="waitlist-id"
+          className="input"
+          placeholder="wallet address or e-mail"
+          autoComplete="email"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          aria-label="Wallet address or e-mail"
+          disabled={busy}
+        />
+        <button className="btn primary" type="submit" disabled={busy || !value.trim()}>
+          {busy ? <Spinner /> : null} Join the waitlist
+        </button>
+      </div>
+      {error ? <Notice kind="bad">{error}</Notice> : null}
+      <p className="small muted fine">
+        {beta.label} is invite-only for now; invites go out in batches, oldest first. Have a code?{' '}
+        <button type="button" className="linkbtn" onClick={onConnect}>
+          Connect wallet
+        </button>{' '}
+        and enter it when asked.
+      </p>
+    </form>
+  );
+}
+
 export function Landing() {
   const { data: stats, loading, error } = useStats();
   const { session, openModal } = useAuth();
+  const beta = stats?.beta ?? null;
+  const waitlistCta = Boolean(beta?.enabled && beta.inviteRequired) && !session;
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
   // Kept only while the points programme is on (built, disabled by default).
   const [params] = useSearchParams();
@@ -58,6 +133,7 @@ export function Landing() {
       <section className="hero">
         <p className="eyebrow">
           {TOKENOMICS.name} · ${TOKENOMICS.ticker} · {TOKENOMICS.chain}
+          <BetaPill />
         </p>
         <h1 className="display d-xl">
           Trading pays for
@@ -97,7 +173,9 @@ export function Landing() {
           Free to try with a connected wallet. Credits accrue every hour you hold {fmtInt(TOKENOMICS.minHoldTokens)} {TOKENOMICS.ticker}. Credits
           are a share of fees, not a promise: <Link to="/risk">read the risks</Link>.
         </p>
-        {!session ? (
+        {waitlistCta && beta ? (
+          <WaitlistForm beta={beta} onConnect={openModal} />
+        ) : !session ? (
           <button className="btn primary" onClick={openModal}>
             Connect wallet
           </button>

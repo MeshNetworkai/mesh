@@ -3,7 +3,7 @@ import { STORAGE, TOKENOMICS } from '../config';
 import * as api from './api';
 import { ApiError } from './api';
 import { useAuth } from './auth';
-import type { ApiKey, Board, EpochSummary, Leaderboard, Me, MyPoints, MyReferral, MyStake, NodeView, NodesSummary, StakeTiers, Stats } from './types';
+import type { ApiKey, BetaInfo, Board, EpochSummary, Leaderboard, Me, MyPoints, MyReferral, MyStake, NodeView, NodesSummary, StakeTiers, Stats } from './types';
 
 export interface Async<T> {
   data: T | null;
@@ -75,6 +75,15 @@ export function useStats(pollMs = 30_000): Async<Stats> {
 export function usePointsEnabled(pollMs = 60_000): boolean {
   const { data } = useStats(pollMs);
   return data?.pointsEnabled === true;
+}
+
+/**
+ * Public beta state from GET /stats. Null until the first response; the pill and the waitlist CTA
+ * render only once the gateway says the beta is on, so a gateway without the block shows nothing.
+ */
+export function useBeta(pollMs = 60_000): BetaInfo | null {
+  const { data } = useStats(pollMs);
+  return data?.beta ?? null;
 }
 
 /** Public epoch history (GET /epochs), newest first. */

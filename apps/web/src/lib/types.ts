@@ -65,10 +65,30 @@ export interface Stats {
   showSavings?: boolean;
   /** Points / leaderboard / referral programme is live. Built but disabled by default; every points surface is hidden when false. */
   pointsEnabled?: boolean;
+  /** Public beta gating: pill in the nav/hero; with `inviteRequired` the landing CTA is the waitlist and sign-in may ask for a code. */
+  beta?: BetaInfo;
+  /** Spot-check verification of node work is on (docs/NODE_PROTOCOL.md §10). */
+  verificationEnabled?: boolean;
   series24h: HourPoint[];
   epochSeconds: number;
   upstream: string;
   generatedAt: number;
+}
+
+/** `beta` block on GET /stats (and on 403 invite_required bodies). */
+export interface BetaInfo {
+  enabled: boolean;
+  label: string;
+  inviteRequired: boolean;
+}
+
+/** POST /waitlist response. */
+export interface WaitlistJoin {
+  ok: true;
+  /** 1-based place among entries not yet invited; 0 once invited. */
+  position: number;
+  alreadyListed: boolean;
+  beta: BetaInfo;
 }
 
 /** GET /nodes: public summary only (no URLs or wallets). */
@@ -276,10 +296,27 @@ export interface PledgeText extends NodePledge {
   message: string;
 }
 
+/** Spot-check verification counters for one node (GET /nodes/:id → verification; docs/NODE_PROTOCOL.md §10). */
+export interface NodeVerification {
+  checked: number;
+  ok: number;
+  suspect: number;
+  mismatch: number;
+  inconclusive: number;
+  lastVerdict: 'ok' | 'suspect' | 'mismatch' | 'inconclusive' | null;
+  lastAt: number | null;
+  quarantined: boolean;
+  quarantinedAt: number | null;
+  quarantineReason: string | null;
+  enabled?: boolean;
+  sampleRate?: number;
+}
+
 /** GET /nodes/:id — per-node stats, node token or session bearer. */
 export interface NodeStats {
   nodeId?: string;
   status: string;
+  quarantined?: boolean;
   uptimePct24h: number;
   jobs24h: number;
   tokens24h: number;
@@ -290,6 +327,7 @@ export interface NodeStats {
   ramGb?: number | null;
   models?: string[];
   pledge?: NodePledge;
+  verification?: NodeVerification;
 }
 
 /** What the Node page renders: /me/nodes row merged with its /nodes/:id stats (null while loading or when unavailable). */
@@ -378,6 +416,59 @@ export interface AdminNode {
   busy: boolean;
   lastSeen: number;
   online: boolean;
+  quarantined?: boolean;
+  verification?: NodeVerification;
+}
+
+/** Admin overview → verification: network-wide spot-check counters and the latest verdicts. */
+export interface AdminVerification {
+  checked: number;
+  ok: number;
+  suspect: number;
+  mismatch: number;
+  inconclusive: number;
+  quarantinedNodes: number;
+  recent: Array<{ id: number; jobId: string; checkJobId: string | null; primaryNode: string; checkNode: string; score: number | null; verdict: string; reasons: string[]; createdAt: number }>;
+  config: { enabled: boolean; sampleRate: number; minJobsBeforeTrust: number; mismatchPenalty: number; quarantineAfterMismatches: number };
+}
+
+/** Admin overview → beta: config + waitlist counters. */
+export interface AdminBeta extends BetaInfo {
+  batchSize: number;
+  total: number;
+  waiting: number;
+  invited: number;
+  admitted: number;
+  liveCodes: number;
+  liveUses: number;
+}
+
+export interface WaitlistEntry {
+  id: number;
+  wallet: string | null;
+  email: string | null;
+  code: string | null;
+  createdAt: number;
+  invitedAt: number | null;
+}
+
+export interface AdminWaitlist {
+  counts: Omit<AdminBeta, keyof BetaInfo | 'batchSize'>;
+  beta: BetaInfo & { batchSize: number };
+  entries: WaitlistEntry[];
+}
+
+export interface AdmitResult {
+  requested: number;
+  admitted: number;
+  entries: WaitlistEntry[];
+  counts: AdminWaitlist['counts'];
+}
+
+export interface InvitesResult {
+  count: number;
+  uses: number;
+  codes: string[];
 }
 
 export interface AdminError {
@@ -419,6 +510,8 @@ export interface AdminOverview {
   holdingAge: { enabled: boolean; maxDays: number; minMultiplier: number; maxMultiplier: number };
   topHolders: Array<{ wallet: string; balanceUsd: number; earnedUsd: number; usedUsd: number }>;
   nodes: AdminNode[];
+  verification?: AdminVerification;
+  beta?: AdminBeta;
   recentErrors: AdminError[];
   recentAdminActions: AdminAction[];
 }
