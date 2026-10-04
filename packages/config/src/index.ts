@@ -88,6 +88,16 @@ export const TokenomicsSchema = z
         minSuccessRate: z.number().min(0).max(1).default(0.8),
         /** Reputation only applies once a node has at least this many scored jobs. */
         reputationMinJobs: z.number().int().min(1).default(5),
+        /**
+         * When every eligible node advertising the tag is online but at capacity, the job is queued
+         * and waits up to this long for a claim before falling back to the upstream (0 = never queue,
+         * go straight upstream as before).
+         */
+        queueWaitMs: z.number().int().min(0).default(6000),
+        /** Queued jobs allowed per online eligible node (queue depth cap = nodes × this); beyond it requests go upstream. */
+        maxQueueDepthPerNode: z.number().int().min(0).default(3),
+        /** Hard cap on the `maxParallel` a node may advertise on register/heartbeat (concurrent jobs per node). */
+        maxParallelPerNode: z.number().int().min(1).default(4),
       })
       .default({}),
     /**

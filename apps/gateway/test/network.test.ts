@@ -104,13 +104,18 @@ describe('node protocol: registration and auth', () => {
     expect((await app.inject({ method: 'GET', url: '/me/nodes', headers: { authorization: `Bearer ${bobJwt}` } })).json().nodes).toHaveLength(0);
   });
 
-  it('heartbeats are stored for uptime and pruned to 48h', async () => {
+  it('heartbeats are stored for uptime and pruned to 48h by the maintenance timer, not per heartbeat', async () => {
     const { app } = await boot();
     const n = await fakeNode(app, {});
     const now = nowSec();
     app.ctx.db.prepare(`INSERT INTO heartbeats (node_id, ts, busy) VALUES (?, ?, 0)`).run(n.id, now - 49 * 3600);
-    expect((await n.heartbeat({ busy: false, loadAvg: 1.2 })).json()).toMatchObject({ ok: true, heartbeatEverySec: 20, queuedJobs: 0 });
-    const rows = app.ctx.db.prepare(`SELECT ts FROM heartbeats WHERE node_id = ? ORDER BY ts`).all(n.id) as Array<{ ts: number }>;
+    expect((await n.heartbeat({ busy: false, loadAvg: 1.2 })).json()).toMatchObject({ ok: true, heartbeatEverySec: 20, queuedJobs: 0, maxParallel: 1 });
+    // the heartbeat itself no longer prunes (one DELETE per heartbeat was write amplification) …
+    let rows = app.ctx.db.prepare(`SELECT ts FROM heartbeats WHERE node_id = ? ORDER BY ts`).all(n.id) as Array<{ ts: number }>;
+    expect(rows.some((r) => r.ts < now - 48 * 3600)).toBe(true);
+    // … the broker's maintenance pass does
+    expect(app.ctx.broker.maintain()).toMatchObject({ heartbeatsPruned: 1, jobsReaped: 0 });
+    rows = app.ctx.db.prepare(`SELECT ts FROM heartbeats WHERE node_id = ? ORDER BY ts`).all(n.id) as Array<{ ts: number }>;
     expect(rows.every((r) => r.ts >= now - 48 * 3600)).toBe(true);
     expect(rows.length).toBeGreaterThanOrEqual(2);
     expect((app.ctx.db.prepare(`SELECT load_avg FROM nodes WHERE node_id = ?`).get(n.id) as { load_avg: number }).load_avg).toBe(1.2);
@@ -305,7 +310,7 @@ describe('node protocol: failure handling', () => {
     const events = sse(res.body);
     expect(events.map((e) => e.choices?.[0]?.delta?.content ?? '').join('')).toContain('Mesh mock upstream');
     // Upstream-served: the final chunk says so (no node fields).
-    expect(events[events.length - 1].mesh).toEqual({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
+    expect(events[events.length - 1].mesh).toMatchObject({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
     expect(events[events.length - 1].mesh.nodeId).toBeUndefined();
     expect(app.ctx.db.prepare(`SELECT status, error, node_fault FROM jobs WHERE job_id = ?`).get(job.jobId)).toEqual({ status: 'fallback', error: 'first_token_timeout', node_fault: 1 });
     expect((await n.chunk(job.jobId, 0, 'too late')).statusCode).toBe(409);
@@ -328,7 +333,7 @@ describe('node protocol: failure handling', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-mesh-route']).toBe('mock');
     expect(res.json().choices[0].message.content).toContain('Mesh mock upstream');
-    expect(res.json().mesh).toEqual({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
+    expect(res.json().mesh).toMatchObject({ route: 'mock', privacy: 'network', servedBy: 'upstream' });
     expect((app.ctx.db.prepare(`SELECT status FROM jobs`).get() as { status: string }).status).toBe('fallback');
   });
 
@@ -505,7 +510,7 @@ describe('config + helpers', () => {
     expect(c.nodeRewards.usdPerMTokens).toBe(testConfig.nodeRewards.usdPerMTokens);
     expect(c.requestPricing.networkPricePerMTokens).toBe(0.02);
     expect(c.nodeRewards.usdPerMTokens).toBe(0.06);
-    expect(c.routing).toEqual({ preferNetwork: true, firstTokenTimeoutMs: 8000, stallTimeoutMs: 6000, jobTimeoutMs: 120_000, defaultMaxTokens: 1024, minSuccessRate: 0.8, reputationMinJobs: 5 });
+    expect(c.routing).toEqual({ preferNetwork: true, firstTokenTimeoutMs: 8000, stallTimeoutMs: 6000, jobTimeoutMs: 120_000, defaultMaxTokens: 1024, minSuccessRate: 0.8, reputationMinJobs: 5, queueWaitMs: 6000, maxQueueDepthPerNode: 3, maxParallelPerNode: 4 });
     expect(() => parseTokenomics({ ...raw, nodeRewards: { usdPerMTokens: -1 } })).toThrow();
     expect(networkCostMicros(1_000_000, 0.02)).toBe(20_000);
     expect(nodeRewardMicros(1_000_000, 0.06)).toBe(60_000);

@@ -69,8 +69,20 @@ describe('node registry', () => {
     expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t)).toMatchObject({ target: 'node', tag: 'llama3.1:8b', candidates: ['n1'], reason: 'node', privacy: 'network', servedBy: 'network node' });
     // the raw tag is accepted as a model name too
     expect(decideRoute({ db, config: cfgOn, policy }, 'llama3.1:8b', net, t).target).toBe('node');
+    // every node at capacity: queue behind it (bounded wait), unless queueing is off or the depth cap is reached
     db.prepare(`UPDATE nodes SET busy = 1`).run();
-    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t).reason).toBe('no_online_node');
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t)).toMatchObject({ target: 'node', reason: 'queued', candidates: ['n1'] });
+    expect(decideRoute({ db, config: { ...base, routing: { preferNetwork: true, queueWaitMs: 0 } }, policy }, 'llama-3.1-8b', net, t).reason).toBe('no_online_node');
+    for (let i = 0; i < 3; i++) {
+      db.prepare(`INSERT INTO jobs (job_id, model, tag, wallet, status, payload, max_tokens, deadline_ms, created_at, created_ms) VALUES (?, 'm', 'llama3.1:8b', 'w', 'queued', '{}', 10, ?, ?, ?)`).run(`q${i}`, t * 1000 + 60_000, t, t * 1000);
+    }
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t)).toMatchObject({ target: 'openrouter', reason: 'queue_full' });
+    // a second node doubles the allowed depth
+    db.prepare(`INSERT INTO nodes (node_id, wallet, url, models, created_at, last_seen, busy) VALUES ('n2','w','','["llama3.1:8b"]',?,?,1)`).run(t, t - 10);
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t).reason).toBe('queued');
+    // maxParallel > running: capacity again
+    db.prepare(`UPDATE nodes SET max_parallel = 2 WHERE node_id = 'n2'`).run();
+    expect(decideRoute({ db, config: cfgOn, policy }, 'llama-3.1-8b', net, t)).toMatchObject({ reason: 'node', candidates: ['n2'] });
   });
 });
 

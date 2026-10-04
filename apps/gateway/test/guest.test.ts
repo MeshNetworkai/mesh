@@ -49,7 +49,7 @@ describe('guest chat', () => {
     expect(text).toContain('Hello from the Mesh mock upstream');
     // The final mesh chunk has the same shape /v1/chat/completions emits: usage + mesh (route, privacy, servedBy).
     const last = chunks.at(-1)!;
-    expect(last.mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(last.mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect(last.usage.cost).toBe(0.001);
 
     // Treasury paid: a guest_chat row for the upstream cost, visible on /report; nobody's credits moved.

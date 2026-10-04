@@ -370,6 +370,18 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE UNIQUE INDEX IF NOT EXISTS treasury_kind_ref ON treasury_ledger(kind, ref) WHERE ref IS NOT NULL;
     `,
   },
+  {
+    // Per-node concurrency (docs/LOADTEST.md bottleneck 2): `max_parallel` is what the node advertised on
+    // register/heartbeat (capped by routing.maxParallelPerNode); `busy` becomes the count of running jobs.
+    // Indexes for the hot aggregations run every minute by alerts.ts / every 10 s by /stats and /report.
+    id: 13,
+    sql: `
+    ALTER TABLE nodes ADD COLUMN max_parallel INTEGER NOT NULL DEFAULT 1;
+    CREATE INDEX IF NOT EXISTS ledger_kind_created ON credits_ledger(kind, created_at);
+    CREATE INDEX IF NOT EXISTS jobs_wallet ON jobs(wallet);
+    CREATE INDEX IF NOT EXISTS jobs_node_status ON jobs(node_id, status);
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

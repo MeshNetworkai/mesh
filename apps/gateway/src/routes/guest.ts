@@ -6,7 +6,7 @@ import { nowSec, type Db } from '../db.js';
 import { addTreasuryEntry } from '../ledger.js';
 import { openaiError, relayChat, type ChatAccount, type RecordInput } from '../relay.js';
 import { savedMicros } from '../savings.js';
-import { costMicros } from '../upstream.js';
+import { costMicros, tokenCount } from '../upstream.js';
 
 /**
  * Guest chat: a few free messages a day for homepage visitors, no wallet needed.
@@ -132,7 +132,7 @@ export async function guestRoutes(app: FastifyInstance, ctx: AppContext) {
             `INSERT INTO requests_log (api_key_id, wallet, model, prompt_tokens, completion_tokens, cost_usd_micros, upstream, latency_ms, stream, created_at, list_cost_usd_micros, saved_usd_micros)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(GUEST_KEY_ID, GUEST_WALLET, model, usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0, cost, upstream, latencyMs, stream ? 1 : 0, nowSec(), listCost, saved);
+          .run(GUEST_KEY_ID, GUEST_WALLET, model, tokenCount(usage?.prompt_tokens), tokenCount(usage?.completion_tokens), cost, upstream, latencyMs, stream ? 1 : 0, nowSec(), listCost, saved);
         if (!network && cost > 0) addTreasuryEntry(ctx.db, { kind: 'guest_chat', usdMicros: -cost, ref: `guest:req:${Number(res.lastInsertRowid)}` });
       })();
       // Nothing is charged to anyone: the relay reports $0 to the guest.

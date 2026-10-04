@@ -318,7 +318,7 @@ describe('job broker', () => {
     expect(broker.chunk(job.job_id, 'n1', 1, 'y')).toBe(false);
     broker.abandon(job.job_id, 'failed', 'client_disconnected', false);
     expect(broker.get(job.job_id)?.status).toBe('failed');
-    expect(broker.done(job.job_id, 'n1', { promptTokens: 1, completionTokens: 1, finishReason: 'stop' })).toBe(false);
+    expect(broker.done(job.job_id, 'n1', { promptTokens: 1, completionTokens: 1, finishReason: 'stop' })).toEqual({ ok: false, reason: 'not_running' });
     expect((db.prepare(`SELECT busy FROM nodes WHERE node_id = 'n1'`).get() as { busy: number }).busy).toBe(0);
   });
 });

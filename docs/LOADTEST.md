@@ -17,6 +17,13 @@ node scripts/loadtest/relay.mjs --gateway http://127.0.0.1:8787 --admin-token de
 
 Exit code is 1 if any request failed (so it can gate CI), 2 on a setup error.
 
+> **Run it with `VERIFICATION_ENABLED=false`** (the gateway child inherits the environment). The fake nodes
+> answer every job with `tok tok tok …`, which the spot-check heuristics (`verification.ts`,
+> `repeated_words`) rightly flag as garbage: with verification on, sampled nodes lose reputation after
+> their first check, drop out of routing and get quarantined, so the fleet shrinks to the few nodes not yet
+> sampled and the route split says nothing about the relay. `scripts/loadtest/relay.mjs` does not set it
+> itself (the script is outside the gateway tree); the 2026-10-04 runs below were made with it set.
+
 ## Results, 2026-10-03
 
 Host: 2 vCPU Intel Xeon 2.1 GHz, 8 GB RAM, Linux; Node 22. Gateway, fake nodes and clients all
@@ -82,7 +89,20 @@ scratch directory and are summarised here rather than committed.
 - **Burst traffic is mostly not served by the network.** In runs 1 and 3 only 20 of 200 requests
   reached a node even though 20 healthy nodes were online; see bottleneck 1.
 
-## Bottlenecks found (not fixed here; file references for whoever picks them up)
+## Bottlenecks found (2026-10-03; status updated 2026-10-04, see "Results, 2026-10-04 (after fixes)")
+
+| # | Bottleneck | Status 2026-10-04 |
+| --- | --- | --- |
+| 1 | No queueing when every node is busy | **Fixed** — `routing.queueWaitMs` (6 s) bounded wait, `routing.maxQueueDepthPerNode` (3) |
+| 2 | One job per node | **Fixed** — `maxParallel` on register/heartbeat, `busy` is a count, cap `routing.maxParallelPerNode` (4) |
+| 3 | One SQLite read per token | **Fixed** — `JobBroker.chunk` answers from the relay; DB only when the relay is missing |
+| 4 | O(online nodes) queries per request | **Fixed** — reputation cache (60 s, invalidated on done/fail/mismatch) + 1 s online-node snapshot with live running counts |
+| 5 | Heartbeat write amplification | **Fixed** — prune on the broker's 60 s maintenance timer, queued count cached 2 s |
+| 6 | Single-process relay | Open (by design, one VPS) |
+| 7 | SQLite on the event loop | Open (3 and 5 removed the per-token and per-heartbeat work; Postgres not warranted yet) |
+| 8 | Default rate limits break the scenario | **Fixed** for registration (per-wallet strict + per-IP backstop); `V1_RATE_LIMIT` documented in the OpenAPI description |
+| 9 | Uncached `GET /nodes` | **Fixed** — same `STATS_CACHE_MS` cache as `/stats` |
+| 10 | Relay observability | Open — `/health.network` now has `liveRelays` / `waitingNodes` / `queuedJobs` gauges, but no queued-job age, relay depth or chunk-latency alert yet |
 
 1. **No queueing when every node is busy — straight to OpenRouter.** `decideRoute`
    (`apps/gateway/src/routing.ts`) only returns `target: 'node'` when an *idle* (`busy = 0`) node
@@ -141,6 +161,64 @@ scratch directory and are summarised here rather than committed.
     gauge for queued-job age, relay depth (`JobRelay.queue.length`, i.e. a slow client) or chunk
     POST latency; adding them to `/health/alerts` would make bottlenecks 1 and 3 visible in
     production before users notice.
+
+## Results, 2026-10-04 (after fixes)
+
+Same host class as above (2 vCPU, 8 GB, Linux, Node 22; gateway, fake nodes and clients share the two
+cores), same script and defaults (300 tokens/job, 0 ms chunk delay), `VERIFICATION_ENABLED=false` (see
+the note at the top), gateway defaults otherwise (`queueWaitMs` 6000, `maxQueueDepthPerNode` 3,
+`maxParallel` 1 because the fake node does not advertise more). Every run: **0 failed requests, 0 node-side
+errors, no 5xx, no 429.** "Before" is the 2026-10-03 table.
+
+### Route split (node-served / upstream)
+
+| scenario | before | after | fallback reasons after |
+| --- | --- | --- | --- |
+| N=20, M=200, concurrency 200 | 20 / 180 (10 %) | **60 / 140 (30 %)** | `queue_full` 120, `queue_timeout` 20 |
+| N=20, M=200, concurrency 40 | 20 / 180 (10 %) | **200 / 0 (100 %)** | none |
+| N=20, M=200, concurrency 20 | 200 / 0 (100 %) | 200 / 0 (100 %) | none |
+
+Jobs per node: exactly 3 each (c=200), exactly 10 each (c=40 and c=20): the queue is drained
+oldest-first by whichever node frees up, so fairness is preserved.
+
+### Latencies
+
+| metric | before (c=200) | after (c=200) | before (c=40) | after (c=40) | before (c=20) | after (c=20) |
+| --- | --- | --- | --- | --- | --- | --- |
+| wall time | 3.77 s | 7.10 s | 4.33 s | 20.1 s | 20.9 s | 20.6 s |
+| throughput | 53.1 req/s · 2,594 tok/s | 28.2 req/s · 2,951 tok/s | 46.1 req/s · 2,257 tok/s | 9.9 req/s · 2,982 tok/s | 9.6 req/s · 2,872 tok/s | 9.7 req/s · 2,911 tok/s |
+| first token p50 / p95 (all) | 439 / 686 ms | 587 / 6,173 ms | 51 / 176 ms | 1,870 / 3,654 ms | 19 / 93 ms | **18 / 63 ms** |
+| first token p50 / p95 (node route) | 234 / 794 ms | 3,581 / 5,409 ms | – | 1,870 / 3,654 ms | 19 / 93 ms | 18 / 63 ms |
+| first token p50 (upstream) | 481 ms | 499 ms (`queue_full`: ~230 ms; `queue_timeout`: ~6.2 s) | – | – | – | – |
+| total p50 / p95 (node route) | 3,737 / 3,768 ms | 5,366 / 7,078 ms | 4,316 ms (p50) | 3,646 / 5,596 ms | 1,897 / 3,618 ms | 1,930 / 3,293 ms |
+| total p50 (upstream) | 903 ms | 941 ms | 469 ms | – | – | – |
+| node → gateway `POST /chunk` p50 / p95 / p99 | 7.9 / 27.5 / 38.6 ms | 5 / 18 / 26 ms | 11.4 / 33.6 ms | 5 / 16 / 25 ms | 4.8 / 17.1 / 26.4 ms | 5 / 16 / 24 ms |
+
+### Reading the numbers
+
+- **The burst now reaches the network.** At concurrency 40 every request is node-served (was 10 %); at
+  concurrency 200, 3× as many. The remaining 140 at c=200 are the bounded-wait policy working as
+  intended: 60 queue slots (20 nodes × `maxQueueDepthPerNode` 3) fill in the first tick, the other 120
+  go upstream at once (`queue_full`, first token ~230 ms), and 20 of the 60 queued could not be served
+  within `queueWaitMs` (a 300-token fake job takes ~3.5 s of relay time, so a node clears at most one
+  queued job inside 6 s) and fell through as `queue_timeout`. Raising `queueWaitMs`, `maxQueueDepthPerNode`
+  or (with real agents) `maxParallel` trades first-token latency for network share; the knobs are in
+  `config/tokenomics.json → routing`.
+- **The cost is first-token latency for queued requests**, by construction: at c=40 the p50 first token
+  is 1.9 s because half the clients wait for a node to finish the previous 300-token job. Before, those
+  clients got an upstream answer in 50 ms at list price. Which is right is a product choice; the default
+  (wait up to 6 s, then upstream) keeps the worst case at `queueWaitMs` + upstream latency.
+- **The pure node path is unchanged or slightly better** (c=20: first token 18/63/148 ms vs 19/93/119,
+  chunk POST p50 5 ms vs 4.8 with p95 16 vs 17): bottlenecks 3–5 removed ~60,000 `SELECT * FROM jobs`
+  reads, 21 reputation queries per request and 1 heartbeat prune per second from the hot path without
+  changing wire behaviour. Throughput at c=200 rose from 2,594 to 2,951 tokens/s delivered.
+- **`maxParallel` is not exercised by this script** (the fake node advertises the default 1). With
+  `OLLAMA_NUM_PARALLEL=2` real agents would double the slots and halve the queue wait above.
+
+### Still open after this pass
+
+6 (single-process relay), 7 (SQLite on the event loop) and 10 (relay observability beyond the new
+`/health.network` gauges) are unchanged; see the table above.
 
 ## Not measured here
 

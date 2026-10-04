@@ -7,13 +7,13 @@ import { listPriceForModel, type ModelPolicy, type ModelPrices } from '@mesh/con
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
 import { microsToUsd, usdToMicros } from './money.js';
-import type { Usage } from './upstream.js';
+import { tokenCount, type Usage } from './upstream.js';
 
 /** Micro-USD the upstream would have charged for `usage` at the model's list price (plus markup). */
 export function listCostMicros(usage: Usage | null | undefined, model: string, prices: ModelPrices, policy: ModelPolicy, markupBps = 0): number {
   const p = listPriceForModel(prices, policy, model);
-  const prompt = usage?.prompt_tokens ?? 0;
-  const completion = usage?.completion_tokens ?? 0;
+  const prompt = tokenCount(usage?.prompt_tokens);
+  const completion = tokenCount(usage?.completion_tokens);
   let micros = usdToMicros((prompt * p.promptUsdPerM + completion * p.completionUsdPerM) / 1_000_000);
   if (markupBps) micros += Math.floor((micros * markupBps) / 10_000);
   return micros;

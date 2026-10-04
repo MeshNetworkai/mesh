@@ -224,16 +224,30 @@ export function createUpstream(env: {
 
 // ---------------- cost ----------------
 
-/** Cost in micro-USD: upstream-reported cost if present, else the fallback price table. */
+/** A token count as the upstream reported it, or 0 when it is not a finite non-negative number (never NaN into the ledger). */
+export function tokenCount(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
+/** Usage with every numeric field coerced through `tokenCount` (cost kept only when finite and >= 0). */
+export function normalizeUsage(usage: Usage | null | undefined): Usage | null {
+  if (!usage || typeof usage !== 'object') return null;
+  const prompt = tokenCount(usage.prompt_tokens);
+  const completion = tokenCount(usage.completion_tokens);
+  const out: Usage = { prompt_tokens: prompt, completion_tokens: completion, total_tokens: usage.total_tokens !== undefined ? tokenCount(usage.total_tokens) || prompt + completion : prompt + completion };
+  if (typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) out.cost = usage.cost;
+  return out;
+}
+
+/** Cost in micro-USD: upstream-reported cost if present, else the fallback price table. Malformed usage never throws: it is treated as 0 tokens. */
 export function costMicros(usage: Usage | null | undefined, model: string, prices: ModelPrices, markupBps = 0): number {
+  const u = normalizeUsage(usage);
   let micros: number;
-  if (usage && typeof usage.cost === 'number' && Number.isFinite(usage.cost)) {
-    micros = usdToMicros(usage.cost);
+  if (u && u.cost !== undefined) {
+    micros = usdToMicros(u.cost);
   } else {
     const p = priceForModel(prices, model);
-    const prompt = usage?.prompt_tokens ?? 0;
-    const completion = usage?.completion_tokens ?? 0;
-    micros = usdToMicros((prompt * p.promptUsdPerM + completion * p.completionUsdPerM) / 1_000_000);
+    micros = usdToMicros(((u?.prompt_tokens ?? 0) * p.promptUsdPerM + (u?.completion_tokens ?? 0) * p.completionUsdPerM) / 1_000_000);
   }
   if (markupBps) micros += Math.floor((micros * markupBps) / 10_000);
   return micros;
@@ -272,8 +286,8 @@ export class SseUsageScanner {
         model?: string;
         error?: { message?: string; code?: string | number } | string;
       };
-      if (obj.model) this.model = obj.model;
-      if (obj.usage && typeof obj.usage === 'object') this.usage = obj.usage;
+      if (typeof obj.model === 'string' && obj.model) this.model = obj.model;
+      if (obj.usage && typeof obj.usage === 'object') this.usage = normalizeUsage(obj.usage);
       if (obj.error) {
         this.error =
           typeof obj.error === 'string'

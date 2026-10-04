@@ -113,7 +113,7 @@ describe('node link codes', () => {
     expect(ok.json().wallet).toBe('mockwallet_bob');
   });
 
-  it('requires a session, a valid registration nonce, and is rate limited per IP and per wallet', async () => {
+  it('requires a session, a valid registration nonce, and is rate limited per wallet (strict) and per IP (backstop)', async () => {
     const app = await signedServer({ NODE_REGISTER_RATE_LIMIT: 4 });
     expect((await app.inject({ method: 'POST', url: '/nodes/link', payload: { nonce: 'x', signature: 'y' } })).statusCode).toBe(401);
     const jwt = await login(app, 'mockwallet_bob');
@@ -122,10 +122,27 @@ describe('node link codes', () => {
     const wrongDomain = await app.inject({ method: 'POST', url: '/nodes/link', headers: { authorization: `Bearer ${jwt}` }, payload: { nonce: authNonce.nonce, signature: MockAdapter.sign('mockwallet_bob', authNonce.message) } });
     expect(wrongDomain.statusCode).toBe(400);
     expect(wrongDomain.json().error).toBe('nonce_missing');
-    // /nodes/link shares the per-IP registration budget with /challenge (1 link call so far → 2 challenges + 1 link = 3 of 4)
+    // strict budget (4/h) keyed on the signed-in wallet for /nodes/link: 1 link call so far, 3 more then 429 …
     expect((await link(app, 'mockwallet_bob')).statusCode).toBe(200);
-    const limited = await app.inject({ method: 'POST', url: '/nodes/register/challenge', payload: { wallet: 'mockwallet_bob' } });
+    expect((await link(app, 'mockwallet_bob')).statusCode).toBe(200);
+    expect((await link(app, 'mockwallet_bob')).statusCode).toBe(200);
+    const limited = await link(app, 'mockwallet_bob');
     expect(limited.statusCode).toBe(429);
+    expect(limited.json().message).toContain('for this wallet');
+    // … while /challenge (unauthenticated, wallet unproven) keeps its own strict per-IP budget: 4 challenges were made above.
+    const challenge = await app.inject({ method: 'POST', url: '/nodes/register/challenge', payload: { wallet: 'mockwallet_carol' } });
+    expect(challenge.statusCode).toBe(429);
+    expect(challenge.json().message).toContain('from this address');
+  });
+
+  it('per-IP backstop bounds every registration call regardless of how many wallets are used', async () => {
+    const app = await signedServer({ NODE_REGISTER_RATE_LIMIT: 1000, NODE_REGISTER_IP_RATE_LIMIT: 3 });
+    expect((await link(app, 'mockwallet_bob')).statusCode).toBe(200); // challenge + link = 2
+    expect((await app.inject({ method: 'POST', url: '/nodes/register/challenge', payload: { wallet: 'mockwallet_carol' } })).statusCode).toBe(200); // 3
+    const r = await app.inject({ method: 'POST', url: '/nodes/register/challenge', payload: { wallet: 'mockwallet_dave' } });
+    expect(r.statusCode).toBe(429);
+    expect(r.headers['x-ratelimit-limit']).toBe('3');
+    expect(r.json().message).toContain('from this address');
   });
 
   it('caps live codes per wallet; an unsigned register still fails on a signed gateway', async () => {

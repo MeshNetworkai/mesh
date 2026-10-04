@@ -379,9 +379,12 @@ export class Verifier {
   private applyMismatch(nodeId: string, jobId: string, reasons: string[]): void {
     const cfg = this.config;
     withholdNodeReward(this.deps.db, jobId, 'verification_mismatch');
+    // The mismatch changes the node's reputation and possibly its routability: drop both caches.
+    this.deps.broker.invalidateReputation(nodeId);
     const rep = nodeReputation(this.deps.db, nodeId, reputationConfig(this.deps.config));
     if (rep.mismatches >= cfg.quarantineAfterMismatches) {
       quarantineNode(this.deps.db, nodeId, `${rep.mismatches} verification mismatches (last: job ${jobId}: ${reasons.slice(0, 3).join(', ')})`);
+      this.deps.broker.invalidateNodes();
       this.log.warn({ nodeId, mismatches: rep.mismatches, jobId }, 'node quarantined after repeated verification mismatches');
     }
   }

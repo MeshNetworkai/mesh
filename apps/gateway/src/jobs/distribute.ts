@@ -111,12 +111,34 @@ export function getEpoch(db: Db, epochStart: number): EpochRow | null {
 }
 
 /**
- * Run one distribution epoch. Idempotent per epoch_start: a second call for the
- * same window returns the stored result without touching the adapter or ledger.
+ * One epoch run at a time per database: `runEpoch` awaits the adapter between the idempotency check
+ * and the ledger write, so two concurrent calls (cron tick + POST /admin/run-epoch) could both sweep
+ * fees and the loser's sweep would never be booked. Calls are serialised here; the second one then
+ * sees the stored epoch and returns `skipped`.
  */
+const epochLocks = new WeakMap<Db, Promise<unknown>>();
+
 export async function runEpoch(
   deps: { db: Db; adapter: ChainAdapter; config: TokenomicsConfig },
   epochStart: number = previousEpochStart(deps.config),
+): Promise<EpochResult> {
+  const prev = epochLocks.get(deps.db) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => runEpochUnlocked(deps, epochStart));
+  epochLocks.set(deps.db, run);
+  try {
+    return await run;
+  } finally {
+    if (epochLocks.get(deps.db) === run) epochLocks.delete(deps.db);
+  }
+}
+
+/**
+ * Run one distribution epoch. Idempotent per epoch_start: a second call for the
+ * same window returns the stored result without touching the adapter or ledger.
+ */
+async function runEpochUnlocked(
+  deps: { db: Db; adapter: ChainAdapter; config: TokenomicsConfig },
+  epochStart: number,
 ): Promise<EpochResult> {
   const { db, adapter, config } = deps;
   const epochEnd = epochStart + config.epochSeconds;

@@ -194,6 +194,8 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
       epochCron: ctx.env.EPOCH_CRON,
       lastEpoch: last ? { epochStart: last.epoch_start, status: last.status, ageSec: now - last.created_at } : null,
       geoBlock: ctx.env.GEO_BLOCK_ENFORCE ? ctx.config.geoBlock : 'off',
+      /** Relay gauges for this process: jobs with a client attached, parked node long-polls, queued jobs. */
+      network: { liveRelays: ctx.broker.liveRelays, waitingNodes: ctx.broker.waiting, queuedJobs: ctx.broker.queuedJobs() },
       time: now,
     };
     return reply.code(ok ? 200 : 503).send(body);
