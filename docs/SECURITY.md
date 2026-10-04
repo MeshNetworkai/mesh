@@ -342,6 +342,43 @@ Playwright flows in `apps/web/e2e/app.spec.ts` (reload without the hint, `HttpOn
 - Session TTL is still 7 days with refresh; shortening to 24 h is a one-constant product decision.
 - Web `keystore.ts` keeps user-created API keys in `localStorage` by the user's choice.
 
+## Session 8: pre-beta hardening pass (2026-10-04)
+
+Scope: a second read of every file under `apps/gateway/src` for crashes on malformed input, races, money
+bugs, auth holes, SSE/relay resource issues, privacy leaks and SQLite pitfalls, plus the load-test
+bottlenecks in `docs/LOADTEST.md`. Tests: `apps/gateway/test/hardening.test.ts` (20), existing suites
+updated where semantics changed (272 gateway tests in all).
+
+| # | Area | Severity | Status |
+| --- | --- | --- | --- |
+| H1 | Node-reported token counts were unbounded: a node could bill the client (and earn) any number of tokens | **High** | **Fixed** (`DoneBody` bounds, broker clamps completion ≤ `max_tokens`, prompt ≤ 4 × payload bytes + 1024; the clamped usage is what is billed/rewarded) |
+| H2 | `done` with no delivered chunk was a paid reply | **High** | **Fixed** (`409 empty_output`, job failed with node fault, retry/fallback, nothing charged) |
+| H3 | Heartbeat `busy: false` reset a node's busy flag mid-job → double booking; re-registration did the same | Medium | **Fixed** (busy is the broker's running count; heartbeat `busy` only pins/unpins; register keeps the count) |
+| H4 | Node `/fail` error text reached `x-mesh-fallback` unsanitised: a CR/LF made the fallback response throw (500 instead of the upstream answer) | Medium | **Fixed** (`FailBody` strips control chars; `headerSafe` on the header) |
+| H5 | Upstream SSE: a client disconnect mid-stream left the handler awaiting a `drain` that never fires (`raw.write` on a destroyed socket) → leaked handler, request never recorded | Medium | **Fixed** (`sseWriter` waits for `drain` or `close`; node path got the same writer and so backpressure) |
+| H6 | Concurrent `runEpoch` (cron + admin) both swept fees; the loser's sweep was never booked | Medium | **Fixed** (per-DB promise lock; second call returns `skipped`) |
+| H7 | `JobRelay` gap buffer unbounded: a node could park megabytes per job with sparse `seq`s | Medium | **Fixed** (`RELAY_MAX_PENDING` 2048, `RELAY_MAX_BUFFERED_BYTES` 4 MB, `seq` ≤ 1e6, chunks refused after done) |
+| H8 | Registration limiter keyed on IP only (10/h) blocked legitimate multi-Mac operators; no per-wallet bound | Low | **Fixed** (strict budget per proven wallet, per IP otherwise; `NODE_REGISTER_IP_RATE_LIMIT` backstop) |
+| H9 | Malformed upstream `usage` / `model` (non-numeric tokens, object model) could throw after the upstream had answered | Low | **Fixed** (`normalizeUsage`, `tokenCount`; model coerced) |
+| H10 | Link-code consumption, node insert and first heartbeat were not atomic | Low | **Fixed** (one transaction) |
+| H11 | Surplus long-polls from one node lingered until their timer | Low | **Fixed** (released with 204 at once; up to `maxParallel` parked) |
+| H12 | `nodeStatsView` reputation ignored `verification.mismatchPenalty` | Low | **Fixed** (`reputationConfig`) |
+
+Checked again and found sound: CSRF coverage of every cookie-authenticated mutation (new routes included),
+admin routes all behind `requireAdmin` + allowlist, `jobView` still exactly `JOB_VIEW_FIELDS`, claim
+atomicity under the new concurrency model (`tryClaim` unchanged), guest quota consume/refund, ledger
+writes under transactions, no requester identity in node-facing payloads or alerts.
+
+Still open (noted, not fixed):
+
+- A key revoked or a wallet exhausted mid-stream keeps streaming until the reply ends; the request is
+  then charged. Bounded by `max_tokens`; a per-chunk re-check is a product call.
+- Spend limit / balance are checked before the request, so N concurrent requests on one key can
+  overshoot by N × one request's cost (bounded by H1).
+- An upstream stream the client aborts before the final usage chunk is recorded with 0 tokens (the
+  upstream still bills the operator). Estimating from bytes relayed is possible but was not done.
+- Node tokens still use plain sha256 (see #18).
+
 ## Privacy (session 7, 2026-10-03)
 
 Scope: requests served by third-party Macs. Full write-up in `docs/PRIVACY.md`; this section records

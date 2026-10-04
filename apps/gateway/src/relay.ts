@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { ServerResponse } from 'node:http';
 import type { AppContext } from './context.js';
 import { nowSec, recordError } from './db.js';
 import { addNodeReward, nodeRewardMicros } from './ledger.js';
@@ -9,7 +10,7 @@ import { decideRoute, eligibleNodes, type PrivacyChoice, type RouteDecision } fr
 import { listCostMicros, savedMicros } from './savings.js';
 import { applyMultiplier } from './staking.js';
 import { getNode } from './routes/nodes.js';
-import { SseUsageScanner, UpstreamError, describeUpstreamError, type Usage } from './upstream.js';
+import { SseUsageScanner, UpstreamError, describeUpstreamError, normalizeUsage, type Usage } from './upstream.js';
 
 /**
  * Chat relay shared by `/v1/chat/completions` (API-key accounts) and `/v1/guest/chat` (treasury-paid
@@ -64,6 +65,36 @@ export interface RelayOptions {
 
 type NetworkOutcome = { kind: 'served' } | { kind: 'errored' } | { kind: 'fallback'; reason: string; jobId: string };
 
+/** Why the request ended up where it did (final-chunk `mesh.routeReason`): idle node, queued behind busy nodes, or the upstream and why. */
+export type RouteReason = 'node' | 'queued_then_node' | 'queue_timeout' | 'queue_full' | RouteDecision['reason'] | 'node_failed';
+
+/** A header value that can never carry a CR/LF or other control character (node-supplied error text ends up in `x-mesh-fallback`). */
+export function headerSafe(v: string): string {
+  // eslint-disable-next-line no-control-regex
+  return v.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 200);
+}
+
+/**
+ * SSE writer with backpressure: when the socket buffer is full, wait for `drain` — or for the
+ * connection to close, so a client that goes away mid-wait can never park the handler forever
+ * (`raw.write` on a destroyed socket returns false and no `drain` ever follows).
+ */
+export function sseWriter(raw: ServerResponse): (text: string) => Promise<void> {
+  return async (text: string) => {
+    if (!text || raw.writableEnded || raw.destroyed) return;
+    if (raw.write(text) || raw.destroyed) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        raw.off('drain', done);
+        raw.off('close', done);
+        resolve();
+      };
+      raw.once('drain', done);
+      raw.once('close', done);
+    });
+  };
+}
+
 /** Map a failed upstream Response to our own error; never charges. */
 export async function upstreamFailure(ctx: AppContext, req: FastifyRequest, reply: FastifyReply, res: Response) {
   const detail = await describeUpstreamError(res);
@@ -103,6 +134,7 @@ async function serveFromNetwork(
   started: number,
 ): Promise<NetworkOutcome> {
   const { tag, trustedOnly } = route;
+  const queued = route.reason === 'queued';
   const requesterWallet = route.requesterWallet ?? account.wallet;
   const routing = ctx.config.routing;
   /** `servedBy` for the node that took the job: "your node" when a trusted request landed on the requester's own Mac. */
@@ -146,9 +178,7 @@ async function serveFromNetwork(
     });
     raw.flushHeaders?.();
   };
-  const write = (s: string) => {
-    if (!raw.writableEnded) raw.write(s);
-  };
+  const write = sseWriter(raw);
 
   let exclude: string | null = null;
   let parent: string | null = null;
@@ -168,12 +198,13 @@ async function serveFromNetwork(
       attempt,
     });
     liveRelay = relay;
-    req.log.info({ jobId: job.job_id, tag, attempt, exclude }, 'network job queued');
+    req.log.info({ jobId: job.job_id, tag, attempt, exclude, queued }, 'network job queued');
     const createdMs = Date.now();
     /** Non-stream reply body (what the client gets) and, for every mode, the full text kept in memory for a possible spot check. */
     const text: string[] = [];
     const full: string[] = [];
     let nodeId: string | null = null;
+    let claimedMs: number | null = null;
     let servedBy: RouteDecision['servedBy'] = route.servedBy;
     let sent = 0;
     let usage: JobUsage | null = null;
@@ -181,7 +212,14 @@ async function serveFromNetwork(
 
     for (;;) {
       const now = Date.now();
-      const budget = sent === 0 ? routing.firstTokenTimeoutMs - (now - createdMs) : routing.stallTimeoutMs;
+      // Budgets: an idle-routed job gets firstTokenTimeoutMs from creation for claim + first token (as
+      // before). A queued job (every node busy) first waits up to queueWaitMs for a claim, then gets
+      // the full firstTokenTimeoutMs from the claim. After the first chunk the stall timeout applies.
+      let budget: number;
+      if (sent > 0) budget = routing.stallTimeoutMs;
+      else if (queued && claimedMs === null) budget = routing.queueWaitMs - (now - createdMs);
+      else if (queued) budget = routing.firstTokenTimeoutMs - (now - claimedMs!);
+      else budget = routing.firstTokenTimeoutMs - (now - createdMs);
       const ev = await relay.next(Math.max(0, Math.min(budget, job.deadline_ms - now)));
       if (clientGone) {
         failure = { error: 'client_disconnected', nodeFault: false };
@@ -189,11 +227,16 @@ async function serveFromNetwork(
       }
       if (ev.type === 'claimed') {
         nodeId = ev.nodeId;
+        claimedMs = Date.now();
         servedBy = servedByFor(nodeId);
       } else if (ev.type === 'chunk') {
         if (stream) {
           writeHeaders(nodeId ?? 'unknown', servedBy);
-          write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: sent === 0 ? { role: 'assistant', content: ev.delta } : { content: ev.delta }, finish_reason: null }] }));
+          await write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: sent === 0 ? { role: 'assistant', content: ev.delta } : { content: ev.delta }, finish_reason: null }] }));
+          if (clientGone) {
+            failure = { error: 'client_disconnected', nodeFault: false };
+            break;
+          }
         } else text.push(ev.delta);
         full.push(ev.delta);
         sent++;
@@ -203,7 +246,7 @@ async function serveFromNetwork(
         failure = { error: `node_error: ${ev.error}`, nodeFault: true };
       } else {
         const expired = Date.now() >= job.deadline_ms;
-        const error = expired ? 'deadline_exceeded' : sent === 0 ? (nodeId ? 'first_token_timeout' : 'unclaimed') : 'stall_timeout';
+        const error = expired ? 'deadline_exceeded' : sent === 0 ? (nodeId ? 'first_token_timeout' : queued ? 'queue_timeout' : 'unclaimed') : 'stall_timeout';
         failure = { error, nodeFault: nodeId !== null };
       }
       if (usage || failure) break;
@@ -232,21 +275,24 @@ async function serveFromNetwork(
       // Spot-check verification (verification.ts): decided now, run in the background after the reply is out.
       const verifying = node && ctx.verifier ? ctx.verifier.maybeSchedule({ job: ctx.broker.get(job.job_id) ?? job, nodeId, nodeWallet: node.wallet, text: full.join(''), usage }) : false;
       const usageOut = { ...u, cost: microsToUsd(cost) };
+      const routeReason: RouteReason = queued ? 'queued_then_node' : 'node';
       const mesh = {
         route: 'node',
+        routeReason,
         nodeId,
         chip: node?.chip ?? null,
         jobId: job.job_id,
         attempt,
         privacy: route.privacy,
         servedBy,
+        ...(queued && claimedMs !== null ? { queuedMs: claimedMs - createdMs } : {}),
         ...(pricing.showSavings ? { listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved) } : {}),
       };
-      req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy, verifying }, 'chat completion (node)');
+      req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy, routeReason, verifying }, 'chat completion (node)');
       if (stream) {
         writeHeaders(nodeId, servedBy);
-        write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }], usage: usageOut, mesh }));
-        write('data: [DONE]\n\n');
+        await write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }], usage: usageOut, mesh }));
+        await write('data: [DONE]\n\n');
         if (!raw.writableEnded) raw.end();
         return { kind: 'served' };
       }
@@ -280,8 +326,8 @@ async function serveFromNetwork(
       ctx.broker.abandon(job.job_id, 'failed', f.error, f.nodeFault);
       recordError(ctx.db, { route: req.url, status: 502, code: 'node_stream_failed', message: `${f.error} (job ${job.job_id}, node ${nodeId})` });
       req.log.warn({ jobId: job.job_id, nodeId, error: f.error, sent }, 'node failed after partial output; not charged');
-      write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'error' }], error: { message: `Mesh node failed mid-stream (${f.error}). You were not charged.`, type: 'upstream_error', code: 'node_stream_failed' }, mesh: { route: 'node', nodeId, jobId: job.job_id, privacy: route.privacy, servedBy } }));
-      write('data: [DONE]\n\n');
+      await write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'error' }], error: { message: `Mesh node failed mid-stream (${f.error}). You were not charged.`, type: 'upstream_error', code: 'node_stream_failed' }, mesh: { route: 'node', routeReason: 'node_failed', nodeId, jobId: job.job_id, privacy: route.privacy, servedBy } }));
+      await write('data: [DONE]\n\n');
       if (!raw.writableEnded) raw.end();
       return { kind: 'errored' };
     }
@@ -316,19 +362,21 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   // Served-by for the upstream leg; a node failure keeps the tier's ZDR choice.
   const upstreamServedBy = zdr ? 'upstream (ZDR)' : 'upstream';
   const upstreamPrivacy = zdr ? 'upstream_zdr' : 'network';
+  let routeReason: RouteReason = route.reason;
   if (route.target === 'node' && route.tag) {
     const outcome = await serveFromNetwork(ctx, req, reply, account, body, requestedModel, route as RouteDecision & { tag: string }, stream, started);
     if (outcome.kind === 'served') return true;
     if (outcome.kind === 'errored') return false;
-    reply.header('x-mesh-fallback', outcome.reason);
-    req.log.warn({ model: requestedModel, reason: outcome.reason, jobId: outcome.jobId, zdr }, 'network job failed before any output; falling back to upstream');
-  } else if (route.reason === 'no_trusted_node') {
+    reply.header('x-mesh-fallback', headerSafe(outcome.reason));
+    routeReason = outcome.reason === 'queue_timeout' ? 'queue_timeout' : 'node_failed';
+    req.log.warn({ model: requestedModel, reason: outcome.reason, jobId: outcome.jobId, zdr, queued: route.reason === 'queued' }, 'network job failed before any output; falling back to upstream');
+  } else if (route.reason === 'no_trusted_node' || route.reason === 'queue_full') {
     reply.header('x-mesh-fallback', route.reason);
   }
   reply.header('x-mesh-route', ctx.upstream.name);
   reply.header('x-mesh-privacy', upstreamPrivacy);
   reply.header('x-mesh-served-by', upstreamServedBy);
-  const meshUpstream = { route: ctx.upstream.name, privacy: upstreamPrivacy, servedBy: upstreamServedBy };
+  const meshUpstream = { route: ctx.upstream.name, routeReason, privacy: upstreamPrivacy, servedBy: upstreamServedBy };
 
   let upstreamRes: Response;
   try {
@@ -357,8 +405,8 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       await openaiError(reply, 502, `Upstream (${ctx.upstream.name}) returned an error. You were not charged.`, 'upstream_error', 'upstream_error');
       return false;
     }
-    const model = json.model ?? requestedModel;
-    const cost = account.record({ model, usage: json.usage ?? null, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: false });
+    const model = typeof json.model === 'string' && json.model ? json.model : requestedModel;
+    const cost = account.record({ model, usage: normalizeUsage(json.usage), upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: false });
     reply.header('x-mesh-cost-usd', microsToUsd(cost).toString());
     if (account.balanceMicros) reply.header('x-mesh-balance-usd', microsToUsd(account.balanceMicros()).toString());
     await reply.send({ ...json, mesh: meshUpstream });
@@ -399,10 +447,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
     `data: ${JSON.stringify({ id: `chatcmpl-mesh-${started.toString(36)}`, object: 'chat.completion.chunk', created: Math.floor(started / 1000), model: scanner.model ?? requestedModel, choices: [], ...(scanner.usage ? { usage: scanner.usage } : {}), mesh: meshUpstream })}\n\n`;
   let pending = '';
   let doneSeen = false;
-  const writeOut = async (text: string) => {
-    if (!text || raw.writableEnded) return;
-    if (!raw.write(text)) await new Promise<void>((r) => raw.once('drain', () => r()));
-  };
+  const writeOut = sseWriter(raw);
   const relayText = async (text: string, flush = false) => {
     pending += text;
     let out = '';

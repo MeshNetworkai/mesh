@@ -17,7 +17,10 @@ export interface NodeRow {
   models: string;
   ram_gb: number | null;
   chip: string | null;
+  /** Running jobs on the node (count); a heartbeat `busy: true` pins it at `max_parallel` until the next heartbeat. */
   busy: number;
+  /** Concurrent jobs the node advertised it can run (register/heartbeat `maxParallel`, capped by routing.maxParallelPerNode). */
+  max_parallel: number;
   created_at: number;
   last_seen: number;
   token_hash: string | null;
@@ -38,6 +41,30 @@ export function onlineNodes(db: Db, now = nowSec()): NodeRow[] {
   return db
     .prepare(`SELECT * FROM nodes WHERE last_seen >= ? ORDER BY last_seen DESC`)
     .all(now - NODE_ONLINE_SEC) as NodeRow[];
+}
+
+/**
+ * In-memory view of the fleet the router may use instead of the DB (network.ts `JobBroker` implements
+ * it): a short-lived snapshot of online nodes, live running-job counts and a reputation cache. Absent →
+ * every call queries SQLite (the legacy behaviour, still used by unit tests that build bare deps).
+ */
+export interface NodeSource {
+  onlineNodes(now: number): NodeRow[];
+  /** Jobs running on the node right now (authoritative within this process). */
+  runningOn(nodeId: string): number;
+  /** The node's last heartbeat said `busy: true` (paused / full by its own account): no capacity until the next one. */
+  isPinnedBusy(nodeId: string): boolean;
+  reputation(nodeId: string, cfg: ReputationConfig): Reputation;
+}
+
+/**
+ * Free job slots on a node: advertised parallelism minus what is running. With a live count (the broker's,
+ * authoritative for this process) the DB `busy` column is ignored — it may come from a snapshot taken up
+ * to NODE_SNAPSHOT_MS ago; without one the column is all there is.
+ */
+export function nodeCapacity(node: Pick<NodeRow, 'busy' | 'max_parallel'>, running?: number): number {
+  const max = Math.max(1, node.max_parallel ?? 1);
+  return Math.max(0, max - (running ?? node.busy ?? 0));
 }
 
 export function nodeModels(row: Pick<NodeRow, 'models'>): string[] {
@@ -197,7 +224,12 @@ export interface RouteDecision {
   tag: string | null;
   /** Online, idle, reputable nodes advertising `tag`, best first. */
   candidates: string[];
-  reason: 'network_disabled' | 'not_network_model' | 'no_online_node' | 'no_trusted_node' | 'upstream_requested' | 'node';
+  /**
+   * `node`: an idle node is available. `queued`: every eligible node is at capacity, the job is queued
+   * behind them for up to routing.queueWaitMs. `queue_full`: nodes exist but the per-node queue depth
+   * cap is reached, so the request goes upstream at once.
+   */
+  reason: 'network_disabled' | 'not_network_model' | 'no_online_node' | 'no_trusted_node' | 'upstream_requested' | 'node' | 'queued' | 'queue_full';
   /** Tier the request is actually served under (`trusted` → `network` only via the default fallback). */
   privacy: PrivacyTier;
   /** What the client asked for (or the default). */
@@ -220,30 +252,61 @@ export interface RouteDeps {
   db: Db;
   config: { routing: Partial<RoutingConfig>; stakeTiers: TokenomicsConfig['stakeTiers']; privacy: PrivacyConfig; verification?: Pick<VerificationConfig, 'mismatchPenalty'> };
   stakes?: TierSource;
+  /** Fleet view with caches (the `JobBroker`); when absent the DB is queried directly. */
+  broker?: NodeSource;
+}
+
+export interface EligibleOptions {
+  exclude?: string | null;
+  now?: number;
+  trustedOnly?: boolean;
+  requesterWallet?: string | null;
+  /** Also return nodes that are online and eligible but currently at capacity (for queueing). */
+  includeBusy?: boolean;
 }
 
 /**
- * Online, idle (not busy), reputable nodes advertising `tag`, excluding `exclude`. Best first:
+ * Online, idle (free capacity), reputable nodes advertising `tag`, excluding `exclude`. Best first:
  * higher stake tier of the reward wallet, then reputation (success rate, then faster first token),
  * then most recently seen. `trustedOnly` keeps only nodes that may serve `trusted` jobs for
  * `requesterWallet` (allowlisted, gold + pledged, or owned by that wallet). Quarantined nodes
- * (verification.ts) are never candidates.
+ * (verification.ts) are never candidates. With `includeBusy` nodes at capacity are kept too (the
+ * caller decides whether to queue behind them); use `eligibleNodesDetailed` to tell them apart.
  */
-export function eligibleNodes(deps: RouteDeps, tag: string, opts: { exclude?: string | null; now?: number; trustedOnly?: boolean; requesterWallet?: string | null } = {}): NodeRow[] {
+export function eligibleNodes(deps: RouteDeps, tag: string, opts: EligibleOptions = {}): NodeRow[] {
+  return eligibleNodesDetailed(deps, tag, opts).map((x) => x.node);
+}
+
+export interface EligibleNode {
+  node: NodeRow;
+  /** Free job slots right now (0 = at capacity). */
+  capacity: number;
+}
+
+export function eligibleNodesDetailed(deps: RouteDeps, tag: string, opts: EligibleOptions = {}): EligibleNode[] {
   const routing = reputationConfig(deps.config);
-  const scored = onlineNodes(deps.db, opts.now)
-    .filter((n) => n.busy === 0 && !isQuarantined(n) && n.node_id !== opts.exclude && nodeModels(n).includes(tag))
-    .filter((n) => !opts.trustedOnly || isTrustedNode(deps, n, opts.requesterWallet))
-    .map((n) => ({ n, rep: nodeReputation(deps.db, n.node_id, routing), tier: deps.stakes?.peek(n.wallet).tierIndex ?? 0 }))
+  const now = opts.now ?? nowSec();
+  const online = deps.broker ? deps.broker.onlineNodes(now) : onlineNodes(deps.db, now);
+  const rep = (id: string) => (deps.broker ? deps.broker.reputation(id, routing) : nodeReputation(deps.db, id, routing));
+  const scored = online
+    .filter((n) => !isQuarantined(n) && n.node_id !== opts.exclude && nodeModels(n).includes(tag))
+    // A node pinned busy by its own heartbeat (paused, or full by its own account) is not worth queueing
+    // behind: nothing in this process will free it. Nodes at capacity because of jobs we are relaying are.
+    .filter((n) => !(opts.includeBusy && deps.broker?.isPinnedBusy(n.node_id)))
+    .map((n) => ({ n, capacity: deps.broker ? (deps.broker.isPinnedBusy(n.node_id) ? 0 : nodeCapacity(n, deps.broker.runningOn(n.node_id))) : nodeCapacity(n) }))
+    .filter((x) => opts.includeBusy || x.capacity > 0)
+    .filter((x) => !opts.trustedOnly || isTrustedNode(deps, x.n, opts.requesterWallet))
+    .map((x) => ({ ...x, rep: rep(x.n.node_id), tier: deps.stakes?.peek(x.n.wallet).tierIndex ?? 0 }))
     .filter((x) => x.rep.eligible);
   scored.sort(
     (a, b) =>
+      (b.capacity > 0 ? 1 : 0) - (a.capacity > 0 ? 1 : 0) ||
       b.tier - a.tier ||
       b.rep.successRate - a.rep.successRate ||
       (a.rep.avgFirstTokenMs ?? Number.MAX_SAFE_INTEGER) - (b.rep.avgFirstTokenMs ?? Number.MAX_SAFE_INTEGER) ||
       b.n.last_seen - a.n.last_seen,
   );
-  return scored.map((x) => x.n);
+  return scored.map((x) => ({ node: x.n, capacity: x.capacity }));
 }
 
 /** Upstream leg of a decision: ZDR unless the caller explicitly settled for `network`. */
@@ -289,11 +352,11 @@ export function decideRoute(
   if (!tag) return upstreamDecision('not_network_model', null, requested, requesterWallet);
   if (requested.tier === 'upstream_zdr') return upstreamDecision('upstream_requested', tag, requested, requesterWallet);
 
-  const nodeDecision = (nodes: NodeRow[], privacy: 'trusted' | 'network'): RouteDecision => ({
+  const nodeDecision = (nodes: NodeRow[], privacy: 'trusted' | 'network', reason: 'node' | 'queued' = 'node'): RouteDecision => ({
     target: 'node',
     tag,
     candidates: nodes.map((n) => n.node_id),
-    reason: 'node',
+    reason,
     privacy,
     requested,
     trustedOnly: privacy === 'trusted',
@@ -304,16 +367,48 @@ export function decideRoute(
     servedBy: privacy === 'trusted' ? 'trusted node' : 'network node',
   });
 
+  /**
+   * Pick for one tier: idle nodes win; otherwise, when nodes advertising the tag are online but at
+   * capacity and queueing is on, queue behind them unless the per-node depth cap is already reached.
+   */
+  const pick = (opts: { trustedOnly: boolean }): { kind: 'idle' | 'queued' | 'full' | 'none'; nodes: NodeRow[] } => {
+    const all = eligibleNodesDetailed(deps, tag, { now, includeBusy: true, trustedOnly: opts.trustedOnly, requesterWallet });
+    if (all.length === 0) return { kind: 'none', nodes: [] };
+    const idle = all.filter((x) => x.capacity > 0).map((x) => x.node);
+    if (idle.length > 0) return { kind: 'idle', nodes: idle };
+    const queueWaitMs = deps.config.routing?.queueWaitMs ?? 6000;
+    const depthPerNode = deps.config.routing?.maxQueueDepthPerNode ?? 3;
+    if (queueWaitMs <= 0 || depthPerNode <= 0) return { kind: 'none', nodes: [] }; // queueing off: legacy "no idle node" answer
+    const queued = queuedJobsForTag(deps, tag, { trustedOnly: opts.trustedOnly, requesterWallet });
+    if (queued >= all.length * depthPerNode) return { kind: 'full', nodes: [] };
+    return { kind: 'queued', nodes: all.map((x) => x.node) };
+  };
+
   if (requested.tier === 'trusted') {
-    const trusted = eligibleNodes(deps, tag, { now, trustedOnly: true, requesterWallet });
-    if (trusted.length > 0) return nodeDecision(trusted, 'trusted');
+    const trusted = pick({ trustedOnly: true });
+    if (trusted.kind === 'idle') return nodeDecision(trusted.nodes, 'trusted');
+    if (trusted.kind === 'queued') return nodeDecision(trusted.nodes, 'trusted', 'queued');
     if (deps.config.privacy.fallback === 'network' && requested.source === 'default') {
-      const any = eligibleNodes(deps, tag, { now });
-      if (any.length > 0) return nodeDecision(any, 'network');
+      const any = pick({ trustedOnly: false });
+      if (any.kind === 'idle') return nodeDecision(any.nodes, 'network');
+      if (any.kind === 'queued') return nodeDecision(any.nodes, 'network', 'queued');
     }
-    return upstreamDecision('no_trusted_node', tag, requested, requesterWallet);
+    return upstreamDecision(trusted.kind === 'full' ? 'queue_full' : 'no_trusted_node', tag, requested, requesterWallet);
   }
-  const nodes = eligibleNodes(deps, tag, { now });
-  if (nodes.length === 0) return upstreamDecision('no_online_node', tag, requested, requesterWallet);
-  return nodeDecision(nodes, 'network');
+  const any = pick({ trustedOnly: false });
+  if (any.kind === 'idle') return nodeDecision(any.nodes, 'network');
+  if (any.kind === 'queued') return nodeDecision(any.nodes, 'network', 'queued');
+  return upstreamDecision(any.kind === 'full' ? 'queue_full' : 'no_online_node', tag, requested, requesterWallet);
+}
+
+/**
+ * Jobs currently queued under `tag`. For a trusted pick only trusted jobs count (they are the ones
+ * competing for trusted capacity); a `network` pick counts every queued job for the tag. Uses the
+ * `jobs_queue` index, so it is one cheap lookup per decision.
+ */
+export function queuedJobsForTag(deps: Pick<RouteDeps, 'db'>, tag: string, opts: { trustedOnly?: boolean; requesterWallet?: string | null } = {}): number {
+  if (opts.trustedOnly) {
+    return (deps.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued' AND tag = ? AND privacy = 'trusted'`).get(tag) as { n: number }).n;
+  }
+  return (deps.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued' AND tag = ?`).get(tag) as { n: number }).n;
 }

@@ -9,7 +9,7 @@ import { syncPoints } from '../points.js';
 import { openaiError, relayChat, upstreamFailure, upstreamThrow, type ChatAccount, type RecordInput } from '../relay.js';
 import { resolvePrivacy } from '../routing.js';
 import { savedMicros } from '../savings.js';
-import { costMicros } from '../upstream.js';
+import { costMicros, tokenCount } from '../upstream.js';
 
 export { networkCostMicros, openaiError } from '../relay.js';
 
@@ -47,7 +47,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
               `INSERT INTO requests_log (api_key_id, wallet, model, prompt_tokens, completion_tokens, cost_usd_micros, upstream, latency_ms, stream, created_at, list_cost_usd_micros, saved_usd_micros)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
-            .run(key.id, key.wallet, model, usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0, cost, upstream, latencyMs, stream ? 1 : 0, nowSec(), listCost, saved);
+            .run(key.id, key.wallet, model, tokenCount(usage?.prompt_tokens), tokenCount(usage?.completion_tokens), cost, upstream, latencyMs, stream ? 1 : 0, nowSec(), listCost, saved);
           if (cost > 0) {
             addLedgerEntry(ctx.db, { wallet: key.wallet, deltaMicros: -cost, kind: 'usage', ref: `req:${Number(res.lastInsertRowid)}` });
             ctx.db.prepare(`UPDATE api_keys SET spent_usd_micros = spent_usd_micros + ? WHERE id = ?`).run(cost, key.id);

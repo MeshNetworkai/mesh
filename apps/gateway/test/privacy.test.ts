@@ -201,7 +201,7 @@ describe('tier selection: header > body > key default > gateway default', () => 
     // body says upstream_zdr → key default ignored, node never sees it
     const b = await chat({ model: 'llama-3.1-8b', stream: false, mesh: { privacy: 'upstream_zdr' }, messages: [{ role: 'user', content: 'hi' }] }, {}, netKey);
     expect(b.statusCode).toBe(200);
-    expect(b.json().mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(b.json().mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect(b.headers['x-mesh-privacy']).toBe('upstream_zdr');
     expect((await n.pull(0)).statusCode).toBe(204);
   });
@@ -235,7 +235,7 @@ describe('trusted tier never silently degrades to network', () => {
     expect(r.headers['x-mesh-privacy']).toBe('upstream_zdr');
     expect(r.headers['x-mesh-served-by']).toBe('upstream (ZDR)');
     const events = sse(r.body);
-    expect(events.at(-1)!.mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(events.at(-1)!.mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect(events.at(-1)!.usage).toBeTruthy(); // final chunk still carries usage
     expect((await n.pull(0)).statusCode).toBe(204);
     expect((app.ctx.db.prepare(`SELECT COUNT(*) AS n FROM jobs`).get() as { n: number }).n).toBe(0);
@@ -247,7 +247,7 @@ describe('trusted tier never silently degrades to network', () => {
     const n = await fakeNode(app, { nodeId: 'plain', wallet: 'nobody' });
     // explicit (header): never network
     const explicit = await chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'x' }] }, { 'x-mesh-privacy': 'trusted' });
-    expect(explicit.json().mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(explicit.json().mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect((await n.pull(0)).statusCode).toBe(204);
     // default: the configured fallback applies and the plain node serves it, labelled honestly
     const { res } = await serve(n, chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'y' }] }));
@@ -305,7 +305,7 @@ describe('trusted tier never silently degrades to network', () => {
     const res = await client;
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-mesh-fallback']).toMatch(/node_error/);
-    expect(res.json().mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(res.json().mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect((await plain.pull(0)).statusCode).toBe(204);
   });
 
@@ -368,7 +368,7 @@ describe('owner rule: your own Macs are trusted for your own requests', () => {
     const r = await chat({ model: 'llama-3.1-8b', stream: false, messages: [{ role: 'user', content: 'private' }] });
     expect(r.statusCode).toBe(200);
     expect(r.headers['x-mesh-fallback']).toBe('no_trusted_node');
-    expect(r.json().mesh).toEqual({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
+    expect(r.json().mesh).toMatchObject({ route: 'mock', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' });
     expect((await other.pull(0)).statusCode).toBe(204);
     expect((app.ctx.db.prepare(`SELECT COUNT(*) AS n FROM jobs`).get() as { n: number }).n).toBe(0);
   });

@@ -55,12 +55,23 @@ const EnvSchema = z.object({
   V1_RATE_LIMIT: z.coerce.number().int().positive().default(120),
   /** Requests per minute per IP on /auth/*. */
   AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
-  /** Registrations per hour per IP on /nodes/register (+ /challenge). */
+  /**
+   * Strict node-registration budget per hour: keyed on the reward wallet once the signed / link flow has
+   * proved ownership (so an operator can set up many Macs behind one NAT), on the IP for challenges and
+   * unsigned registrations. See NODE_REGISTER_IP_RATE_LIMIT for the per-address backstop.
+   */
   NODE_REGISTER_RATE_LIMIT: z.coerce.number().int().positive().default(10),
+  /** Per-IP backstop on /nodes/register, /challenge and /link per hour. Default: max(60, 6 × NODE_REGISTER_RATE_LIMIT). */
+  NODE_REGISTER_IP_RATE_LIMIT: z.coerce.number().int().positive().optional(),
   /** Requests per minute per IP on POST /waitlist (public beta waitlist). */
   WAITLIST_RATE_LIMIT: z.coerce.number().int().positive().default(5),
   /** Override config.nodes.requireSignature (dev/demo convenience). */
   NODES_REQUIRE_SIGNATURE: bool.optional(),
+  /**
+   * Override config.verification.enabled: an ops kill switch for spot-check verification (and what the
+   * relay load test needs, since its fake nodes emit repeated tokens that the garbage heuristics flag).
+   */
+  VERIFICATION_ENABLED: bool.optional(),
   /**
    * Comma-separated browser origins allowed by CORS. `*` allows any origin (dev default).
    * In production the default is no browser origin at all, so set it to the web app's origin(s).

@@ -46,7 +46,9 @@ export function createContext(opts: BuildOptions = {}): AppContext {
   const env = { ...loadEnv(), ...opts.env } as Env;
   const problems = productionProblems(env);
   if (problems.length) throw new Error(`refusing to start in production:\n - ${problems.join('\n - ')}`);
-  const config = opts.context?.config ?? loadTokenomics();
+  const loaded = opts.context?.config ?? loadTokenomics();
+  // VERIFICATION_ENABLED (env) overrides config.verification.enabled, like NODES_REQUIRE_SIGNATURE does for registration.
+  const config = env.VERIFICATION_ENABLED === undefined ? loaded : { ...loaded, verification: { ...loaded.verification, enabled: env.VERIFICATION_ENABLED } };
   const adapter = opts.context?.adapter ?? createAdapter(config, { mock: env.MESH_ADAPTER === 'mock' });
   const db = opts.context?.db ?? openDb(env.MESH_DB_PATH);
   const stakes = opts.context?.stakes ?? new StakeResolver({ adapter, config });
@@ -217,8 +219,12 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(pointsRoutes, ctx);
   await app.register(referralRoutes, ctx);
 
+  // Heartbeat prune + expired-job reap once a minute (docs/LOADTEST.md bottleneck 5), off the request path.
+  ctx.broker.startMaintenance();
+
   app.addHook('onClose', async () => {
     ctx.alerts?.stop();
+    ctx.broker.stop();
     ctx.db.close();
   });
 

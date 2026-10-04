@@ -231,7 +231,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         models: nodeModels(n),
         chip: n.chip,
         ramGb: n.ram_gb,
-        busy: n.busy === 1,
+        busy: n.busy >= Math.max(1, n.max_parallel),
+        runningJobs: n.busy,
+        maxParallel: Math.max(1, n.max_parallel),
         lastSeen: n.last_seen,
         online: n.last_seen >= now - NODE_ONLINE_SEC,
         quarantined: n.quarantined_at !== null,
@@ -254,6 +256,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!node) return reply.code(404).send({ error: 'not_found', message: `no node ${req.params.id}` });
     const was = node.quarantined_at;
     clearQuarantine(ctx.db, node.node_id);
+    ctx.broker.invalidateNodes();
     audit(req, 'quarantine-clear', { nodeId: node.node_id, wallet: node.wallet, wasQuarantinedAt: was, reason: node.quarantine_reason });
     return { nodeId: node.node_id, quarantined: false, wasQuarantinedAt: was, verification: nodeVerificationStats(ctx.db, getNode(ctx, node.node_id)!) };
   });
@@ -266,6 +269,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!node) return reply.code(404).send({ error: 'not_found', message: `no node ${req.params.id}` });
     const reason = `admin: ${parsed.data?.reason ?? 'manual'}`;
     quarantineNode(ctx.db, node.node_id, reason);
+    ctx.broker.invalidateNodes();
     audit(req, 'quarantine', { nodeId: node.node_id, wallet: node.wallet, reason });
     return { nodeId: node.node_id, quarantined: true, verification: nodeVerificationStats(ctx.db, getNode(ctx, node.node_id)!) };
   });

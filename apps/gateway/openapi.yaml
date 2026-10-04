@@ -232,7 +232,7 @@ paths:
     get:
       tags: [Public, Nodes]
       summary: Network summary
-      description: Counts and model coverage of the Macs online right now. No wallets, no tokens, no node ids.
+      description: Counts and model coverage of the Macs online right now. No wallets, no tokens, no node ids. Cached for `STATS_CACHE_MS` (10 s) like `/stats`; `x-cache-age-ms` says how old the body is.
       operationId: getNodesSummary
       responses:
         '200':
@@ -619,13 +619,25 @@ paths:
           The machine that runs the model sees the prompt in plaintext whichever tier you pick. Unknown value → `400 invalid_privacy_tier`.
         * When an idle Mesh node of the right tier advertises the model, it serves the request and you pay the flat network price
           ($0.02 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
+        * When every such node is online but at capacity, the job is queued behind them for up to `routing.queueWaitMs`
+          (6 s by default) and served by the first node that frees up (`mesh.routeReason: queued_then_node`). If none does,
+          the request goes upstream with `x-mesh-fallback: queue_timeout`; when the queue is already `maxQueueDepthPerNode`
+          deep per node it goes upstream at once with `x-mesh-fallback: queue_full`.
         * Otherwise the request goes to the upstream provider at its list price and `x-mesh-route` names the upstream.
           If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
         * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
           (`your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
         * Non-streamed replies set `x-mesh-cost-usd` and `x-mesh-balance-usd`. Streamed replies carry `usage.cost`
-          (USD) in the final chunk, plus `mesh: { route, nodeId, privacy, servedBy, listCostUsd, savedUsd }` when a node served it.
-        * Failed requests are never charged. Rate limit: 120 requests per minute per key.
+          (USD) in the final chunk, plus `mesh: { route, routeReason, nodeId, privacy, servedBy, listCostUsd, savedUsd }` when a node served it
+          (`routeReason` is `node`, `queued_then_node`, or for upstream replies why: `not_network_model`, `no_online_node`,
+          `no_trusted_node`, `queue_timeout`, `queue_full`, `node_failed`, `upstream_requested`, `network_disabled`).
+        * Failed requests are never charged.
+        * Rate limit (`V1_RATE_LIMIT`, default 120 requests per minute) is counted **per API key** (per client IP for
+          unauthenticated calls), with a fixed one-minute window, across `/v1/models` and `/v1/chat/completions` together.
+          `x-ratelimit-limit` / `x-ratelimit-remaining` are on every reply and `retry-after` on the 429. A single key
+          driving a burst of more than 120 requests a minute gets `429 rate_limited` after the 120th regardless of how
+          many nodes are online: spread load over several keys (one per app or worker) or ask the operator to raise
+          `V1_RATE_LIMIT`. Streams count once, when they start.
       operationId: createChatCompletion
       security: [{ apiKey: [] }]
       requestBody:
@@ -654,7 +666,7 @@ paths:
             x-mesh-cost-usd: { description: 'Charged for this request (non-stream only).', schema: { type: string } }
             x-mesh-balance-usd: { description: 'Balance after this request (non-stream only).', schema: { type: string } }
             x-mesh-saved-usd: { description: 'List price minus what you paid when a node served it (non-stream only).', schema: { type: string } }
-            x-mesh-fallback: { description: 'Reason a node attempt was abandoned before output, or `no_trusted_node`.', schema: { type: string } }
+            x-mesh-fallback: { description: 'Reason a node attempt was abandoned before output (`unclaimed`, `first_token_timeout`, `node_error: …`, `queue_timeout`), or why none was tried (`no_trusted_node`, `queue_full`).', schema: { type: string } }
             x-mesh-privacy: { description: 'Tier the reply was served under.', schema: { $ref: '#/components/schemas/PrivacyTier' } }
             x-mesh-served-by: { description: '`your node` (a trusted request served by your own Mac), `trusted node`, `network node`, `upstream (ZDR)` or `upstream`.', schema: { type: string } }
           content:
@@ -824,7 +836,7 @@ paths:
     post:
       tags: [Nodes]
       summary: Challenge to sign before registering
-      description: Step 1 of signed registration. The reward wallet signs `message`; single-use, 5 minutes. Rate limited per IP (10/hour).
+      description: Step 1 of signed registration. The reward wallet signs `message`; single-use, 5 minutes. Rate limited per IP (`NODE_REGISTER_RATE_LIMIT`, 10/hour, shared with unsigned registrations; the per-IP backstop applies too).
       operationId: nodeChallenge
       requestBody:
         required: true
@@ -947,6 +959,11 @@ paths:
       description: |
         Called by `mesh-node`. Either `{ linkCode }` (browser flow) or `{ wallet, nonce, signature }` (signed challenge).
         Returns the node token once; the gateway stores only its hash. Re-registering an existing `nodeId` requires its token.
+        `maxParallel` is how many jobs the node runs at once (Ollama `OLLAMA_NUM_PARALLEL`); capped by the gateway's
+        `routing.maxParallelPerNode` (4), default 1; the effective value is echoed back.
+        Rate limits: `NODE_REGISTER_RATE_LIMIT` (10/hour) is counted **per reward wallet** once the link code or signature
+        has proved ownership (so one operator can set up many Macs behind one NAT), per IP for unsigned registrations and
+        for `/challenge`; a per-IP backstop (`NODE_REGISTER_IP_RATE_LIMIT`, default max(60, 6 × that)) applies to every call.
       operationId: nodeRegister
       requestBody:
         required: true
@@ -965,7 +982,8 @@ paths:
                 ramGb: { type: number, example: 32 }
                 models: { type: array, items: { type: string }, example: ['llama3.1:8b'] }
                 agentVersion: { type: string, example: 0.1.0 }
-            example: { linkCode: K7Q2M9XD, chip: M2 Pro, ramGb: 32, models: ['llama3.1:8b'], agentVersion: 0.1.0 }
+                maxParallel: { type: integer, minimum: 1, maximum: 64, default: 1, description: Concurrent jobs the node can run; capped by routing.maxParallelPerNode. }
+            example: { linkCode: K7Q2M9XD, chip: M2 Pro, ramGb: 32, models: ['llama3.1:8b'], agentVersion: 0.1.0, maxParallel: 2 }
       responses:
         '200':
           description: Registered.
@@ -1086,7 +1104,11 @@ paths:
     post:
       tags: [Nodes]
       summary: Heartbeat
-      description: Every 20 seconds. A node with no heartbeat for 60 seconds is offline and stops receiving jobs.
+      description: |
+        Every 20 seconds. A node with no heartbeat for 90 seconds is offline and stops receiving jobs. `busy: true` (paused,
+        or full by the node's own account) pins the node at no capacity until the next heartbeat; `busy: false` only releases
+        that pin — it never resets the gateway's count of jobs running on the node. `maxParallel` updates the advertised
+        concurrency (capped by `routing.maxParallelPerNode`). The reply carries `queuedJobs` (gateway-wide, cached ~2 s).
       operationId: nodeHeartbeat
       security: [{ nodeToken: [] }]
       parameters: [{ $ref: '#/components/parameters/NodeId' }]
@@ -1101,13 +1123,14 @@ paths:
                 loadAvg: { type: number }
                 ramGb: { type: number }
                 chip: { type: string }
-            example: { models: ['llama3.1:8b'], busy: false, loadAvg: 1.2 }
+                maxParallel: { type: integer, minimum: 1, maximum: 64 }
+            example: { models: ['llama3.1:8b'], busy: false, loadAvg: 1.2, maxParallel: 2 }
       responses:
         '200':
           description: Acknowledged.
           content:
             application/json:
-              schema: { type: object, properties: { ok: { type: boolean } } }
+              schema: { type: object, properties: { ok: { type: boolean }, queuedJobs: { type: integer }, maxParallel: { type: integer }, heartbeatEverySec: { type: integer }, offlineAfterSec: { type: integer } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /nodes/{id}/jobs/next:
@@ -1185,10 +1208,14 @@ paths:
                 finishReason: { type: string, default: stop }
             example: { promptTokens: 212, completionTokens: 31, finishReason: stop }
       responses:
-        '200': { description: Recorded. }
+        '200':
+          description: Recorded. `usage` is what was booked — token counts are clamped to the job (completion ≤ maxTokens, prompt ≤ 4 × payload bytes + 1024).
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, usage: { type: object } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409':
-          description: '`job_not_running`.'
+          description: '`job_not_running`, or `empty_output` when no chunk was delivered before `done` (the job is failed and the node blamed; nothing is paid).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1500,8 +1527,11 @@ components:
       properties:
         online: { type: integer }
         total: { type: integer }
-        busy: { type: integer }
+        busy: { type: integer, description: Online nodes with every slot in use. }
         idle: { type: integer }
+        slots: { type: integer, description: Job slots across online nodes (sum of maxParallel). }
+        runningJobs: { type: integer }
+        queuedJobs: { type: integer }
         totalRamGb: { type: number }
         chips: { type: object, additionalProperties: { type: integer } }
         models: { type: object, additionalProperties: { type: integer } }
