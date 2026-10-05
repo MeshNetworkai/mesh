@@ -120,13 +120,13 @@ export function DownloadPage() {
         {latest.error && !rel ? <Notice kind="warn">Could not read {LATEST_PATH} ({latest.error}). The commands below still work; checksums are shown once a release is published.</Notice> : null}
         <div className="chips">
           <a className="chip" href="#terminal">
-            1 · Terminal
+            Terminal
           </a>
           <a className="chip" href="#homebrew">
-            2 · Homebrew
+            Homebrew
           </a>
           <a className="chip" href="#app">
-            3 · Menu-bar app
+            Menu-bar app
           </a>
           <a className="chip" href="#warning">
             Why the warning
