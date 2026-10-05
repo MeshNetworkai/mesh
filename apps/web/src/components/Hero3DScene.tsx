@@ -45,12 +45,19 @@ const DESKTOP: BoxDef[] = [
   def(11.8, -0.6, -7, 2.4, 2.4, 2.4, 0.28, 0.1, true),
   def(-11.5, -0.2, -9, 2.6, 2.6, 2.6, 0.3, 0.06),
 ];
-/** Phones: four, two in the top corners between the nav and the eyebrow, two half-cropped at the sides of the lede. */
+/**
+ * Phones: seven smaller monoliths in a loose ring down the tall portrait hero — a pair above the eyebrow, a
+ * pair either side of the headline, a pair beside the lede and one far below — all fully in frame (nothing
+ * cropped at the corners), the centre column kept clear by the vignette.
+ */
 const PHONE: BoxDef[] = [
-  def(-5.4, 4.6, -3, 1.7, 1.7, 1.7, 0.22, 0.11),
-  def(5.2, 4.3, -4, 1.4, 1.4, 1.4, 0.2, 0.13, true),
-  def(-7.0, -4.6, -2, 1.4, 3.2, 1.4, 0.2, 0.08),
-  def(7.2, -5.4, -3, 1.9, 1.9, 1.9, 0.26, 0.09),
+  def(-4.8, 4.2, -4, 1.5, 1.5, 1.5, 0.2, 0.11),
+  def(4.8, 5.0, -5, 1.2, 1.2, 1.2, 0.18, 0.13, true),
+  def(-6.0, 0.2, -3, 1.2, 2.6, 1.2, 0.18, 0.08),
+  def(5.8, -0.8, -4, 1.6, 1.6, 1.6, 0.22, 0.09),
+  def(-6.6, -7.0, -4, 1.4, 1.4, 1.4, 0.2, 0.1, true),
+  def(6.6, -7.6, -3, 1.3, 2.8, 1.3, 0.2, 0.07),
+  def(-1.2, -12.5, -8, 1.6, 1.6, 1.6, 0.22, 0.12),
 ];
 
 /** Horizontal half-extent (world units at the z=0 plane) the camera must show. */
