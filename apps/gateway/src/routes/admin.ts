@@ -10,6 +10,7 @@ import { addLedgerEntry, balanceMicros, ensureWallet, treasuryBalanceMicros } fr
 import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
 import { clearQuarantine, nodeVerificationStats, quarantineNode, verificationOverview } from '../verification.js';
+import { starterAdminRoutes } from '../starter.js';
 import { getNode } from './nodes.js';
 
 const FakeFeesBody = z.object({ amountUsd: z.number().positive() });
@@ -77,6 +78,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const id = addLedgerEntry(ctx.db, { wallet, deltaMicros: micros, kind: 'starter', ref });
     return { ledgerId: id, wallet, amountUsd: microsToUsd(micros), balanceUsd: microsToUsd(balanceMicros(ctx.db, wallet)) };
   }
+
+  // Starter credits on first connect: GET /admin/starter, POST /admin/starter/toggle (starter.ts).
+  starterAdminRoutes(app, ctx, guard, audit);
 
   app.post('/admin/run-epoch', { preHandler: guard }, async (req, reply) => {
     const parsed = RunEpochBody.safeParse(req.body ?? undefined);

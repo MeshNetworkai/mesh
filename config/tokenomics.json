@@ -109,6 +109,13 @@
     "treasuryBps": 7000,
     "sources": { "network": true, "upstream": true, "marketplaceFee": true }
   },
+  "starterCredits": {
+    "_comment": "First-ever wallet sign-in is credited amountUsd (ledger kind starter) so a developer switching from another gateway can try Mesh before holding. Once per wallet, maxWallets total (0 = unlimited), 3 per IP hash per day. Pause at runtime with POST /admin/starter/toggle.",
+    "enabled": true,
+    "amountUsd": 2,
+    "maxWallets": 500,
+    "requireMinHold": false
+  },
   "meta": {
     "description": "Trading fees buy AI inference for holders, every hour.",
     "website": "https://mesh.local"

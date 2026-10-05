@@ -516,6 +516,26 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS usage_share_created ON usage_share_log(created_at);
     `,
   },
+  {
+    // Starter credits on first connect (starter.ts, config.starterCredits): one row per wallet that received
+    // the automatic grant, so it is never paid twice; ip_hash (peppered, same scheme as guest_quota) backs the
+    // per-IP daily cap. starter_settings holds the runtime enable/pause override set by POST /admin/starter/toggle.
+    id: 16,
+    sql: `
+    CREATE TABLE IF NOT EXISTS starter_grants (
+      wallet         TEXT PRIMARY KEY,
+      amount_micros  INTEGER NOT NULL,
+      granted_at     INTEGER NOT NULL,
+      ip_hash        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS starter_grants_ip ON starter_grants(ip_hash, granted_at);
+    CREATE TABLE IF NOT EXISTS starter_settings (
+      key         TEXT PRIMARY KEY,
+      value       TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

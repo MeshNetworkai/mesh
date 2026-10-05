@@ -6,6 +6,7 @@ import { betaView, inviteRequired, isAdmitted, redeemInvite } from '../beta.js';
 import { clearSessionCookies, resolveSession, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { ensureWallet } from '../ledger.js';
+import { maybeGrantStarter } from '../starter.js';
 
 /** Auth bodies are tiny; anything bigger is abuse. */
 export const SMALL_BODY = 16 * 1024;
@@ -109,10 +110,26 @@ export async function authRoutes(app: FastifyInstance, ctx: AppContext) {
 
     ensureWallet(ctx.db, wallet, chain);
     ctx.db.prepare(`UPDATE wallets SET last_login = ? WHERE wallet = ?`).run(nowSec(), wallet);
+
+    // ---- post-sign-in hook: starter credits on first connect (starter.ts, docs/SWITCHING.md) ----
+    // Once per wallet, capped network-wide and per IP; a failure here must never fail the sign-in.
+    let starter: { amountUsd: number; balanceUsd: number } | null = null;
+    try {
+      const r = await maybeGrantStarter(ctx, { wallet, chain, ip: req.ip });
+      if (r.granted) {
+        starter = { amountUsd: r.amountUsd, balanceUsd: r.balanceUsd };
+        req.log.info({ wallet, amountUsd: r.amountUsd, ledgerId: r.ledgerId }, 'starter credit granted on first sign-in');
+      } else if (r.reason !== 'already_granted' && r.reason !== 'disabled') {
+        req.log.info({ wallet, reason: r.reason }, 'starter credit skipped');
+      }
+    } catch (err) {
+      req.log.warn({ err, wallet }, 'starter credit grant failed; sign-in continues');
+    }
+
     const token = await signSession(ctx.env.JWT_SECRET, wallet, chain);
     // Browser clients get the session as an HttpOnly cookie (+ CSRF cookie); API clients keep using the token.
     const csrf = setSessionCookies(ctx.env, reply, token);
-    return { token, wallet, chain, expiresIn: '7d', expiresInSec: SESSION_TTL_SEC, csrf, admitted: !inviteRequired(beta) || isAdmitted(ctx.db, wallet) };
+    return { token, wallet, chain, expiresIn: '7d', expiresInSec: SESSION_TTL_SEC, csrf, admitted: !inviteRequired(beta) || isAdmitted(ctx.db, wallet), starter };
   });
 
   /** Exchange a valid (unexpired) session (bearer or cookie) for a fresh 7-day one; re-sets the cookies. */

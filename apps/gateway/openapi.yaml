@@ -42,6 +42,8 @@ tags:
     description: The Mac network. Registration, link codes, and the job protocol used by `mesh-node`.
   - name: Market
     description: Credit marketplace. Holders sell unused credits at a discount; buyers pay the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps 2.5% of the price, half to the next hourly distribution, half to the treasury. See docs/MARKETPLACE.md.
+  - name: Admin
+    description: Operator endpoints (`x-admin-token` or the admin cookie from `POST /admin/login`). Every call is audited.
 security: []
 paths:
   /health:
@@ -101,6 +103,7 @@ paths:
                 showSavings: true
                 pointsEnabled: false
                 nodeRewardUsdPerMTokens: 0.06
+                starterGrants: { enabled: true, amountUsd: 2, granted: 212, remaining: 288 }
                 series24h:
                   - { hour: 1759402800, feesUsd: 14.2, creditsDistributedUsd: 7.1, requests: 210, spendUsd: 0.17 }
                 epochSeconds: 3600
@@ -1465,6 +1468,39 @@ paths:
         '200': { description: '`{ listingsExpired }`.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /admin/starter:
+    get:
+      tags: [Admin]
+      summary: Starter credits on first connect — status and recent grants
+      description: 'Admin (`x-admin-token` or admin cookie). Effective state (`enabled`), what config says (`configEnabled`), the runtime `override`, amount, caps, how many wallets were granted and how many remain, plus the 200 most recent grants (wallet, amount, time, first 8 chars of the IP hash). See docs/SWITCHING.md.'
+      operationId: adminStarterStatus
+      responses:
+        '200':
+          description: Status and grants.
+          content:
+            application/json:
+              example: { enabled: true, configEnabled: true, override: null, amountUsd: 2, maxWallets: 500, requireMinHold: false, maxPerIpPerDay: 3, granted: 212, remaining: 288, grantedUsd: 424, grants: [{ wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, amountUsd: 2, grantedAt: 1759487020, ipHash: 3f9a1c2e }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/starter/toggle:
+    post:
+      tags: [Admin]
+      summary: Pause or resume starter credits at runtime
+      description: 'Admin. `{ enabled: false }` pauses the programme without a redeploy, `{ enabled: true }` forces it on, `{ enabled: null }` clears the override so config wins again, and an empty body flips the current state. Audited as `starter-toggle`.'
+      operationId: adminStarterToggle
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: [boolean, 'null'] } } }
+            example: { enabled: false }
+      responses:
+        '200':
+          description: The new status (same shape as `GET /admin/starter` without `grants`).
+          content:
+            application/json:
+              example: { enabled: false, configEnabled: true, override: false, amountUsd: 2, maxWallets: 500, requireMinHold: false, maxPerIpPerDay: 3, granted: 212, remaining: 288, grantedUsd: 424 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
   securitySchemes:
     session:
@@ -1641,6 +1677,14 @@ components:
         showSavings: { type: boolean }
         pointsEnabled: { type: boolean, description: 'Points / leaderboard / referral programme is live. Built but disabled by default; the related routes answer 404 when false.' }
         nodeRewardUsdPerMTokens: { type: number }
+        starterGrants:
+          type: object
+          description: Starter credits on first connect (docs/SWITCHING.md). `remaining` is null when the wallet cap is 0 (unlimited).
+          properties:
+            enabled: { type: boolean }
+            amountUsd: { type: number }
+            granted: { type: integer }
+            remaining: { type: [integer, 'null'] }
         series24h: { type: array, items: { $ref: '#/components/schemas/HourPoint' } }
         epochSeconds: { type: integer }
         upstream: { type: string }
@@ -1769,6 +1813,12 @@ components:
         chain: { type: string, enum: [solana, evm] }
         expiresIn: { type: string, example: 7d }
         expiresInSec: { type: integer, example: 604800 }
+        starter:
+          type: [object, 'null']
+          description: 'Set on the first-ever sign-in of a wallet when starter credits are on (config `starterCredits`, docs/SWITCHING.md): the USD just credited and the resulting balance. `null` on every later sign-in, when the programme is paused or its wallet cap is reached.'
+          properties:
+            amountUsd: { type: number, example: 2 }
+            balanceUsd: { type: number, example: 2 }
     LedgerEntry:
       type: object
       properties:

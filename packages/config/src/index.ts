@@ -286,6 +286,27 @@ export const TokenomicsSchema = z
       })
       .refine((u) => u.holderBps + u.treasuryBps === 10_000, { message: 'usageShare.holderBps + treasuryBps must equal 10000', path: ['holderBps'] })
       .default({}),
+    /**
+     * Starter credits on first connect (apps/gateway/src/starter.ts, docs/SWITCHING.md): the first time a wallet
+     * ever signs in, the gateway credits `amountUsd` to it (ledger kind `starter`, ref `starter:auto`) so a
+     * developer switching from another OpenAI-compatible gateway can make a key and send a request before
+     * holding or buying anything. Once per wallet (`starter_grants`), at most `maxWallets` wallets in total,
+     * and at most 3 grants per client-IP hash per day against sybil farming. Admins can pause it at runtime
+     * (POST /admin/starter/toggle) without a redeploy.
+     */
+    starterCredits: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** USD credited to each newly connected wallet. */
+        amountUsd: z.number().min(0).max(100).default(2),
+        /** Total wallets that may ever receive the grant (0 = unlimited). */
+        maxWallets: z.number().int().min(0).default(500),
+        /** When true the wallet must also hold at least `minHoldTokens` to qualify. */
+        requireMinHold: z.boolean().default(false),
+        /** Grants allowed per client-IP hash per rolling 24h. */
+        maxPerIpPerDay: z.number().int().min(1).default(3),
+      })
+      .default({}),
     meta: z
       .object({
         website: z.string().url().optional(),

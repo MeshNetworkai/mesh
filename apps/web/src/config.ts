@@ -23,6 +23,15 @@ export const TOKENOMICS = {
   showSavings: tokenomics.requestPricing?.showSavings !== false,
   /** USD per 1M total tokens accrued to the node that served a request (paid from the treasury share). */
   nodeRewardUsdPerMTokens: Number(tokenomics.nodeRewards?.usdPerMTokens ?? 0.06),
+  /** Upstream (frontier/fast) pricing: list minus this discount, or plus this markup, in bps (exactly one is non-zero). */
+  upstreamDiscountBps: Number(tokenomics.requestPricing?.upstreamDiscountBps ?? 0),
+  upstreamMarkupBps: Number(tokenomics.requestPricing?.upstreamMarkupBps ?? 0),
+  /** Starter credits on first connect (docs/SWITCHING.md): what a wallet gets on its first-ever sign-in while the programme runs. */
+  starterCredits: {
+    enabled: tokenomics.starterCredits?.enabled === true,
+    amountUsd: Number(tokenomics.starterCredits?.amountUsd ?? 0),
+    maxWallets: Number(tokenomics.starterCredits?.maxWallets ?? 0),
+  },
 };
 
 export const MOCK = import.meta.env.VITE_MOCK === '1' || import.meta.env.VITE_MOCK === 'true';

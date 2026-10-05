@@ -8,6 +8,7 @@ import { microsToUsd } from '../money.js';
 import { jobStats24h } from '../network.js';
 import { NODE_ONLINE_SEC } from '../routing.js';
 import { networkSavingsUsd24h } from '../savings.js';
+import { starterStatsView } from '../starter.js';
 import { usageShareToHolders24hUsd } from '../usage-share.js';
 
 export interface HourPoint {
@@ -175,6 +176,8 @@ export function computeStats(ctx: AppContext) {
     /** Spot-check verification is on: a sampled fraction of node work is re-checked (docs/NODE_PROTOCOL.md §10). */
     verificationEnabled: ctx.config.verification.enabled,
     nodeRewardUsdPerMTokens: ctx.config.nodeRewards.usdPerMTokens,
+    /** Starter credits on first connect (docs/SWITCHING.md): granted so far and how many wallets may still receive one (null = unlimited). */
+    starterGrants: starterStatsView(ctx),
     series24h: hourlySeries(ctx, now),
     epochSeconds: ctx.config.epochSeconds,
     upstream: ctx.upstream.name,

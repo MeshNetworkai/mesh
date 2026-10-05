@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { installOneLiner } from './Node';
 import { Terminal } from '../components/ui';
 import { PUBLIC_API_URL, TOKENOMICS } from '../config';
-import { fmtCost, fmtInt } from '../lib/format';
+import { fmtCost, fmtInt, fmtUsd } from '../lib/format';
 
 const MODEL = 'meta-llama/llama-3.1-8b-instruct';
 
@@ -60,7 +60,18 @@ for await (const chunk of stream) {
 }`,
 };
 
-const FAQ: Array<[string, string]> = [
+const STARTER = TOKENOMICS.starterCredits;
+
+const FAQ: Array<[string, string | JSX.Element]> = [
+  [
+    'Coming from another credit gateway?',
+    <>
+      Keep your code. Change the base URL to <code>{PUBLIC_API_URL}/v1</code> and the key to a <code>mesh_sk_…</code> one; OpenRouter-style model ids work
+      unchanged, streaming and the <code>usage</code> object are identical, and the only new thing is an optional <code>X-Mesh-Privacy</code> header.
+      Snippets for curl, Python, Node, LangChain, the Vercel AI SDK and Cursor/Continue, plus the model-name table and what changes on your bill, are in{' '}
+      <Link to="/api#switch">Switch in a minute</Link>.
+    </>,
+  ],
   [
     'Do I have to claim anything?',
     `No. At the top of every hour the gateway looks at who held at least ${fmtInt(TOKENOMICS.minHoldTokens)} ${TOKENOMICS.ticker} and credits each wallet pro-rata. The credit shows up in your ledger with the epoch as its reference.`,
@@ -178,6 +189,13 @@ export function Docs() {
               Your share of an epoch = your eligible balance ÷ sum of all eligible balances × holder pool. Staking tiers (week 2) multiply your
               weight: {TOKENOMICS.stakeTiers.map((t) => `${t.name} ${t.multiplier}×`).join(', ')}.
             </p>
+            {STARTER.enabled && STARTER.amountUsd > 0 ? (
+              <p>
+                Starter credits: the first time a wallet signs in it is credited {fmtUsd(STARTER.amountUsd)} (a “starter” row in your ledger), once per wallet
+                {STARTER.maxWallets > 0 ? ` and for the first ${fmtInt(STARTER.maxWallets)} wallets` : ''}, so you can create a key and send a request before holding
+                or buying anything. Switching from another gateway? See <Link to="/api#switch">Switch in a minute</Link>.
+              </p>
+            ) : null}
           </div>
         </div>
       </section>

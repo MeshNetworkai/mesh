@@ -19,6 +19,8 @@ export const testConfig: TokenomicsConfig = {
   // Protocol tests register plain nodes and sign in directly: beta gating and spot checks are exercised by beta.test.ts / verification.test.ts with their own config.
   beta: { ...loaded.beta, enabled: false },
   verification: { ...loaded.verification, enabled: false },
+  // Starter credits would shift the exact balances the e2e test asserts; starter.test.ts turns them on with its own config.
+  starterCredits: { ...loaded.starterCredits, enabled: false },
 };
 
 /** Network pricing the tests assert against, read from config/tokenomics.json so a repricing does not break the arithmetic. */

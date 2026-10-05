@@ -2,7 +2,11 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { parse } from 'yaml';
 import { Terminal } from '../components/ui';
-import { PUBLIC_API_URL } from '../config';
+import { PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { getCatalogue } from '../lib/api';
+import { fmtCost, fmtUsd } from '../lib/format';
+import type { Catalogue, CatalogueModel } from '../lib/types';
+import modelPolicy from '../../../../config/model-policy.json';
 import specYaml from '../../../gateway/openapi.yaml?raw';
 
 /*
@@ -368,6 +372,349 @@ function Endpoint({ o }: { o: Operation }) {
   );
 }
 
+/* ---------- "Switch in a minute": for developers already on an OpenAI-compatible gateway (docs/SWITCHING.md) ---------- */
+
+const BASE = `${PUBLIC_API_URL}/v1`;
+const EXAMPLE_MODEL = 'anthropic/claude-sonnet-4.5';
+
+const SWITCH_SNIPPETS: Record<string, { label: string; code: string; wrap?: boolean }> = {
+  curl: {
+    label: 'curl',
+    code: `# Two edits: the host and the key. Everything else is the request you already send.
+export OPENAI_BASE_URL=${BASE}
+export OPENAI_API_KEY=mesh_sk_...
+
+curl $OPENAI_BASE_URL/chat/completions \\
+  -H "Authorization: Bearer $OPENAI_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${EXAMPLE_MODEL}",
+    "messages": [{"role": "user", "content": "Hello from Mesh"}],
+    "stream": false
+  }'
+
+# Same usage object; three extra response headers tell you how it was served:
+#   x-mesh-route, x-mesh-privacy, x-mesh-served-by`,
+  },
+  python: {
+    label: 'Python',
+    code: `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${BASE}",   # was: your old gateway's base_url
+    api_key="mesh_sk_...",                 # was: your old key
+)
+
+r = client.chat.completions.create(
+    model="${EXAMPLE_MODEL}",     # OpenRouter-style ids work unchanged
+    messages=[{"role": "user", "content": "Hello from Mesh"}],
+    # optional, the one Mesh-specific knob:
+    extra_headers={"X-Mesh-Privacy": "upstream_zdr"},
+)
+print(r.choices[0].message.content)
+print(r.usage)   # prompt_tokens, completion_tokens, total_tokens, cost`,
+  },
+  node: {
+    label: 'Node',
+    code: `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${BASE}",            // was: your old gateway's baseURL
+  apiKey: process.env.MESH_API_KEY,               // mesh_sk_...
+  defaultHeaders: { "X-Mesh-Privacy": "trusted" } // optional
+});
+
+const r = await client.chat.completions.create({
+  model: "${EXAMPLE_MODEL}",
+  messages: [{ role: "user", content: "Hello from Mesh" }],
+});
+console.log(r.choices[0].message.content, r.usage);`,
+  },
+  langchain: {
+    label: 'LangChain',
+    code: `# Python (langchain-openai)
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    model="${EXAMPLE_MODEL}",
+    base_url="${BASE}",
+    api_key="mesh_sk_...",
+    default_headers={"X-Mesh-Privacy": "upstream_zdr"},  # optional
+)
+print(llm.invoke("Hello from Mesh").content)
+
+# JavaScript (@langchain/openai)
+# const llm = new ChatOpenAI({
+#   model: "${EXAMPLE_MODEL}",
+#   apiKey: process.env.MESH_API_KEY,
+#   configuration: { baseURL: "${BASE}" },
+# });`,
+  },
+  vercel: {
+    label: 'Vercel AI SDK',
+    code: `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText, streamText } from "ai";
+
+const mesh = createOpenAICompatible({
+  name: "mesh",
+  baseURL: "${BASE}",
+  apiKey: process.env.MESH_API_KEY, // mesh_sk_...
+  headers: { "X-Mesh-Privacy": "trusted" }, // optional
+});
+
+const { text, usage } = await generateText({
+  model: mesh("${EXAMPLE_MODEL}"),
+  prompt: "Hello from Mesh",
+});
+
+// streaming is the same SSE your current provider sends:
+const stream = streamText({ model: mesh("llama-3.1-8b"), prompt: "..." });`,
+  },
+  editors: {
+    label: 'Cursor / Continue',
+    wrap: true,
+    code: `# Cursor  ->  Settings > Models
+#   OpenAI API Key:            mesh_sk_...
+#   Override OpenAI Base URL:  ${BASE}
+#   + Add model:               ${EXAMPLE_MODEL}   (any id from GET /v1/models)
+#   Turn off the OpenAI models you no longer want so Cursor only sends to Mesh.
+
+# Continue  ->  ~/.continue/config.yaml
+models:
+  - name: Claude Sonnet 4.5 via Mesh
+    provider: openai
+    model: ${EXAMPLE_MODEL}
+    apiBase: ${BASE}
+    apiKey: mesh_sk_...
+    requestOptions:
+      headers:
+        X-Mesh-Privacy: upstream_zdr   # optional
+  - name: Llama 3.1 8B on the Mesh network
+    provider: openai
+    model: llama-3.1-8b
+    apiBase: ${BASE}
+    apiKey: mesh_sk_...`,
+  },
+};
+
+const MESH_HEADERS: Array<[string, string]> = [
+  ['x-mesh-route', 'Who answered: `node:<id>` when a Mesh node served it, else the upstream name (`openrouter`).'],
+  ['x-mesh-privacy', 'The privacy tier the request ended up under: `trusted`, `network` or `upstream_zdr`.'],
+  ['x-mesh-served-by', 'Human label for the chat UI: `your node`, `trusted node`, `network node` or `upstream (ZDR)`.'],
+  ['x-mesh-cost-usd', 'What the request cost, in USD (non-streamed replies; streamed replies carry `usage.cost` in the final chunk).'],
+  ['x-mesh-balance-usd', 'Your credit balance after the request (non-streamed replies).'],
+];
+
+/** Short alias <-> full OpenRouter id pairs for the models Mesh nodes serve, from config/model-policy.json (same Ollama tag). */
+function aliasPairs(): Array<{ full: string; short: string }> {
+  const nm = (modelPolicy as { networkModels: Record<string, string> }).networkModels;
+  const byTag = new Map<string, { full?: string; short?: string }>();
+  for (const [name, tag] of Object.entries(nm)) {
+    if (name.startsWith('mesh/')) continue;
+    const e = byTag.get(tag) ?? {};
+    if (name.includes('/')) e.full = name;
+    else e.short = name;
+    byTag.set(tag, e);
+  }
+  return [...byTag.values()].filter((e): e is { full: string; short: string } => Boolean(e.full && e.short));
+}
+
+function priceCell(p: { promptUsdPerM: number; completionUsdPerM: number }): string {
+  return p.promptUsdPerM === p.completionUsdPerM ? `${fmtCost(p.promptUsdPerM)} flat` : `${fmtCost(p.promptUsdPerM)} / ${fmtCost(p.completionUsdPerM)}`;
+}
+
+/** What upstream (frontier/fast) models cost on Mesh relative to list: the live catalogue's pricing block, else config. */
+function upstreamPricingPhrase(pricing: { upstreamDiscountBps: number; upstreamMarkupBps: number }): string {
+  if (pricing.upstreamDiscountBps > 0) return `list minus ${pricing.upstreamDiscountBps / 100}%`;
+  if (pricing.upstreamMarkupBps > 0) return `list plus ${pricing.upstreamMarkupBps / 100}%`;
+  return 'exactly list, no markup';
+}
+
+/** Upstream-only rows shown in the mapping table before "and N more". */
+const MAX_UPSTREAM_ROWS = 6;
+
+function SwitchInAMinute() {
+  const [tab, setTab] = useState<keyof typeof SWITCH_SNIPPETS>('curl');
+  const [cat, setCat] = useState<Catalogue | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCatalogue()
+      .then((c) => !cancelled && setCat(c))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pairs = useMemo(aliasPairs, []);
+  const { rows, more } = useMemo(() => {
+    const byId = new Map<string, CatalogueModel>((cat?.data ?? []).map((m) => [m.id, m]));
+    const seen = new Set<string>();
+    const out: Array<{ theirs: string; ours: string[]; model: CatalogueModel | null; network: boolean }> = [];
+    for (const p of pairs) {
+      seen.add(p.full);
+      seen.add(p.short);
+      out.push({ theirs: p.full, ours: [p.full, p.short], model: byId.get(p.full) ?? byId.get(p.short) ?? null, network: true });
+    }
+    let more = 0;
+    for (const m of cat?.data ?? []) {
+      if (seen.has(m.id) || !m.id.includes('/') || m.served !== 'upstream') continue;
+      seen.add(m.id);
+      if (out.filter((r) => !r.network).length >= MAX_UPSTREAM_ROWS) {
+        more += 1;
+        continue;
+      }
+      out.push({ theirs: m.id, ours: [m.id], model: m, network: false });
+    }
+    return { rows: out, more };
+  }, [cat, pairs]);
+
+  const frontier = cat?.data.find((m) => m.tier === 'frontier' && m.served === 'upstream') ?? null;
+  const networkPrice = cat?.pricing.networkPricePerMTokens ?? TOKENOMICS.networkPricePerMTokens;
+  const upstreamPricing = cat?.pricing ?? { upstreamDiscountBps: TOKENOMICS.upstreamDiscountBps, upstreamMarkupBps: TOKENOMICS.upstreamMarkupBps };
+  const starter = TOKENOMICS.starterCredits;
+
+  return (
+    <section id="switch" className="switch">
+      <div className="sec-head">
+        <div className="stack sm">
+          <p className="eyebrow">Switch in a minute</p>
+          <p className="small muted">
+            Written for a developer who already uses an OpenAI-compatible endpoint. The full version is <code>docs/SWITCHING.md</code> in the repo.
+          </p>
+        </div>
+        <div className="stack">
+          <h2>
+            Change two strings. <span className="muted">Keep every line of code you already have.</span>
+          </h2>
+          <div className="steps">
+            <div className="step">
+              <span className="n">01 · Base URL</span>
+              <p>
+                Replace your gateway's base URL with <code>{BASE}</code>. <code>/chat/completions</code> and <code>/models</code> are where your SDK expects them.
+              </p>
+            </div>
+            <div className="step">
+              <span className="n">02 · Key</span>
+              <p>
+                Replace the key with a <code>mesh_sk_…</code> key from <Link to="/app/keys">Keys</Link>. It goes in the same <code>Authorization: Bearer</code> header.
+                {starter.enabled && starter.amountUsd > 0 ? <> Your first sign-in is credited {fmtUsd(starter.amountUsd)} so you can test before holding anything.</> : null}
+              </p>
+            </div>
+            <div className="step">
+              <span className="n">03 · Model ids</span>
+              <p>
+                Nothing to rename. OpenRouter-style ids like <code>{EXAMPLE_MODEL}</code> are accepted unchanged, and the open models Mesh nodes serve also answer to short aliases. <code>GET /v1/models</code> is the source of truth.
+              </p>
+            </div>
+          </div>
+
+          <div className="stack sm">
+            <div className="tabs" role="tablist" aria-label="Client">
+              {(Object.keys(SWITCH_SNIPPETS) as Array<keyof typeof SWITCH_SNIPPETS>).map((k) => (
+                <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
+                  {SWITCH_SNIPPETS[k].label}
+                </button>
+              ))}
+            </div>
+            <Terminal code={SWITCH_SNIPPETS[tab].code} label={`${SWITCH_SNIPPETS[tab].label} switch example`} wrap={SWITCH_SNIPPETS[tab].wrap} />
+          </div>
+
+          <div className="stack sm">
+            <span className="eyebrow">Model names · theirs → ours</span>
+            <table className="schema" aria-label="Model id mapping">
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td className="d muted">Loading the catalogue from GET /v1/models…</td>
+                  </tr>
+                ) : (
+                  rows.map((r) => (
+                    <tr key={r.theirs}>
+                      <td className="k">
+                        <code>{r.theirs}</code>
+                      </td>
+                      <td className="t">→</td>
+                      <td className="d">
+                        {r.ours.map((o, i) => (
+                          <Fragment key={o}>
+                            {i > 0 ? <span className="muted"> or </span> : null}
+                            <code>{o}</code>
+                          </Fragment>
+                        ))}
+                        {r.model ? (
+                          <span className="ex">
+                            {r.network ? `Mesh nodes first (${r.model.online} online), upstream fallback` : 'upstream, ZDR providers only'} · {priceCell(r.model.meshPrice)} per 1M tokens
+                            {r.network ? ' on a node' : ''}
+                          </span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))
+                )}
+                <tr>
+                  <td className="k">
+                    <code>anything else</code>
+                  </td>
+                  <td className="t">→</td>
+                  <td className="d">
+                    {more > 0 ? `${more} more curated upstream models, and anything else, are forwarded` : 'Forwarded'} to the upstream unchanged, if the model policy allows it. The list is <code>GET {BASE}/models</code>; each row carries <code>served</code>, <code>listPrice</code>, <code>meshPrice</code> and <code>privacy</code>.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="stack sm">
+            <span className="eyebrow">What is identical · what is added · the one difference</span>
+            <ul>
+              <li>
+                <b>Identical:</b> request body, <code>stream: true</code> SSE chunks and <code>[DONE]</code>, the <code>usage</code> object (<code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code>) plus <code>usage.cost</code> in USD like OpenRouter, OpenAI-shaped errors (<code>402 insufficient_quota</code> when you are out of credits, <code>429</code> on the per-key rate limit).
+              </li>
+              <li>
+                <b>Added:</b> response headers that say how the request was served. Ignore them or log them.
+              </li>
+              <li>
+                <b>The one difference:</b> an optional <code>X-Mesh-Privacy</code> request header (<code>trusted</code> | <code>network</code> | <code>upstream_zdr</code>) picks which machines may see the prompt. Leave it out and the key's default applies (<code>trusted</code>). Also accepted as <code>mesh.privacy</code> in the body. See <Link to="/docs#privacy">Privacy tiers</Link>.
+              </li>
+            </ul>
+            <table className="schema" aria-label="Headers Mesh adds">
+              <tbody>
+                {MESH_HEADERS.map(([h, d]) => (
+                  <tr key={h}>
+                    <td className="k">
+                      <code>{h}</code>
+                    </td>
+                    <td className="d">
+                      <Inline text={d} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="stack sm">
+            <span className="eyebrow">What changes on your bill</span>
+            <p>
+              Two prices, both read from the catalogue. Models served by Mesh nodes (the open models above) bill a flat {fmtCost(networkPrice)} per million tokens,
+              prompt and reply together, whatever the model. Frontier and fast models go to the upstream and bill {upstreamPricingPhrase(upstreamPricing)}
+              {frontier ? (
+                <>
+                  : {frontier.displayName} lists at {fmtCost(frontier.listPrice.promptUsdPerM)} in / {fmtCost(frontier.listPrice.completionUsdPerM)} out per 1M and costs{' '}
+                  {fmtCost(frontier.meshPrice.promptUsdPerM)} / {fmtCost(frontier.meshPrice.completionUsdPerM)} here
+                </>
+              ) : null}
+              . Credits are US dollars, so one credit dollar buys one dollar of inference; every reply says what it cost and, on a node, what it saved versus list.
+              {starter.enabled && starter.amountUsd > 0 ? <> The first {fmtUsd(starter.amountUsd)} is on us when you connect a wallet for the first time.</> : null}
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function ApiDocs() {
   const { hash } = useLocation();
   useEffect(() => {
@@ -412,6 +759,9 @@ export function ApiDocs() {
           {str(info.summary)} <span className="dim">Base URL {PUBLIC_API_URL}. The same document is served at /openapi.json.</span>
         </p>
         <div className="chips">
+          <a className="chip on" href="#switch">
+            Switch in a minute
+          </a>
           {groups.map((g) => (
             <a key={g.name} className="chip" href={`#tag-${g.name.toLowerCase()}`}>
               {g.name}
@@ -422,6 +772,8 @@ export function ApiDocs() {
           </a>
         </div>
       </section>
+
+      <SwitchInAMinute />
 
       <section id="overview">
         <div className="sec-head">

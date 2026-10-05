@@ -37,6 +37,7 @@ import type {
   Session,
   StakeTiers,
   StarterBatchResult,
+  StarterStatus,
   Stats,
   Usage,
   WeekDetail,
@@ -244,6 +245,14 @@ export const adminStarterCredits = (token: string, items: Array<{ wallet: string
         headers: adminHeaders(token),
         body: JSON.stringify(note ? { items, note } : { items }),
       });
+
+/** GET /admin/starter — starter credits on first connect: status + recent grants (docs/SWITCHING.md). */
+export const adminStarter = (token: string): Promise<StarterStatus> =>
+  MOCK ? mock.mockAdminStarter(token) : request<StarterStatus>('/admin/starter', { headers: adminHeaders(token) });
+
+/** POST /admin/starter/toggle — pause (false) / force on (true) / clear the override (null). */
+export const adminStarterToggle = (token: string, enabled: boolean | null): Promise<StarterStatus> =>
+  MOCK ? mock.mockAdminStarterToggle(token, enabled) : request<StarterStatus>('/admin/starter/toggle', { method: 'POST', headers: adminHeaders(token), body: JSON.stringify({ enabled }) });
 
 export const adminRevokeKey = (token: string, id: number): Promise<RevokeKeyResult> =>
   MOCK ? mock.mockAdminRevokeKey(token, id) : request<RevokeKeyResult>(`/admin/keys/${id}`, { method: 'DELETE', headers: adminHeaders(token) });

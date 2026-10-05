@@ -6,7 +6,7 @@ import { ApiError, COOKIE_SESSION } from '../lib/api';
 import { fmtAgo, fmtDateTime, fmtInt, fmtUsd, shortAddr } from '../lib/format';
 import { useAsync, useCopy } from '../lib/hooks';
 import { MOCK_ADMIN_TOKEN_HINT } from '../lib/mock';
-import type { AdminOverview, WaitlistEntry } from '../lib/types';
+import type { AdminOverview, StarterStatus, WaitlistEntry } from '../lib/types';
 
 /**
  * Operator page. The ADMIN_TOKEN is sent once to POST /admin/login, which answers with a 12 h
@@ -233,6 +233,8 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
           {parsedBatch.bad.length ? <Notice kind="warn">Cannot parse: {parsedBatch.bad.slice(0, 3).join(' · ')}{parsedBatch.bad.length > 3 ? ' …' : ''}</Notice> : null}
           <Result s={starter} />
         </div>
+
+        <StarterPanel token={token} onUnauthorized={onUnauthorized} onChanged={() => void ov.reload()} />
 
         <div className="panel">
           <span className="eyebrow">Revoke an API key</span>
@@ -492,6 +494,100 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
  * per entry and shows them here; sending them is on you (e-mail delivery is out of scope). Wallet
  * entries are admitted directly and sign in without a code.
  */
+/**
+ * Starter credits on first connect (docs/SWITCHING.md): the first-ever sign-in of a wallet is credited a small
+ * amount from config so a developer switching gateways can try Mesh before holding. This panel shows how many
+ * wallets got it, how many may still, and pauses/resumes the programme at runtime (audited `starter-toggle`).
+ */
+function StarterPanel({ token, onUnauthorized, onChanged }: { token: string; onUnauthorized: () => void; onChanged: () => void }) {
+  const st = useAsync(() => api.adminStarter(token), [token], 60_000);
+  const s: StarterStatus | null = st.data;
+  const [toggle, runToggle] = useAction(onUnauthorized);
+  const [showGrants, setShowGrants] = useState(false);
+  const cap = s ? (s.maxWallets === 0 ? null : s.maxWallets) : null;
+  const pct = s && cap ? Math.min(100, Math.round((s.granted / cap) * 100)) : 0;
+  const flip = (enabled: boolean | null) => runToggle(() => api.adminStarterToggle(token, enabled), () => { void st.reload(); onChanged(); });
+
+  return (
+    <div className="panel" aria-label="Starter credits on first connect">
+      <div className="row between">
+        <span className="eyebrow">Starter credits · first connect</span>
+        {s ? (
+          <span className={`pill sm ${s.enabled ? '' : 'off'}`}>
+            <span className={`dot ${s.enabled ? 'dot-live' : ''}`} /> {s.enabled ? 'on' : 'paused'}
+            {s.override !== null ? ' · override' : ''}
+          </span>
+        ) : null}
+      </div>
+      <p className="hint">
+        {s
+          ? `Each wallet's first-ever sign-in gets ${fmtUsd(s.amountUsd)} once; ${cap ? `${fmtInt(cap)} wallets` : 'unlimited wallets'}, ${s.maxPerIpPerDay} per IP a day${s.requireMinHold ? ', holders only' : ''}. Amount and caps live in config/tokenomics.json; this switch pauses or resumes without a redeploy.`
+          : 'Loading…'}
+      </p>
+      {st.error && !s ? <Notice kind="bad">{st.error}</Notice> : null}
+      {s ? (
+        <>
+          <div className="tiles dense">
+            <Tile label="Granted" value={fmtInt(s.granted)} delta={`${fmtUsd(s.grantedUsd)} in starter credits`} />
+            <Tile label="Remaining" value={s.remaining === null ? '∞' : fmtInt(s.remaining)} delta={cap ? `of ${fmtInt(cap)} wallets · ${pct}% used` : 'no wallet cap'} />
+          </div>
+          {cap ? (
+            <div className="meter" style={{ marginTop: 0 }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Starter grants used">
+              <i style={{ width: `${pct}%` }} />
+            </div>
+          ) : null}
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            {s.enabled ? (
+              <button className="btn secondary sm" disabled={toggle.busy} onClick={() => flip(false)}>
+                {toggle.busy ? <Spinner /> : null} Pause grants
+              </button>
+            ) : (
+              <button className="btn primary sm" disabled={toggle.busy} onClick={() => flip(true)}>
+                {toggle.busy ? <Spinner /> : null} Resume grants
+              </button>
+            )}
+            {s.override !== null ? (
+              <button className="btn ghost sm" disabled={toggle.busy} onClick={() => flip(null)} title={`Config says ${s.configEnabled ? 'on' : 'off'}`}>
+                Follow config ({s.configEnabled ? 'on' : 'off'})
+              </button>
+            ) : null}
+            <button className="btn ghost sm" onClick={() => setShowGrants((v) => !v)} disabled={!s.grants?.length}>
+              {showGrants ? 'Hide' : 'Show'} recent grants{s.grants?.length ? ` (${Math.min(s.grants.length, 12)})` : ''}
+            </button>
+          </div>
+          {showGrants && s.grants?.length ? (
+            <div className="tblwrap">
+              <table className="tbl small">
+                <thead>
+                  <tr>
+                    <th>Wallet</th>
+                    <th className="num">Amount</th>
+                    <th>IP hash</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.grants.slice(0, 12).map((g) => (
+                    <tr key={g.wallet}>
+                      <td className="mono">{shortAddr(g.wallet)}</td>
+                      <td className="num">{fmtUsd(g.amountUsd)}</td>
+                      <td className="mono">{g.ipHash}</td>
+                      <td className="date">{fmtAgo(g.grantedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <Skeleton w="100%" h="64px" />
+      )}
+      <Result s={toggle} />
+    </div>
+  );
+}
+
 function BetaPanels({ token, o, onUnauthorized, onChanged }: { token: string; o: AdminOverview; onUnauthorized: () => void; onChanged: () => void }) {
   const beta = o.beta!;
   const [status, setStatus] = useState<'waiting' | 'invited' | 'all'>('waiting');

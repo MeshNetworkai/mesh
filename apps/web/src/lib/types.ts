@@ -69,6 +69,8 @@ export interface Stats {
   beta?: BetaInfo;
   /** Spot-check verification of node work is on (docs/NODE_PROTOCOL.md §10). */
   verificationEnabled?: boolean;
+  /** Starter credits on first connect (docs/SWITCHING.md): granted so far and wallets still eligible (null = unlimited). */
+  starterGrants?: StarterGrantsPublic;
   series24h: HourPoint[];
   epochSeconds: number;
   upstream: string;
@@ -228,6 +230,33 @@ export interface Session {
   token: string;
   wallet: string;
   chain: string;
+}
+
+/** `starterGrants` on GET /stats. */
+export interface StarterGrantsPublic {
+  enabled: boolean;
+  amountUsd: number;
+  granted: number;
+  remaining: number | null;
+}
+
+/** GET /admin/starter and POST /admin/starter/toggle (grants only on the GET). */
+export interface StarterStatus extends StarterGrantsPublic {
+  configEnabled: boolean;
+  /** Runtime override from the toggle; null = config value stands. */
+  override: boolean | null;
+  maxWallets: number;
+  requireMinHold: boolean;
+  maxPerIpPerDay: number;
+  grantedUsd: number;
+  grants?: StarterGrant[];
+}
+
+export interface StarterGrant {
+  wallet: string;
+  amountUsd: number;
+  grantedAt: number;
+  ipHash: string;
 }
 
 /** POST /nodes/register/challenge — the text the reward wallet signs to prove ownership. */

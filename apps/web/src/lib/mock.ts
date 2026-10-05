@@ -44,6 +44,8 @@ import type {
   RunEpochResult,
   Session,
   StarterBatchResult,
+  StarterGrant,
+  StarterStatus,
   Stats,
   Usage,
   WeekDetail,
@@ -212,6 +214,7 @@ export const mockStats = async (): Promise<Stats> => {
     pointsEnabled: false, // mirrors config/tokenomics.json: the programme is built but disabled
     beta: MOCK_BETA,
     verificationEnabled: true,
+    starterGrants: { enabled: mockStarter.enabled, amountUsd: TOKENOMICS.starterCredits.amountUsd, granted: mockStarter.grants.length, remaining: Math.max(0, TOKENOMICS.starterCredits.maxWallets - mockStarter.grants.length) },
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
@@ -965,6 +968,51 @@ export const mockAdminStarterCredits = async (token: string, items: Array<{ wall
     totalUsd: round2(items.reduce((a, i) => a + i.amountUsd, 0)),
     granted: items.map((it, i) => ({ ledgerId: 5_000 + i, wallet: it.wallet, amountUsd: it.amountUsd, balanceUsd: it.amountUsd })),
   };
+};
+
+/* ---------- starter credits on first connect (docs/SWITCHING.md) ---------- */
+
+const mockStarter: { override: boolean | null; enabled: boolean; grants: StarterGrant[] } = {
+  override: null,
+  enabled: TOKENOMICS.starterCredits.enabled,
+  grants: Array.from({ length: 212 }, (_, i) => ({
+    wallet: `${['9xQe', '4kLm', '7pRt', 'Bq2z', 'Hn3v'][i % 5]}${(1000 + i * 37).toString(36)}…${(i * 911).toString(16).padStart(4, '0')}`,
+    amountUsd: TOKENOMICS.starterCredits.amountUsd,
+    grantedAt: now() - i * 1900 - 120,
+    ipHash: ((i * 2654435761) >>> 0).toString(16).padStart(8, '0').slice(0, 8),
+  })),
+};
+
+function mockStarterStatus(): StarterStatus {
+  const granted = mockStarter.grants.length;
+  return {
+    enabled: mockStarter.enabled,
+    configEnabled: TOKENOMICS.starterCredits.enabled,
+    override: mockStarter.override,
+    amountUsd: TOKENOMICS.starterCredits.amountUsd,
+    maxWallets: TOKENOMICS.starterCredits.maxWallets,
+    requireMinHold: false,
+    maxPerIpPerDay: 3,
+    granted,
+    remaining: TOKENOMICS.starterCredits.maxWallets === 0 ? null : Math.max(0, TOKENOMICS.starterCredits.maxWallets - granted),
+    grantedUsd: round2(granted * TOKENOMICS.starterCredits.amountUsd),
+  };
+}
+
+export const mockAdminStarter = async (token: string): Promise<StarterStatus> => {
+  await sleep(200);
+  requireMockAdmin(token);
+  return { ...mockStarterStatus(), grants: mockStarter.grants.slice(0, 200) };
+};
+
+export const mockAdminStarterToggle = async (token: string, enabled: boolean | null): Promise<StarterStatus> => {
+  await sleep(200);
+  requireMockAdmin(token);
+  const before = mockStarter.enabled;
+  mockStarter.override = enabled;
+  mockStarter.enabled = enabled === null ? TOKENOMICS.starterCredits.enabled : enabled;
+  pushAdminAction('starter-toggle', { before, after: mockStarter.enabled, override: enabled });
+  return mockStarterStatus();
 };
 
 export const mockAdminRevokeKey = async (token: string, id: number): Promise<RevokeKeyResult> => {
