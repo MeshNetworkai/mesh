@@ -1,5 +1,9 @@
 # Deploy the Mesh gateway on a fresh Ubuntu 24.04 VPS
 
+> **Automated path:** `scripts/vps/bootstrap.sh` does steps 1-5 in one go and installs `/opt/mesh/deploy.sh`,
+> which `.github/workflows/deploy.yml` runs on every push to `main`. Start at `scripts/vps/README.md`.
+> This page remains as the manual reference.
+
 Target: one small VPS (1 vCPU / 1 GB is enough for a friends launch), Docker Compose for the
 gateway + SQLite volume, Caddy on the host for automatic HTTPS. ~15 minutes.
 

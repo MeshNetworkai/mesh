@@ -1,0 +1,103 @@
+name: Deploy
+
+# Deploys to the VPS on every push to main (docs-only changes skipped), or by hand with a command.
+# The runner is the only thing that can ssh to the box; it just runs /opt/mesh/deploy.sh there
+# (installed by scripts/vps/bootstrap.sh). Setup for a new server: scripts/vps/README.md.
+#
+# Secrets:  VPS_HOST     IP or hostname of the server
+#           VPS_SSH_KEY  private key (PEM / OpenSSH format) whose public half is in /home/mesh/.ssh/authorized_keys
+#           VPS_USER     optional, defaults to mesh
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "What to run on the server"
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - restart
+          - logs
+          - health
+          - backup
+
+permissions:
+  contents: read
+
+# one deploy at a time; a second push waits for the first to finish instead of racing it
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.command || 'deploy' }} on VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # `secrets` cannot be used in `if:`; mirror what the steps need into env.
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER || 'mesh' }}
+      COMMAND: ${{ inputs.command || 'deploy' }}
+    steps:
+      - name: Check secrets
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$VPS_HOST" ] || missing="$missing VPS_HOST"
+          [ -n "${HAS_KEY}" ] || missing="$missing VPS_SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secret(s):$missing  (Settings -> Secrets and variables -> Actions; see scripts/vps/README.md)"
+            exit 1
+          fi
+          case "$COMMAND" in deploy|restart|logs|health|backup) ;; *) echo "::error::bad command $COMMAND"; exit 1 ;; esac
+        env:
+          HAS_KEY: ${{ secrets.VPS_SSH_KEY != '' }}
+
+      - name: Write ssh key + known_hosts
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # tolerate a key pasted without the trailing newline
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keygen -y -f ~/.ssh/vps_key > /dev/null || { echo "::error::VPS_SSH_KEY is not a valid private key"; exit 1; }
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          [ -s ~/.ssh/known_hosts ] || { echo "::error::ssh-keyscan $VPS_HOST failed (host down or port 22 closed?)"; exit 1; }
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            IdentityFile ~/.ssh/vps_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+            ConnectTimeout 20
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Run ${{ env.COMMAND }} on the server
+        run: |
+          set -euo pipefail
+          echo "::group::$COMMAND @ $VPS_HOST ($VPS_USER)"
+          # deploy.sh streams its own output; a non-zero exit (health check failed, build broke) fails the job
+          ssh vps "bash -lc '/opt/mesh/deploy.sh $COMMAND'"
+          echo "::endgroup::"
+
+      - name: Health after deploy
+        if: env.COMMAND == 'deploy' || env.COMMAND == 'restart'
+        run: ssh vps "bash -lc '/opt/mesh/deploy.sh health'"
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/vps_key

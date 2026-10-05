@@ -1,7 +1,7 @@
-# Mesh web app. Replace app.example.com with the real host before deploying.
+# Mesh web app. Replace mesh-network.ai with the real host before deploying.
 User-agent: *
 Allow: /
 Disallow: /app
 Disallow: /admin
 
-Sitemap: https://app.example.com/sitemap.xml
+Sitemap: https://mesh-network.ai/sitemap.xml

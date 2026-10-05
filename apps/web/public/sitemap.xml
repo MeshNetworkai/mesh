@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Public pages only; /app/* and /admin need a wallet or a token. Replace app.example.com before deploying. -->
+<!-- Public pages only; /app/* and /admin need a wallet or a token. Replace mesh-network.ai before deploying. -->
 <urlset xmlns="http://www.w3.org/1999/sitemap/0.9">
-  <url><loc>https://app.example.com/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
-  <url><loc>https://app.example.com/docs</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://app.example.com/download</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://app.example.com/api</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://app.example.com/report</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
-  <url><loc>https://app.example.com/risk</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://app.example.com/terms</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
-  <url><loc>https://app.example.com/privacy</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://mesh-network.ai/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>https://mesh-network.ai/docs</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://mesh-network.ai/download</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://mesh-network.ai/api</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://mesh-network.ai/report</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
+  <url><loc>https://mesh-network.ai/risk</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://mesh-network.ai/terms</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://mesh-network.ai/privacy</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
 </urlset>
