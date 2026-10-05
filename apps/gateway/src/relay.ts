@@ -25,7 +25,9 @@ const NODE_PARAM_KEYS = ['temperature', 'top_p', 'top_k', 'stop', 'seed', 'prese
 
 /** Micro-USD charged to the user for a network-served request: flat price per 1M total tokens. */
 export function networkCostMicros(totalTokens: number, networkPricePerMTokens: number): number {
-  return Math.round(totalTokens * networkPricePerMTokens);
+  // Round up: a tiny answer costs at least one micro-dollar, never nothing (observed: 20 tokens at
+  // $0.02/M rounded to $0 and the request was free).
+  return totalTokens > 0 ? Math.max(1, Math.ceil(totalTokens * networkPricePerMTokens)) : 0;
 }
 
 export function openaiError(reply: FastifyReply, status: number, message: string, type: string, code?: string) {

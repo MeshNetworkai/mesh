@@ -515,8 +515,9 @@ describe('config + helpers', () => {
     expect(networkCostMicros(1_000_000, 0.02)).toBe(20_000);
     expect(nodeRewardMicros(1_000_000, 0.06)).toBe(60_000);
     expect(networkCostMicros(1_000_000, NETWORK_PRICE_PER_M)).toBe(NETWORK_PRICE_PER_M * 1_000_000);
-    expect(networkCostMicros(30, 0.02)).toBe(1); // rounds to the nearest micro-USD
-    expect(networkCostMicros(3, 0.02)).toBe(0);
+    expect(networkCostMicros(30, 0.02)).toBe(1); // rounds up to whole micro-USD
+    expect(networkCostMicros(3, 0.02)).toBe(1); // never free: at least one micro-USD for any output
+    expect(networkCostMicros(0, 0.02)).toBe(0);
   });
 
   it('model policy: networkModels map (or legacy array) resolves tags; /v1/models lists network names', async () => {

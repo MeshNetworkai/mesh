@@ -27,7 +27,7 @@ export const testConfig: TokenomicsConfig = {
 export const NETWORK_PRICE_PER_M = testConfig.requestPricing.networkPricePerMTokens;
 export const NODE_REWARD_PER_M = testConfig.nodeRewards.usdPerMTokens;
 /** Flat micro-USD billed to the user / accrued to the node for `tokens` total tokens served by the network. */
-export const networkMicros = (tokens: number) => Math.round(tokens * NETWORK_PRICE_PER_M);
+export const networkMicros = (tokens: number) => (tokens > 0 ? Math.max(1, Math.ceil(tokens * NETWORK_PRICE_PER_M)) : 0);
 export const rewardMicros = (tokens: number) => Math.round(tokens * NODE_REWARD_PER_M);
 /** Micro-USD -> USD as the API reports it (6 decimals). */
 export const usd = (micros: number) => micros / 1_000_000;
