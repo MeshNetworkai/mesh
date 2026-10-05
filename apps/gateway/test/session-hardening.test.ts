@@ -101,13 +101,16 @@ describe('cookie sessions', () => {
     expect(me.statusCode).toBe(200);
     expect(me.json().wallet).toBe('alice');
     const who = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie } });
-    expect(who.json()).toMatchObject({ wallet: 'alice', via: 'cookie' });
+    // the web app on another origin cannot read the api-host cookie, so /auth/session echoes the token
+    expect(who.json()).toMatchObject({ wallet: 'alice', via: 'cookie', csrf });
     expect((await app.inject({ method: 'GET', url: '/auth/session' })).statusCode).toBe(401);
 
-    // POST /keys without the header → 403 csrf_mismatch, nothing created
-    const noCsrf = await app.inject({ method: 'POST', url: '/keys', headers: { cookie }, payload: { name: 'x' } });
+    // POST /keys without the header → 403 csrf_mismatch, nothing created — and the rejection carries
+    // CORS headers, so a browser sees the 403 instead of a "blocked by CORS policy" error
+    const noCsrf = await app.inject({ method: 'POST', url: '/keys', headers: { cookie, origin: 'http://localhost:5173' }, payload: { name: 'x' } });
     expect(noCsrf.statusCode).toBe(403);
     expect(noCsrf.json().error).toBe('csrf_mismatch');
+    expect(noCsrf.headers['access-control-allow-origin']).toBe('http://localhost:5173');
     // wrong header → 403
     expect((await app.inject({ method: 'POST', url: '/keys', headers: { cookie, [CSRF_HEADER]: 'nope' }, payload: { name: 'x' } })).statusCode).toBe(403);
     // header only, no cookie copy (attacker cannot set our cookie) → 403

@@ -1,9 +1,9 @@
 import { verifierFor, type Chain } from '@mesh/chain-adapter';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { NONCE_TTL_SEC, SESSION_TTL_SEC, loginMessage, parseLoginMessage, signSession } from '../auth.js';
+import { CSRF_COOKIE, NONCE_TTL_SEC, SESSION_TTL_SEC, loginMessage, parseLoginMessage, signSession } from '../auth.js';
 import { betaView, inviteRequired, isAdmitted, redeemInvite } from '../beta.js';
-import { clearSessionCookies, resolveSession, setSessionCookies, type AppContext } from '../context.js';
+import { clearSessionCookies, cookiesOf, resolveSession, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { ensureWallet } from '../ledger.js';
 import { maybeGrantStarter } from '../starter.js';
@@ -145,7 +145,10 @@ export async function authRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/auth/session', async (req, reply) => {
     const session = await resolveSession(ctx, req);
     if (!session) return reply.code(401).send({ error: 'unauthorized', message: 'no session' });
-    return { wallet: session.wallet, chain: session.chain, exp: session.exp ?? null, via: session.via };
+    // Echo the CSRF cookie so a web app on another origin (which cannot read cookies set for the API
+    // host) still has the double-submit token. Only an allowed CORS origin with credentials can read this.
+    const csrf = session.via === 'cookie' ? (cookiesOf(req)[CSRF_COOKIE] ?? null) : null;
+    return { wallet: session.wallet, chain: session.chain, exp: session.exp ?? null, via: session.via, csrf };
   });
 
   /** Clears the session + CSRF cookies. JWTs are stateless, so a bearer client simply discards its token. */

@@ -148,6 +148,23 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
     return reply.send({ error: 'not_found', message: `Unknown route ${req.method} ${req.url}`, statusCode: 404 });
   });
 
+  // Security headers and CORS come first: every early rejection below (geo-block, admin allowlist,
+  // CSRF) must still carry Access-Control-Allow-Origin, or the browser reports a CORS error and hides
+  // the real 403/404 from the web app.
+  await app.register(helmet, {
+    global: true,
+    contentSecurityPolicy: false, // JSON/SSE API; no HTML is served
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // the web app is on another origin
+    hsts: ctx.env.NODE_ENV === 'production' ? { maxAge: 15_552_000, includeSubDomains: false } : false,
+  });
+  await app.register(cors, {
+    origin: corsOrigin(ctx.env),
+    // Cookie sessions: the browser only sends/accepts cookies cross-origin when this is set and the
+    // origin is explicit (CORS_ORIGINS); `*` cannot be combined with credentials by the browser.
+    credentials: true,
+    exposedHeaders: ['x-mesh-cost-usd', 'x-mesh-balance-usd', 'x-mesh-route', 'x-mesh-fallback', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after', 'x-request-id', 'x-guest-remaining', 'x-mesh-privacy', 'x-mesh-served-by'],
+  });
+
   app.addHook('onRequest', geoBlockHook({ enforce: ctx.env.GEO_BLOCK_ENFORCE, blocked: ctx.config.geoBlock, trustedPeer }));
 
   // ADMIN_IP_ALLOWLIST: /admin/* and /health/alerts only from the listed CIDRs (req.ip honours
@@ -183,19 +200,6 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
     });
   }
 
-  await app.register(helmet, {
-    global: true,
-    contentSecurityPolicy: false, // JSON/SSE API; no HTML is served
-    crossOriginResourcePolicy: { policy: 'cross-origin' }, // the web app is on another origin
-    hsts: ctx.env.NODE_ENV === 'production' ? { maxAge: 15_552_000, includeSubDomains: false } : false,
-  });
-  await app.register(cors, {
-    origin: corsOrigin(ctx.env),
-    // Cookie sessions: the browser only sends/accepts cookies cross-origin when this is set and the
-    // origin is explicit (CORS_ORIGINS); `*` cannot be combined with credentials by the browser.
-    credentials: true,
-    exposedHeaders: ['x-mesh-cost-usd', 'x-mesh-balance-usd', 'x-mesh-route', 'x-mesh-fallback', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after', 'x-request-id', 'x-guest-remaining', 'x-mesh-privacy', 'x-mesh-served-by'],
-  });
   await app.register(rateLimit, { global: false });
 
   if (ctx.env.ALERTS_ENABLED && !ctx.alerts) {

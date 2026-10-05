@@ -102,14 +102,28 @@ export function readCookie(name: string): string | null {
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/**
+ * The CSRF token the gateway handed us. In production the API lives on api.<domain> while the app is
+ * on <domain>, so the readable `mesh_csrf` cookie belongs to another host and `document.cookie` cannot
+ * see it; the gateway therefore also returns the token in the sign-in, refresh and /auth/session
+ * bodies, and we keep the latest one here. The cookie still wins when it is readable (same host, dev).
+ */
+let csrfToken: string | null = null;
+export function currentCsrf(): string | null {
+  return readCookie(CSRF_COOKIE) ?? csrfToken;
+}
+function rememberCsrf(data: unknown): void {
+  if (data && typeof data === 'object' && typeof (data as { csrf?: unknown }).csrf === 'string') csrfToken = (data as { csrf: string }).csrf;
+}
+
 async function request<T>(path: string, init: RequestInit = {}, token?: string | null): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
   if (token && token !== COOKIE_SESSION) headers.set('authorization', `Bearer ${token}`);
-  // Cookie-authenticated state changes must echo the CSRF cookie (gateway: double-submit check).
+  // Cookie-authenticated state changes must echo the CSRF token (gateway: double-submit check).
   const method = (init.method ?? 'GET').toUpperCase();
   if (!SAFE_METHODS.has(method) && !headers.has(CSRF_HEADER)) {
-    const csrf = readCookie(CSRF_COOKIE);
+    const csrf = currentCsrf();
     if (csrf) headers.set(CSRF_HEADER, csrf);
   }
   let res: Response;
@@ -120,7 +134,10 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string |
   }
   if (!res.ok) throw await readError(res);
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  if (path.startsWith('/auth/') || path === '/admin/login') rememberCsrf(data);
+  if (path === '/auth/logout') csrfToken = null;
+  return data;
 }
 
 // ---------- session refresh ----------
@@ -146,7 +163,7 @@ export const refreshSession = (token: string) =>
   request<Session & { expiresIn: string; expiresInSec: number }>('/auth/refresh', { method: 'POST' }, token);
 
 /** GET /auth/session — who the cookie (or bearer) says we are; 401 when signed out. */
-export const getSession = () => request<{ wallet: string; chain: string; exp: number | null; via: 'bearer' | 'cookie' }>('/auth/session');
+export const getSession = () => request<{ wallet: string; chain: string; exp: number | null; via: 'bearer' | 'cookie'; csrf?: string | null }>('/auth/session');
 
 /** POST /auth/logout — clears the HttpOnly session cookie and its CSRF twin. */
 export const logout = () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' });
