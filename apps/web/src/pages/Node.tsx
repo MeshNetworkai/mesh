@@ -186,35 +186,38 @@ function LinkMac({ onCode }: { onCode: (code: string | null) => void }) {
       {expired ? <Notice kind="warn">That link code expired after 15 minutes. Click “Link another Mac” for a fresh one.</Notice> : null}
       {error ? <Notice kind="bad">{error}</Notice> : null}
 
-      <Terminal label="Install the node agent" code={oneLiner} wrap />
       {code ? (
-        <p className="small muted" style={{ margin: 0 }}>
-          Already installed? Run <code className="mono">mesh-node setup --link {code} --gateway {PUBLIC_API_URL}</code> instead. The link code works once
-          and is bound to your wallet; the Mac never holds an API key or a wallet secret.{MOCK ? ' Mock mode: the code is not registered anywhere.' : ''}
-        </p>
+        <>
+          <Terminal label="Install the node agent" code={oneLiner} wrap />
+          <p className="small muted" style={{ margin: 0 }}>
+            Already installed? Run <code className="mono">mesh-node setup --link {code} --gateway {PUBLIC_API_URL}</code> instead. The code works once and is
+            bound to your wallet; the Mac never holds an API key or a wallet secret.{MOCK ? ' Mock mode: the code is not registered anywhere.' : ''}{' '}
+            Prefer Homebrew or a menu-bar app? See below, or <Link to="/download">Download for Mac</Link>.
+          </p>
+        </>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>
           {session
-            ? 'Click “Link a Mac” to sign once with your wallet; the link code then fills in above and in the command.'
-            : 'Connect a wallet first; “Link a Mac” then fills the link code into the command.'}{' '}
-          There is no API key to fetch: your wallet signs here in the browser and the Mac only needs the link code.
+            ? 'Click “Link a Mac”: you sign once with your wallet, and the install command appears here with your one-time code already filled in.'
+            : 'Connect the wallet that should get paid; the install command appears here with your one-time code filled in.'}{' '}
+          Nothing to download or copy by hand, and no API key — the Mac only ever sees the code.
         </p>
       )}
-      <p className="small muted" style={{ margin: 0 }}>
-        Prefer Homebrew? Expand below. Prefer a menu-bar app? <Link to="/download">Download for Mac</Link> (same agent, plus the checksums and the macOS
-        “Open Anyway” steps). Either way the only thing you type on the Mac is the link code.
-      </p>
-      <details className="alt-install">
-        <summary className="small">Homebrew alternative</summary>
-        <div style={{ paddingTop: 10 }}>
-          <Terminal label="Homebrew install" code={brewSteps(code ?? '<code>')} />
-        </div>
-      </details>
-      <p className="small muted" style={{ margin: 0 }}>
-        Afterwards: <code className="mono">mesh-node status</code>, <code className="mono">mesh-node pause</code> /{' '}
-        <code className="mono">resume</code>, <code className="mono">mesh-node logs</code>, <code className="mono">mesh-node update</code>,{' '}
-        <code className="mono">mesh-node service uninstall</code>.
-      </p>
+      {code ? (
+        <>
+          <details className="alt-install">
+            <summary className="small">Homebrew alternative</summary>
+            <div style={{ paddingTop: 10 }}>
+              <Terminal label="Homebrew install" code={brewSteps(code)} />
+            </div>
+          </details>
+          <p className="small muted" style={{ margin: 0 }}>
+            Afterwards: <code className="mono">mesh-node status</code>, <code className="mono">mesh-node pause</code> /{' '}
+            <code className="mono">resume</code>, <code className="mono">mesh-node logs</code>, <code className="mono">mesh-node update</code>,{' '}
+            <code className="mono">mesh-node service uninstall</code>.
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

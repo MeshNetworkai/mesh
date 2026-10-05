@@ -11,7 +11,7 @@ export function NextEpochPill({ epochSeconds }: { epochSeconds?: number }) {
   const h = Math.floor(m / 60);
   const text = h > 0 ? `${h}:${pad2(m % 60)}:${pad2(s)}` : `${pad2(m)}:${pad2(s)}`;
   return (
-    <span className="pill">
+    <span className="small muted apptime">
       <span className="dot dot-live" aria-hidden="true" />
       Next epoch in <span className="num">{text}</span>
     </span>
@@ -54,7 +54,7 @@ export function AppLayout() {
             <NextEpochPill epochSeconds={stats?.epochSeconds} />
             {session ? (
               <>
-                <span className="pill mono" title={session.wallet}>
+                <span className="small muted num" title={session.wallet}>
                   {shortAddr(session.wallet, 5, 4)}
                 </span>
                 <button className="btn ghost sm" onClick={signOut}>
