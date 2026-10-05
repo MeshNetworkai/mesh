@@ -112,6 +112,10 @@ jobs:
     # macos-latest runners are Apple Silicon (arm64); the DMG is arm64-only like the agent.
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      # `secrets` cannot be used in `if:`; mirror presence into env (strings "true"/"false").
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_APPLE_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +129,7 @@ jobs:
           uname -m
 
       - name: Import Developer ID certificate (optional; skipped when secrets are unset)
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: env.HAS_CERT == 'true'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -142,7 +146,7 @@ jobs:
           rm -f "$RUNNER_TEMP/cert.p12"
 
       - name: Store notarytool credentials (optional)
-        if: ${{ secrets.NOTARY_APPLE_ID != '' }}
+        if: env.HAS_NOTARY == 'true'
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
@@ -160,7 +164,7 @@ jobs:
           ARCHS: arm64
           # Empty when the secrets are not set -> make-app.sh signs ad-hoc, make-dmg.sh leaves the DMG unsigned.
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
-          NOTARY_PROFILE: ${{ secrets.NOTARY_APPLE_ID != '' && 'mesh-notary' || '' }}
+          NOTARY_PROFILE: ${{ env.HAS_NOTARY == 'true' && 'mesh-notary' || '' }}
         run: |
           set -euo pipefail
           swift build -c release --arch arm64
@@ -187,6 +191,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
+      HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -290,7 +295,7 @@ jobs:
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
 
       - name: Push formula to the tap repository (needs HOMEBREW_TAP_TOKEN)
-        if: ${{ needs.version.outputs.is_release == 'true' && secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: needs.version.outputs.is_release == 'true' && env.HAS_TAP_TOKEN == 'true'
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || 'MeshNetworkai/homebrew-tap' }}

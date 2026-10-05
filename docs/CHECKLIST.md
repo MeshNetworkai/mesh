@@ -50,7 +50,7 @@ Every step from design system to launch, grouped by session. Tick items as they 
 - [x] Pool seeding steps and buy/sell test documented (scripts/chain, CHAIN\_DECISION.md)
 - [ ] Chain decision (Oliver)
 - [ ] Deployer and treasury wallets created, public addresses sent to me (Oliver)
-- [ ] Testnet dry run: deploy, buy, sweep, credits land in your dashboard (Oliver signs, I run)
+- [ ] Testnet dry run: I deploy on devnet/Sepolia with throwaway wallets, buy, sweep, credits land in a dashboard; recorded for the dev to follow on mainnet
 
 ## Session 5 · Sunday afternoon · production and runbook
 
@@ -64,9 +64,9 @@ Every step from design system to launch, grouped by session. Tick items as they 
 
 ## Session 6 · Monday morning · launch
 
-- [ ] Deploy the mint on mainnet (Oliver signs)
-- [ ] Lock team allocation (Oliver signs)
-- [ ] Seed the pool quietly (Oliver signs)
+- [ ] Deploy the token on mainnet (your dev deploys and signs; I hand over the parameters)
+- [ ] Lock team allocation (dev signs)
+- [ ] Seed the pool quietly (dev signs)
 - [ ] Point the gateway and indexer at mainnet, first live sweep confirmed
 - [ ] Dashboard live on the domain, DNS flipped
 - [ ] Starter credits sent to friends' wallets
@@ -113,7 +113,12 @@ Every step from design system to launch, grouped by session. Tick items as they 
 - [x] Open beta: Beta badge on nav and landing, invites OFF, waitlist and invite tooling kept in admin for pacing if ever needed, beta clause in terms
 - [x] Distribution without Apple: /download page (Terminal, Homebrew, unsigned .dmg with Open Anyway steps and SHA-256), Homebrew tap formula, `mesh-node update` with daily check, release workflow producing dmg + tarball + checksums + latest.json
 - [x] 242 gateway tests, 46 agent, 48 adapter, 18 browser tests passing
-- [ ] Create the GitHub repository and push (Oliver: a GitHub account and an org name, e.g. MeshNetworkai; I do the rest) — needed for releases, CI and the Homebrew tap
+- [x] GitHub: org MeshNetworkai created, github.com/MeshNetworkai/mesh pushed with full history, v0.1.0 tagged (first CI + release build running), homebrew-tap repo published — DONE 5 Oct
+- [ ] First release build green on GitHub Actions (CI + Release for v0.1.0); fix and re-tag if the menu-bar app fails its first ever compile (me)
+- [ ] Add your dev as a collaborator on MeshNetworkai/mesh (Oliver: their GitHub username)
+- [ ] Dev handoff doc for the mainnet token deployment — what to deploy, parameters that must match config, the JSON they hand back (me)
+- [ ] Testnet rehearsal: I deploy on devnet/Sepolia with throwaway wallets, full runbook end to end, recorded for the dev (me, after chain decision)
+- [ ] Mainnet: dev deploys the token, sends addresses; I set deploy.mainnet.json, point the indexer, confirm first live sweep (dev + me)
 - [ ] Legal entity for the launch (company for domain, server, token; Apple account later if ever) — Oliver, with a quick legal read
 
 **Homepage rework (3 Oct):**
