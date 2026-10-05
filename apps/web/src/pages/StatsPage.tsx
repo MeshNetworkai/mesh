@@ -85,7 +85,9 @@ export function StatsPage() {
             {fmtUsd(r.feesIn, 0)} in fees became <em>{fmtUsd(r.creditsOut, 0)}</em> of AI credits.
           </h1>
         ) : (
-          <h1 className="display big">No fees collected yet.</h1>
+          <h1 className="display big">
+            Every fee, <em>on the record.</em>
+          </h1>
         )}
         <p className="lede">
           Every {epochMin === 60 ? 'hour' : `${epochMin} minutes`} the trading fee on ${T.ticker} is swept, split {T.holderShareBps / 100}/{T.treasuryShareBps / 100} between holders and the

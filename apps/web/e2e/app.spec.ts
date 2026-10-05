@@ -88,8 +88,8 @@ test.describe('landing', () => {
       // The e2e gateway may serve a catalogue without frontier entries; the parity copy is covered by the mock screenshots.
       await page.keyboard.press('Escape');
     }
-    // Numbered sections in order.
-    for (const t of ['01 · How the money moves', '02 · Four ways in', "03 · Why it's different", '04 · Privacy, stated plainly', '05 · Live stats']) {
+    // Section labels in order (unnumbered since the quiet pass).
+    for (const t of ['How the money moves', 'Four ways in', "Why it's different", 'Privacy, stated plainly', 'Live stats']) {
       await expect(page.getByText(t, { exact: true })).toBeVisible();
     }
     // Four ways in, with the live liquidity book (GET /market/book) in the "sell" column.
@@ -372,9 +372,9 @@ test.describe('signed-in app', () => {
     await expect(flow).toContainText('No API key needed');
     await expect(flow).toContainText('Run the install command on the Mac');
     await expect(page.getByLabel('What the installer does')).toBeVisible();
-    // The one-liner carries the gateway URL and the --link placeholder before any code exists.
-    const term = page.locator('pre.term', { hasText: 'install-node.sh' });
-    await expect(term).toContainText(`--link <code> --gateway ${GATEWAY_URL}`);
+    // Before a code exists the install command is not shown at all: one line explains what will appear.
+    await expect(page.locator('pre.term', { hasText: 'install-node.sh' })).toHaveCount(0);
+    await expect(page.getByText(/the install command appears here/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet to link a Mac' })).toBeVisible();
 
     await signIn(page);
@@ -551,7 +551,7 @@ test.describe('signed-in app', () => {
     await page.goto('/stats');
     await expect(page.locator('.statement .eyebrow')).toContainText('Stats ·');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await expect(page.locator('main')).toContainText(/\$|No fees collected yet/);
+    await expect(page.locator('main')).toContainText(/\$|on the record/);
     for (const id of ['live', 'epochs', 'report', 'treasury']) await expect(page.locator(`section#${id}`)).toBeVisible();
     await expect(page.locator('#live .tile').first()).toBeVisible();
     await expect(page.locator('#live')).toContainText('Fees all time');
@@ -598,8 +598,8 @@ test.describe('signed-in app', () => {
     await page.getByRole('textbox', { name: 'Link code' }).fill('k7qm-2xda');
     await expect(page.locator('#terminal pre.term')).toContainText('--link K7QM2XDA');
     await expect(page.locator('#homebrew pre.term')).toContainText('--link K7QM2XDA');
-    // Node page links back here.
+    // The footer links back here from the Node page (the inline hint only appears once a link code exists).
     await page.goto('/app/node');
-    await expect(page.locator('main').getByRole('link', { name: 'Download for Mac' })).toHaveCount(2); // the Node page's hint + the footer
+    await expect(page.locator('main').getByRole('link', { name: 'Download for Mac' })).toHaveCount(1);
   });
 });
