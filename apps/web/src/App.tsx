@@ -12,8 +12,6 @@ import { Docs } from './pages/Docs';
 import { DownloadPage } from './pages/Download';
 import { Keys } from './pages/Keys';
 import { Landing } from './pages/Landing';
-import { LandingV2 } from './pages/LandingV2';
-import { LandingV3 } from './pages/LandingV3';
 import { LeaderboardPage } from './pages/Leaderboard';
 import { Privacy, Risk, Terms } from './pages/Legal';
 import { NodePage } from './pages/Node';
@@ -75,8 +73,6 @@ export function App() {
         <ErrorBoundary>
           <Routes>
             <Route path="/" element={<Landing />} />
-            <Route path="/v2" element={<LandingV2 />} />
-            <Route path="/v3" element={<LandingV3 />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/download" element={<DownloadPage />} />
             <Route path="/api" element={<ApiDocs />} />

@@ -3,15 +3,33 @@ import { GATEWAY_URL } from '../playwright.config';
 import { balanceUsd, parseUsd, signIn } from './helpers';
 
 test.describe('landing', () => {
-  test('loads with live stats from the gateway', async ({ page }) => {
+  test('hero, guest chat box, numbered sections and live numbers from the gateway', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Trading pays for');
-    const readout = page.getByLabel('Next distribution');
-    await expect(readout).toBeVisible();
-    // Seeded epoch: $100 of fees, $50 to holders, 3 eligible mock wallets.
-    await expect(readout).toContainText('Fees collected last epoch');
-    await expect(readout.locator('b').first()).toContainText('$100');
-    await expect(readout).toContainText('Epoch 02'); // one epoch run → next is 02
+    const h1 = page.getByRole('heading', { level: 1 });
+    await expect(h1).toContainText('Trades fund it.');
+    await expect(h1).toContainText('Macs serve it.');
+    await expect(h1).toContainText('Holders use it.');
+    // Live guest chat in the hero: quota pill from GET /v1/guest/quota, suggested prompts, composer.
+    const chat = page.getByLabel('Try the network');
+    await expect(chat).toBeVisible();
+    await expect(chat).toContainText('Live · Mesh network');
+    await expect(chat.locator('.pill')).toContainText(/\d+ \/ \d+ free/);
+    await expect(chat.getByRole('button', { name: 'Explain how Mesh pays for AI' })).toBeVisible();
+    await expect(chat.getByLabel('Message')).toBeVisible();
+    await expect(chat.getByRole('button', { name: 'Send' })).toBeDisabled();
+    // Key figures come from config/tokenomics.json.
+    const figures = page.getByLabel('Key figures');
+    await expect(figures).toContainText('1.5%');
+    await expect(figures).toContainText('1,000 MESH');
+    // Numbered sections in order.
+    for (const t of ['01 · How the ecosystem works', '02 · Three ways in', '03 · Why this is different', '04 · Privacy, stated plainly', '05 · Live numbers']) {
+      await expect(page.getByText(t, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('list').filter({ hasText: 'A trader swaps the token' })).toContainText('Node owners get paid');
+    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run.
+    await expect(page.getByText('Fees collected', { exact: true }).locator('..')).toContainText('$100');
+    await expect(page.getByText(/1 epochs run/)).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Three doors/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
 

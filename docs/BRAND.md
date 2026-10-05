@@ -78,7 +78,7 @@ Landing section copy that was changed from the first build:
 
 | Route | Purpose | File |
 | --- | --- | --- |
-| `/` | Hero A, four product rows, privacy statement, three steps | `apps/web/src/pages/Landing.tsx` |
+| `/` | Hero ("Trades fund it. Macs serve it. Holders use it.") with the free guest chat and key figures, ecosystem loop, three ways in, why this is different, privacy tiers, live numbers, final CTA | `apps/web/src/pages/Landing.tsx` (chat: `components/GuestChat.tsx`) |
 | `/docs` | Prose docs: what Mesh is, credits, network credits, key usage, running a node, FAQ, risk | `apps/web/src/pages/Docs.tsx` |
 | `/api` | API reference rendered from `apps/gateway/openapi.yaml` (grouped, examples, curl, copy) | `apps/web/src/pages/ApiDocs.tsx` |
 | `/terms`, `/privacy`, `/risk` | Plain-English drafts, marked "draft, not legal advice" | `apps/web/src/pages/Legal.tsx` |
