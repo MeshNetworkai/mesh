@@ -1,17 +1,13 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Engines } from '../components/Engines';
 import { GuestChat } from '../components/GuestChat';
 import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
-import { Notice, Spinner, Terminal, Tile } from '../components/ui';
+import { Terminal, Tile } from '../components/ui';
 import { PUBLIC_API_URL, STORAGE, TOKENOMICS, pctFromBps } from '../config';
-import * as api from '../lib/api';
-import { useAuth } from '../lib/auth';
 import { fmtCompact, fmtCost, fmtInt, fmtTime, fmtUsd } from '../lib/format';
 import { useStats } from '../lib/hooks';
-import { errorMessage } from '../lib/toast';
-import type { BetaInfo } from '../lib/types';
 
 /* ---------- derived copy from config/tokenomics.json (never hardcoded) ---------- */
 const T = TOKENOMICS;
@@ -27,74 +23,6 @@ const epochWord = T.epochSeconds === 3600 ? 'hour' : `${epochMin} minutes`;
 const MARKET_FEE_PCT = pctFromBps(T.marketplace.feeBps);
 const MAX_DISCOUNT_PCT = pctFromBps(T.marketplace.maxDiscountBps);
 
-/**
- * Beta CTA: wallet or e-mail → POST /waitlist. Shown instead of "Connect wallet" while
- * `beta.inviteRequired`; people who already hold a code sign in from the small link under it.
- */
-export function WaitlistForm({ beta, onConnect }: { beta: BetaInfo; onConnect: () => void }) {
-  const [value, setValue] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ position: number; alreadyListed: boolean } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const v = value.trim();
-    if (!v) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await api.joinWaitlist(v.includes('@') ? { email: v } : { wallet: v });
-      setDone({ position: r.position, alreadyListed: r.alreadyListed });
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (done) {
-    return (
-      <div className="waitlist stack sm" id="waitlist" aria-live="polite">
-        <Notice kind="ok">
-          {done.alreadyListed ? 'You are already on the list' : 'You are on the list'}
-          {done.position > 0 ? ` at position ${fmtInt(done.position)}` : ''}. Invites go out in batches; the code arrives at the address or wallet you gave.
-        </Notice>
-        <p className="small muted fine">
-          Already have a code?{' '}
-          <button type="button" className="linkbtn" onClick={onConnect}>
-            Connect wallet
-          </button>
-        </p>
-      </div>
-    );
-  }
-  return (
-    <form className="waitlist stack sm" id="waitlist" onSubmit={submit}>
-      <div className="keybox">
-        <input
-          id="waitlist-id"
-          className="input"
-          placeholder="wallet address or e-mail"
-          autoComplete="email"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          aria-label="Wallet address or e-mail"
-          disabled={busy}
-        />
-        <button className="btn primary" type="submit" disabled={busy || !value.trim()}>
-          {busy ? <Spinner /> : null} Join the waitlist
-        </button>
-      </div>
-      {error ? <Notice kind="bad">{error}</Notice> : null}
-      <p className="small muted fine">
-        {beta.label} is invite-only for now; invites go out in batches, oldest first. Have a code?{' '}
-        <button type="button" className="linkbtn" onClick={onConnect}>
-          Connect wallet
-        </button>{' '}
-        and enter it when asked.
-      </p>
-    </form>
-  );
-}
 
 /* ---------- copy blocks ---------- */
 
@@ -152,9 +80,6 @@ const CHAT_ID = 'guest-chat';
 
 export function Landing() {
   const { data: stats, loading, error } = useStats();
-  const { session, openModal } = useAuth();
-  const beta = stats?.beta ?? null;
-  const waitlistCta = Boolean(beta?.enabled && beta.inviteRequired) && !session;
   const skel = loading && !stats;
   // Engine 2 (docs/PRICING.md): the gateway says whether the usage-revenue share is on. Off until it confirms.
   const usageOn = stats?.usageShareEnabled === true;
@@ -212,7 +137,6 @@ export function Landing() {
             {usageOn ? ` and a share of what paid requests earn` : ''}. Spend them on open models answered by Macs in the network or on {frontierPhrase}, and sell the credits
             you do not use on the marketplace.
           </p>
-          {waitlistCta && beta ? <WaitlistForm beta={beta} onConnect={openModal} /> : null}
         </div>
         <GuestChat id={CHAT_ID} />
         <div className="tiles dense home-figures" aria-label="Key figures">

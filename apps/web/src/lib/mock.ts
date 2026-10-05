@@ -250,7 +250,7 @@ export const mockNodes = async (): Promise<NodesSummary> => {
 
 // ---------- public beta (mirrors config/tokenomics.json → beta) ----------
 
-export const MOCK_BETA: BetaInfo = { enabled: true, label: 'Beta', inviteRequired: true };
+export const MOCK_BETA: BetaInfo = { enabled: true, label: 'Beta', inviteRequired: false };
 const ADMITTED_KEY = 'mesh.mock.admitted';
 
 /**

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { MOCK, TOKENOMICS } from '../config';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useBeta } from '../lib/hooks';
 import { EVM_WALLETS, evmInstalled, getSolanaAdapters, solanaReady } from '../lib/wallets';
@@ -44,11 +43,7 @@ export function ConnectModal() {
       {auth.inviteNeeded ? (
         <div className="stack sm" aria-label="Invite code">
           <Notice kind="warn">
-            Mesh is in {beta?.label?.toLowerCase() ?? 'beta'} and this wallet is not on the list yet. Enter your invite code, then sign again. No code?{' '}
-            <Link to="/#waitlist" onClick={auth.closeModal}>
-              Join the waitlist
-            </Link>
-            .
+            Mesh is in {beta?.label?.toLowerCase() ?? 'beta'} and this wallet is not on the list yet. Enter your invite code, then sign again.
           </Notice>
           <input
             id="invite-code"
