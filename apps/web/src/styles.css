@@ -540,6 +540,9 @@ a.chip:hover {
 }
 .term.wrap {
   /* long one-liners: wrap instead of scrolling so the whole command is visible */
+  display: block; /* `.wrap` is also the page column (flex); a wrapped snippet must stay a plain block */
+  gap: 0;
+  padding-block: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-all;
@@ -2268,54 +2271,78 @@ table.schema table.schema {
   }
 }
 
-/* ---------- landing (ecosystem) ---------- */
-/* Homepage: V2's content and section order, rendered in this system. Everything below uses tokens only. */
-.eco-hero {
-  align-items: stretch;
-  text-align: left;
+/* ---------- landing (homepage v2) ---------- */
+/* One centred column: eyebrow, three-line headline, lede, the live chat as a wide card, then the key figures. Tokens only. */
+.home-hero {
+  align-items: center;
+  text-align: center;
   gap: 40px;
   padding-block: 32px 0;
 }
-.eco-hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 40px;
-  align-items: start;
-}
-.eco-hero-copy {
+.home-hero-copy {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 24px;
   min-width: 0;
+  width: 100%;
 }
-.eco-hero-copy .eyebrow .pill.beta {
+.home-hero-copy .eyebrow .pill.beta {
   vertical-align: middle;
   margin-left: 8px;
 }
-.eco-h1 {
-  font-size: clamp(44px, 6.2vw, 84px);
+.home-h1 {
+  font-size: clamp(44px, 6.4vw, 88px);
   max-width: 12ch;
 }
-.eco-h1 em {
+.home-h1 em {
   font-style: normal;
   color: var(--accent);
 }
-.eco-hero .lede {
+.home-hero .lede {
   font-size: 18px;
+  max-width: 64ch;
+  text-align: center;
 }
-.eco-hero .waitlist {
-  margin-inline: 0;
+.home-hero .waitlist {
+  margin-inline: auto;
 }
-.eco-figures {
+.home-hero .guestchat {
+  width: 100%;
+  max-width: 880px;
+}
+.home-hero .guestchat .chat-scroll {
+  min-height: 220px;
+}
+.home-hero .guestchat-empty .d-s {
+  max-width: none;
+}
+.home-figures {
   width: 100%;
 }
+.home-figures .tile {
+  align-items: center;
+  text-align: center;
+}
+.home-figures .tile .n {
+  font-size: clamp(22px, 1.9vw, 28px);
+  white-space: nowrap;
+}
 @media (min-width: 960px) {
-  .eco-hero-grid {
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    gap: clamp(40px, 5vw, 72px);
+  .home-figures {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
-  .eco-hero-copy {
-    padding-top: 16px;
+}
+@media (max-width: 420px) {
+  /* six small figures: two per row even on the narrowest phones */
+  .home-figures {
+    grid-template-columns: 1fr 1fr;
+  }
+  .home-figures .tile:nth-child(2n + 1) {
+    border-right: 1px solid var(--line);
+  }
+  .home-figures .tile:nth-last-child(-n + 2) {
+    border-bottom: 0;
   }
 }
 
@@ -2378,114 +2405,168 @@ table.schema table.schema {
   font-size: 16px;
 }
 
-/* Loop diagram: five nodes joined by arrows, one row on desktop, a column on phone. */
-.loop {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+/* Two-engine diagram (components/Engines.tsx): inline SVG, boxes and arrows on tokens; wide layout ≥ 860px, stacked below. */
+.engines {
+  width: 100%;
   border-top: 1px solid var(--line);
+  padding-top: 28px;
 }
-.loop-node {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 16px;
-  padding: 20px 0;
-  align-items: start;
+.engines-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--body);
+  overflow: visible;
 }
-.loop-node .glyph {
-  width: 56px;
-  height: 56px;
-  color: var(--fg);
+.engines-svg.wide {
+  display: none;
 }
-.loop-node .glyph .ac {
+.engines-svg.stacked {
+  max-width: 420px;
+  margin: 0 auto;
+}
+@media (min-width: 860px) {
+  .engines-svg.wide {
+    display: block;
+    max-width: 1056px;
+    margin: 0 auto;
+  }
+  .engines-svg.stacked {
+    display: none;
+  }
+}
+.engines-box rect {
+  fill: var(--bg);
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+.engines-box.holder rect {
+  fill: var(--accent-soft);
   stroke: var(--accent);
 }
-.loop-node .glyph .soft {
-  fill: var(--accent-soft);
+.engines-title {
+  font-size: 15px;
+  font-weight: 500;
+  fill: var(--fg);
 }
-.loop-node .k {
+.engines-sub {
+  font-size: 12px;
+  fill: var(--muted);
+}
+.engines-tag {
   font-size: 13px;
   font-weight: 500;
-  color: var(--muted);
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  fill: var(--muted);
 }
-.loop-node .k b {
-  color: var(--accent);
+.engines-label {
+  font-size: 12px;
   font-weight: 500;
+  fill: var(--muted);
 }
-.loop-node .t {
-  margin: 8px 0 6px;
+.engines-label.accent {
+  fill: var(--accent);
+}
+.engines-label.off {
+  fill: var(--muted);
+}
+.engines-note {
+  font-family: var(--display);
+  font-size: clamp(20px, 2.4vw, 26px);
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  text-align: center;
+  padding-top: 20px;
+  border-top: 1px dashed var(--line-2);
+}
+
+/* Compact liquidity book inside the "Sell what you don't use" column (components/MarketDepth.tsx). */
+.depth {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+}
+.depth-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.depth-n {
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: -0.03em;
+  line-height: 1;
   color: var(--fg);
 }
-.loop-node .c {
+.depth-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.depth-rows li {
+  display: grid;
+  grid-template-columns: 4ch minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
   color: var(--fg-2);
-  font-size: 14.5px;
 }
-.loop-arrow {
+.depth-bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.depth-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* "Switch in a minute": copy left, the two-line snippet right. */
+.switch-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  padding: 32px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.switch-copy {
   display: flex;
-  color: var(--line-2);
-  padding: 0 0 4px 20px;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
 }
-.loop-arrow svg {
-  width: 16px;
-  height: 28px;
-  transform: rotate(90deg);
+.switch-copy .sub {
+  color: var(--fg-2);
+  max-width: 56ch;
 }
-.loop-return {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding-top: 16px;
-  border-top: 1px dashed var(--line-2);
-  color: var(--muted);
+.switch-copy .sub code {
+  font-size: 0.9em;
+}
+.switch-strip .term-wrap {
+  align-self: center;
+}
+.switch-strip .term {
   font-size: 14px;
+  padding: 20px 88px 20px 22px;
 }
-.loop-return .ret {
-  color: var(--accent);
-  font-size: 20px;
-  line-height: 1;
+.switch-strip .term.wrap {
+  padding-block: 20px;
 }
-@media (min-width: 900px) {
-  .loop {
-    grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr 28px 1fr;
-    gap: 0 8px;
-    align-items: stretch;
-  }
-  .loop-node {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    gap: 14px;
-    padding: 24px 0 8px;
-  }
-  .loop-node .glyph {
-    width: 64px;
-    height: 64px;
-  }
-  .loop-arrow {
-    padding: 52px 0 0;
-    justify-content: center;
-  }
-  .loop-arrow svg {
-    transform: none;
-    width: 28px;
-    height: 16px;
-  }
-  .loop-return {
-    grid-column: 1 / -1;
-    margin-top: 24px;
-    position: relative;
-  }
-  .loop-return::before {
-    /* the return path: a thin bracket from the last node back under the first */
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -14px;
-    height: 14px;
-    border-left: 1px dashed var(--line-2);
-    border-right: 1px dashed var(--line-2);
+@media (min-width: 860px) {
+  .switch-strip {
+    grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+    gap: clamp(32px, 5vw, 72px);
+    align-items: center;
   }
 }
 
@@ -2555,8 +2636,54 @@ table.schema table.schema {
 .arrow-link:hover::after {
   transform: translateX(4px);
 }
+@media (min-width: 700px) {
+  .pillars.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 clamp(24px, 4vw, 56px);
+  }
+  .pillars.four .pillar:nth-child(2n + 1) {
+    position: relative;
+  }
+  .pillars.four .pillar:nth-child(2n)::before {
+    content: '';
+    position: absolute;
+    left: calc(clamp(24px, 4vw, 56px) / -2);
+    top: 32px;
+    bottom: 40px;
+    width: 1px;
+    background: var(--line);
+  }
+  .pillars.four .pillar {
+    position: relative;
+    padding: 32px 0 40px;
+  }
+}
+@media (min-width: 1100px) {
+  .pillars.four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0 clamp(20px, 2.6vw, 40px);
+  }
+  .pillars.four .pillar + .pillar::before {
+    content: '';
+    position: absolute;
+    left: calc(clamp(20px, 2.6vw, 40px) / -2);
+    top: 32px;
+    bottom: 40px;
+    width: 1px;
+    background: var(--line);
+  }
+}
+.pillar .depth {
+  margin: 4px 0 12px;
+}
+.pillar .depth-rows li {
+  padding-left: 0;
+}
+.pillar .depth-rows li::before {
+  content: none;
+}
 @media (min-width: 820px) {
-  .pillars {
+  .pillars:not(.four) {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0 clamp(24px, 4vw, 56px);
   }
@@ -2710,6 +2837,36 @@ table.schema table.schema {
   max-width: 60ch;
   border-top: 1px solid var(--line);
   padding-top: 16px;
+}
+
+/* ---------- numbers (pages/Numbers.tsx) ---------- */
+.numbers .num-jump {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.num-sec {
+  gap: 24px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 88px;
+}
+.num-head {
+  align-items: baseline;
+}
+.panels.three {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.kv.ledger {
+  gap: 10px 16px;
+}
+.kv.ledger .total {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+  font-weight: 500;
+}
+.pill.sm.off {
+  color: var(--muted);
 }
 
 /* ---------- credit market (pages/Market.tsx) ---------- */

@@ -14,6 +14,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
     links: [
       { label: 'App', to: '/app' },
       { label: 'Chat', to: '/app/chat' },
+      { label: 'Credit market', to: '/app/market' },
       { label: 'API keys', to: '/app/keys' },
       { label: 'Run a node', to: '/app/node' },
       { label: 'Download for Mac', to: '/download' },
@@ -22,10 +23,11 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
   {
     title: 'Numbers',
     links: [
-      { label: 'Stats', to: '/app/stats' },
-      { label: 'Report', to: '/report' },
+      { label: 'Live network', to: '/numbers#live' },
+      { label: 'Epochs', to: '/numbers#epochs' },
+      { label: 'Weekly report', to: '/numbers#report' },
+      { label: 'Treasury and market', to: '/numbers#treasury' },
       { label: 'Leaderboard', to: '/leaderboard', points: true }, // hidden while the points programme is disabled
-      { label: 'Epochs', href: `${PUBLIC_API_URL}/epochs` },
       { label: 'Health', href: `${PUBLIC_API_URL}/health` },
     ],
   },
@@ -65,7 +67,7 @@ export function Footer() {
             </span>
             {TOKENOMICS.name}
           </Link>
-          <p>Trading fees become AI credits, every hour. Served by Macs in the Mesh network.</p>
+          <p>Trading fees become AI credits every hour. Answered by Macs, sold on when unused, every dollar on the record.</p>
           <div className="row" style={{ gap: 12 }}>
             {SOCIAL.map((s) => (
               <a key={s.label} href={s.href} rel="noreferrer noopener" target="_blank">

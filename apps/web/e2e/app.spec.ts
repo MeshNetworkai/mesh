@@ -3,33 +3,63 @@ import { GATEWAY_URL } from '../playwright.config';
 import { balanceUsd, parseUsd, signIn } from './helpers';
 
 test.describe('landing', () => {
-  test('hero, guest chat box, numbered sections and live numbers from the gateway', async ({ page }) => {
+  test('centred hero with the wide guest chat, two-engine diagram, four ways in, live numbers from the gateway', async ({ page }) => {
     await page.goto('/');
     const h1 = page.getByRole('heading', { level: 1 });
     await expect(h1).toContainText('Trades fund it.');
     await expect(h1).toContainText('Macs serve it.');
+    // config/tokenomics.json ships usageShare.enabled=false → the third line is the holders one, and the
+    // engine-2 arrow into the pool is dashed with a "coming" label (never claimed live).
     await expect(h1).toContainText('Holders use it.');
-    // Live guest chat in the hero: quota pill from GET /v1/guest/quota, suggested prompts, composer.
+    await expect(h1).not.toContainText('Usage funds it.');
+    const engines = page.locator('.engines');
+    await expect(engines).toHaveAttribute('data-usage-share', 'off');
+    await expect(engines.locator('svg.wide')).toBeVisible();
+    await expect(engines.locator('svg.wide')).toContainText('30% share · coming');
+    await expect(engines.locator('svg.wide')).toContainText('1.5% fee');
+    await expect(page.getByText('Nothing is minted to pay anyone.')).toBeVisible();
+    // Lede names the four things the product does.
+    const lede = page.locator('.home-hero .lede');
+    await expect(lede).toContainText('every hour');
+    await expect(lede).toContainText('Macs');
+    await expect(lede).toContainText('marketplace');
+    await expect(lede).toContainText('frontier models');
+    // One centred column: headline and chat card share the viewport's centre line; the chat is the wide object.
+    const h1Box = (await h1.boundingBox())!;
     const chat = page.getByLabel('Try the network');
     await expect(chat).toBeVisible();
+    const chatBox = (await chat.boundingBox())!;
+    const vw = page.viewportSize()!.width;
+    expect(Math.abs(h1Box.x + h1Box.width / 2 - vw / 2)).toBeLessThan(8);
+    expect(Math.abs(chatBox.x + chatBox.width / 2 - vw / 2)).toBeLessThan(8);
+    expect(chatBox.width).toBeGreaterThan(800);
+    // Live guest chat: quota pill from GET /v1/guest/quota, model picker, suggested prompts, composer.
     await expect(chat).toContainText('Live · Mesh network');
     await expect(chat.locator('.pill.num')).toContainText(/\d+ \/ \d+ free/);
+    await expect(chat.getByLabel('Model')).toBeVisible();
     await expect(chat.getByRole('button', { name: 'Explain how Mesh pays for AI' })).toBeVisible();
     await expect(chat.getByLabel('Message')).toBeVisible();
     await expect(chat.getByRole('button', { name: 'Send' })).toBeDisabled();
-    // Key figures come from config/tokenomics.json.
+    // Key figures come from config/tokenomics.json (+ the marketplace fee).
     const figures = page.getByLabel('Key figures');
     await expect(figures).toContainText('1.5%');
     await expect(figures).toContainText('1,000 MESH');
+    await expect(figures).toContainText('2.5%');
     // Numbered sections in order.
-    for (const t of ['01 · How the ecosystem works', '02 · Three ways in', '03 · Why this is different', '04 · Privacy, stated plainly', '05 · Live numbers']) {
+    for (const t of ['01 · How the money moves', '02 · Four ways in', "03 · Why it's different", '04 · Privacy, stated plainly', '05 · Live numbers']) {
       await expect(page.getByText(t, { exact: true })).toBeVisible();
     }
-    await expect(page.getByRole('list').filter({ hasText: 'A trader swaps the token' })).toContainText('Node owners get paid');
-    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run.
+    // Four ways in, with the live liquidity book (GET /market/book) in the "sell" column.
+    await expect(page.locator('.pillars.four .pillar')).toHaveCount(4);
+    await expect(page.getByLabel('Credit market, live')).toBeVisible();
+    await expect(page.locator('.pillar').filter({ hasText: "Sell what you don't use" }).getByRole('link', { name: 'Open the market' })).toHaveAttribute('href', '/app/market');
+    // Switch strip points at the API page's guide.
+    await expect(page.getByRole('link', { name: /Snippets for curl/ })).toHaveAttribute('href', '/api#switch');
+    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run; the numbers link goes to /numbers.
     await expect(page.getByText('Fees collected', { exact: true }).locator('..')).toContainText('$100');
     await expect(page.getByText(/1 epochs run/)).toBeVisible();
-    await expect(page.getByRole('heading', { name: /Three doors/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'All the numbers' })).toHaveAttribute('href', '/numbers');
+    await expect(page.getByRole('heading', { name: /Four doors/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
 
@@ -206,15 +236,49 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
-  test('network page renders the public stats', async ({ page }) => {
+  test('top nav: Chat · Market · Run a node · Numbers · Docs, market and node readable signed out', async ({ page }) => {
+    await page.goto('/');
+    const nav = page.getByRole('navigation', { name: 'Primary' });
+    const labels = await nav.getByRole('link').allInnerTexts();
+    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['Chat', 'Market', 'Run a node', 'Numbers', 'Docs']);
+    await expect(nav.getByRole('link', { name: 'Download' })).toHaveCount(0);
+    await expect(page.locator('footer').getByRole('link', { name: 'Download for Mac' })).toBeVisible();
+    await expect(nav.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+    await nav.getByRole('link', { name: 'Market' }).click();
+    await expect(page).toHaveURL(/\/app\/market$/);
+    await expect(page.locator('span.display', { hasText: 'Credit market' })).toBeVisible();
+    await expect(page.getByText('Connect a wallet to see your credits')).toHaveCount(0);
+    await nav.getByRole('link', { name: 'Run a node' }).click();
+    await expect(page).toHaveURL(/\/app\/node$/);
+  });
+
+  test('numbers page: live tiles, epochs, weekly report, treasury/market/usage-share; /stats and /report redirect with the hash', async ({ page }) => {
+    await page.goto('/numbers');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.locator('main')).toContainText(/\$|No fees collected yet/);
+    for (const id of ['live', 'epochs', 'report', 'treasury']) await expect(page.locator(`section#${id}`)).toBeVisible();
+    await expect(page.locator('#live .tile').first()).toBeVisible();
+    await expect(page.locator('#live')).toContainText('Fees all time');
+    await expect(page.locator('#epochs table tbody tr')).toHaveCount(1); // the seeded epoch
+    await expect(page.locator('#report')).toContainText('Weekly report');
+    await expect(page.locator('#treasury')).toContainText('Treasury ledger');
+    await expect(page.locator('#treasury')).toContainText('Credit marketplace');
+    await expect(page.locator('#treasury')).toContainText('Usage-revenue share');
+    await expect(page.locator('#treasury .pill', { hasText: 'off' })).toBeVisible(); // usageShare ships disabled
+    await expect(page.locator('main')).not.toContainText('Something broke');
+    // Old addresses redirect and keep their hash.
+    await page.goto('/report#treasury');
+    await expect(page).toHaveURL(/\/numbers#treasury$/);
+    await page.goto('/stats');
+    await expect(page).toHaveURL(/\/numbers$/);
     await page.goto('/app/stats');
-    await expect(page.locator('body')).toContainText(/Network|Epoch/);
-    await expect(page.locator('.tile').first()).toBeVisible();
+    await expect(page).toHaveURL(/\/numbers$/);
   });
 
   test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Download' }).click();
+    // Download lives in the footer only (the top nav is Chat · Market · Run a node · Numbers · Docs).
+    await page.locator('footer').getByRole('link', { name: 'Download for Mac' }).click();
     await expect(page).toHaveURL(/\/download$/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Run a node');
     // The sample latest.json in apps/web/public feeds version + hashes.
@@ -238,18 +302,8 @@ test.describe('signed-in app', () => {
     await page.getByRole('textbox', { name: 'Link code' }).fill('k7qm-2xda');
     await expect(page.locator('#terminal pre.term')).toContainText('--link K7QM2XDA');
     await expect(page.locator('#homebrew pre.term')).toContainText('--link K7QM2XDA');
-    // Footer + Node page link back here.
-    await expect(page.locator('footer').getByRole('link', { name: 'Download for Mac' })).toHaveAttribute('href', '/download');
+    // Node page links back here.
     await page.goto('/app/node');
     await expect(page.locator('main').getByRole('link', { name: 'Download for Mac' })).toHaveCount(2); // the Node page's hint + the footer
-  });
-
-  test('report page renders at /report (public, fed by GET /report)', async ({ page }) => {
-    await page.goto('/report');
-    await expect(page.locator('main')).not.toContainText('Nothing here');
-    await expect(page.locator('main')).not.toContainText('Something broke');
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    // seeded epoch: $100 of fees → the report has something to say; a fresh DB shows the empty state
-    await expect(page.locator('main')).toContainText(/\$|No fees collected yet/);
   });
 });

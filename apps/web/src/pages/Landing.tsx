@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Engines } from '../components/Engines';
 import { GuestChat } from '../components/GuestChat';
+import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
-import { Notice, Spinner, Tile } from '../components/ui';
-import { STORAGE, TOKENOMICS } from '../config';
+import { Notice, Spinner, Terminal, Tile } from '../components/ui';
+import { PUBLIC_API_URL, STORAGE, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtCompact, fmtCost, fmtInt, fmtTime, fmtUsd } from '../lib/format';
@@ -21,6 +23,8 @@ const netPrice = fmtCost(T.networkPricePerMTokens);
 const nodePay = fmtCost(T.nodeRewardUsdPerMTokens);
 const epochMin = Math.round(T.epochSeconds / 60);
 const epochWord = T.epochSeconds === 3600 ? 'hour' : `${epochMin} minutes`;
+/** Marketplace fee (docs/MARKETPLACE.md, config `marketplace.feeBps`); the live value is also on GET /market/config. */
+const MARKET_FEE_PCT = '2.5%';
 
 /**
  * Beta CTA: wallet or e-mail → POST /waitlist. Shown instead of "Connect wallet" while
@@ -91,124 +95,41 @@ export function WaitlistForm({ beta, onConnect }: { beta: BetaInfo; onConnect: (
   );
 }
 
-/* ---------- loop diagram ---------- */
+/* ---------- copy blocks ---------- */
 
-function Arrow() {
-  return (
-    <span className="loop-arrow" aria-hidden="true">
-      <svg viewBox="0 0 28 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M1 8h25M20 2l6 6-6 6" />
-      </svg>
-    </span>
-  );
-}
-
-const GLYPH_PROPS = { viewBox: '0 0 72 72', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-
-const LOOP = [
+/** Six points, written against the one-pager comparison without naming the other product. */
+const WHY = (usageOn: boolean) => [
   {
-    k: 'Trade',
-    b: feePct,
-    t: 'A trader swaps the token',
-    c: `Every ${T.ticker} swap pays a ${feePct} fee into the protocol. That fee is the only thing that funds the network.`,
-    glyph: (
-      <svg {...GLYPH_PROPS} className="glyph" aria-hidden="true">
-        <circle cx="26" cy="36" r="14" />
-        <circle cx="46" cy="36" r="14" className="ac" />
-        <path d="M14 58h44" />
-        <path d="M58 54l4 4-4 4" className="ac" />
-      </svg>
-    ),
+    k: 'i · Two engines',
+    t: 'Two engines, not one',
+    c: usageOn
+      ? `Trading fees fund the hourly pool, and so does the margin on paid requests. Holders earn when people use the network, not only when they trade it.`
+      : `Trading fees fund the hourly pool today. The second engine, a share of the margin on paid requests, is built and audited; it switches on with the pricing decision, not before.`,
   },
   {
-    k: 'Split',
-    b: `${holderPct} / ${treasuryPct}`,
-    t: `Fees become credits every ${epochWord}`,
-    c: `${holderPct} is converted into AI credits for every wallet holding at least ${minHold}, pro-rata. ${treasuryPct} goes to the treasury.`,
-    glyph: (
-      <svg {...GLYPH_PROPS} className="glyph" aria-hidden="true">
-        <path d="M36 12v18" />
-        <path d="M36 30L18 48M36 30l18 18" />
-        <rect x="10" y="48" width="16" height="12" className="soft" />
-        <rect x="46" y="48" width="16" height="12" />
-        <circle cx="36" cy="12" r="3" className="ac" />
-      </svg>
-    ),
+    k: 'ii · Cost',
+    t: 'Credits are served by Macs, not bought from a cloud',
+    c: `A dollar of credit spent on an open model buys ${fmtCompact(Math.round(1 / T.networkPricePerMTokens))}M tokens at ${netPrice} per million, answered by a Mac that is paid ${nodePay}; the difference comes from the treasury share of fees, not from a cloud invoice at list price.`,
   },
   {
-    k: 'Spend',
-    b: `${netPrice} / M`,
-    t: 'Credits buy answers',
-    c: `Holders spend credits; anyone else pays a flat ${netPrice} per million tokens when a node serves the request. One key, any OpenAI client.`,
-    glyph: (
-      <svg {...GLYPH_PROPS} className="glyph" aria-hidden="true">
-        <rect x="12" y="18" width="48" height="30" rx="2" />
-        <path d="M20 28h22M20 36h14" />
-        <path d="M36 48v10M26 58h20" />
-        <circle cx="50" cy="36" r="2.5" className="ac" />
-      </svg>
-    ),
+    k: 'iii · Market',
+    t: 'Sell what you do not use',
+    c: `List unused credit at any discount up to 70%; buyers pay below face value and spend it on any model. The fee is ${MARKET_FEE_PCT}, half of it back to holders in the next ${epochWord}.`,
   },
   {
-    k: 'Serve',
-    b: 'Macs',
-    t: 'Macs answer, privately',
-    c: 'Requests are stripped to the model and the messages and served by Apple Silicon Macs running the node app. Nothing is stored after the reply.',
-    glyph: (
-      <svg {...GLYPH_PROPS} className="glyph" aria-hidden="true">
-        <rect x="14" y="16" width="44" height="30" rx="3" />
-        <path d="M14 40h44M30 52h12M36 46v6" />
-        <path d="M24 30l5 4 5-4" className="ac" />
-        <path d="M40 26l4 0M40 30l4 0" className="ac" />
-      </svg>
-    ),
+    k: 'iv · Models',
+    t: 'Frontier models and a cheaper open tier',
+    c: `Claude, GPT, Gemini, Grok and DeepSeek through one key at list minus the discount when one is set, routed only to zero-data-retention providers; Llama and Qwen on Macs for a flat ${netPrice} per million.`,
   },
   {
-    k: 'Earn',
-    b: `${nodePay} / M`,
-    t: 'Node owners get paid',
-    c: `Each Mac earns ${nodePay} per million tokens it serves, tracked per job and paid from the treasury share of the same fees.`,
-    glyph: (
-      <svg {...GLYPH_PROPS} className="glyph" aria-hidden="true">
-        <path d="M14 56V30M26 56V22M38 56V38M50 56V16" />
-        <path d="M10 60h52" />
-        <circle cx="50" cy="16" r="3" className="ac" />
-        <path d="M14 30l12-8 12 16 12-22" className="ac" strokeDasharray="2 3" />
-      </svg>
-    ),
-  },
-];
-
-const WHY = [
-  {
-    k: 'i · Funding',
-    t: 'Credits are a share of real fees',
-    c: `Not an emission schedule. ${holderPct} of every ${feePct} fee is converted into AI credits each ${epochWord}; when trading is quiet, so are the credits.`,
-  },
-  {
-    k: 'ii · Privacy',
+    k: 'v · Privacy',
     t: 'Nodes never see who asked',
-    c: 'Requests are served by independent Macs that receive only the model and the messages. Choose a tier per request: trusted, network, or a zero-data-retention upstream.',
+    c: 'A Mac receives the model and the messages, nothing else. Three tiers per request: trusted, network, or upstream only. A sampled share of node answers is re-run elsewhere and compared.',
   },
   {
-    k: 'iii · Price',
-    t: 'A flat price per million tokens',
-    c: `${netPrice} per million tokens whenever a node serves you, instead of list pricing. Every reply says what it cost and who served it.`,
-  },
-  {
-    k: 'iv · Hardware',
-    t: 'Runs on machines people already own',
-    c: 'The node app is one command on an Apple Silicon Mac. No racks, no procurement, no capital expenditure to recoup.',
-  },
-  {
-    k: 'v · Audit',
-    t: 'Everything is auditable',
-    c: 'Epochs, the weekly report and the treasury ledger are public. Anyone can check that the credits issued match the fees collected.',
-  },
-  {
-    k: 'vi · Compatibility',
-    t: 'Works wherever an OpenAI key works',
-    c: 'Point an existing client at the gateway and change nothing else. The same key, the same models, a different bill.',
+    k: 'vi · Record',
+    t: 'Everything on the record',
+    c: 'Every epoch, the treasury ledger, marketplace fills and the usage share are public down to the dollar. Check that the credits issued match the fees collected.',
   },
 ];
 
@@ -222,6 +143,8 @@ const TIERS = [
   { name: 'Upstream (ZDR)', desc: 'Skips the network for zero-data-retention providers only, at list price.', tag: 'list price' },
 ];
 
+const SWITCH_SNIPPET = `base_url = "${PUBLIC_API_URL}/v1"\napi_key  = "mesh_sk_…"   # from /app/keys`;
+
 /* ---------- page ---------- */
 
 const CHAT_ID = 'guest-chat';
@@ -232,6 +155,10 @@ export function Landing() {
   const beta = stats?.beta ?? null;
   const waitlistCta = Boolean(beta?.enabled && beta.inviteRequired) && !session;
   const skel = loading && !stats;
+  // Engine 2 (docs/PRICING.md): the gateway says whether the usage-revenue share is on. Off until it confirms.
+  const usageOn = stats?.usageShareEnabled === true;
+  const discountBps = stats?.upstreamDiscountBps ?? T.upstreamDiscountBps;
+  const frontierPhrase = discountBps > 0 ? `frontier models ${discountBps / 100}% below list` : 'frontier models at list price through zero-data-retention providers';
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
   // Kept only while the points programme is on (built, disabled by default).
   const [params] = useSearchParams();
@@ -253,30 +180,41 @@ export function Landing() {
 
   return (
     <div className="wrap">
-      {/* 1 · hero: copy left, live guest chat right, key figures underneath */}
-      <section className="hero eco-hero" aria-labelledby="hero-h1">
-        <div className="eco-hero-grid">
-          <div className="eco-hero-copy">
-            <p className="eyebrow">
-              {T.name} · ${T.ticker} · {T.chain.charAt(0).toUpperCase() + T.chain.slice(1)}
-              <BetaPill />
-            </p>
-            <h1 className="display eco-h1" id="hero-h1">
-              Trades fund it.
-              <br />
-              Macs serve it.
-              <br />
-              <em>Holders use it.</em>
-            </h1>
-            <p className="lede">
-              Every swap of ${T.ticker} pays a {feePct} fee. Half becomes AI credits for holders each {epochWord}; the requests are answered privately
-              by Macs in the network, and the people who run them are paid per million tokens.
-            </p>
-            {waitlistCta && beta ? <WaitlistForm beta={beta} onConnect={openModal} /> : null}
-          </div>
-          <GuestChat id={CHAT_ID} />
+      {/* 1 · hero: one centred column; the live chat is the object, wide, with the model picker visible */}
+      <section className="hero home-hero" aria-labelledby="hero-h1">
+        <div className="home-hero-copy">
+          <p className="eyebrow">
+            {T.name} · ${T.ticker} · {T.chain.charAt(0).toUpperCase() + T.chain.slice(1)}
+            <BetaPill />
+          </p>
+          <h1 className="display home-h1" id="hero-h1">
+            {usageOn ? (
+              <>
+                Trades fund it.
+                <br />
+                Usage funds it.
+                <br />
+                <em>Macs serve it.</em>
+              </>
+            ) : (
+              <>
+                Trades fund it.
+                <br />
+                Macs serve it.
+                <br />
+                <em>Holders use it.</em>
+              </>
+            )}
+          </h1>
+          <p className="lede">
+            Hold {minHold} and AI credits land in your wallet every {epochWord}, paid from the {feePct} trading fee
+            {usageOn ? ` and a share of what paid requests earn` : ''}. Spend them on open models answered by Macs in the network or on {frontierPhrase}, and sell the credits
+            you do not use on the marketplace.
+          </p>
+          {waitlistCta && beta ? <WaitlistForm beta={beta} onConnect={openModal} /> : null}
         </div>
-        <div className="tiles dense eco-figures" aria-label="Key figures">
+        <GuestChat id={CHAT_ID} />
+        <div className="tiles dense home-figures" aria-label="Key figures">
           <div className="tile">
             <span className="l">Fee</span>
             <span className="n">{feePct}</span>
@@ -293,78 +231,57 @@ export function Landing() {
             <span className="d">to be credited</span>
           </div>
           <div className="tile">
-            <span className="l">Price / M</span>
+            <span className="l">Network price</span>
             <span className="n">{netPrice}</span>
-            <span className="d">when a node serves you</span>
+            <span className="d">per million tokens on a Mac</span>
           </div>
           <div className="tile">
-            <span className="l">Node pay / M</span>
+            <span className="l">Node pay</span>
             <span className="n">{nodePay}</span>
             <span className="d">per million tokens served</span>
           </div>
+          <div className="tile">
+            <span className="l">Marketplace fee</span>
+            <span className="n">{MARKET_FEE_PCT}</span>
+            <span className="d">half of it back to holders</span>
+          </div>
         </div>
       </section>
 
-      {/* 2 · how the ecosystem works */}
+      {/* 2 · how the money moves */}
       <section aria-labelledby="how-h">
         <div className="sec-head">
           <p className="eyebrow" id="how-h">
-            01 · How the ecosystem works
+            01 · How the money moves
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
-              The fee goes round, <span className="muted">and comes back as answers.</span>
+              Two engines, <span className="muted">one hourly pool.</span>
             </h2>
             <p className="sub">
-              Nothing here is minted to pay anyone. Trading pays the holders, the holders pay the Macs, the Macs keep the network cheap enough to
-              trade on.
+              Trading pays a {feePct} fee; {holderPct} becomes credits for holders every {epochWord}, {treasuryPct} goes to the treasury. Paid requests and marketplace sales leave a
+              margin{usageOn ? ', and a share of it joins the same pool' : '; the holder share of it is built and switches on with the pricing decision'}. The treasury pays the Macs.
             </p>
           </div>
         </div>
-        <div className="loop" role="list">
-          {LOOP.map((n, i) => (
-            <div key={n.k} style={{ display: 'contents' }}>
-              <div className="loop-node" role="listitem">
-                {n.glyph}
-                <div>
-                  <p className="k">
-                    <span>
-                      {String(i + 1).padStart(2, '0')} · {n.k}
-                    </span>
-                    <b className="num">{n.b}</b>
-                  </p>
-                  <p className="t display d-s">{n.t}</p>
-                  <p className="c">{n.c}</p>
-                </div>
-              </div>
-              {i < LOOP.length - 1 ? <Arrow /> : null}
-            </div>
-          ))}
-          <p className="loop-return">
-            <span className="ret" aria-hidden="true">
-              ↺
-            </span>
-            <span>
-              The treasury share that pays the Macs comes from the same fee, so every {epochWord} of trading funds the next {epochWord} of answers.
-            </span>
-          </p>
-        </div>
+        <Engines usageShareOn={usageOn} upstreamDiscountBps={discountBps} />
+        <p className="engines-note">Nothing is minted to pay anyone.</p>
       </section>
 
-      {/* 3 · three ways in */}
+      {/* 3 · four ways in */}
       <section aria-labelledby="ways-h">
         <div className="sec-head">
           <p className="eyebrow" id="ways-h">
-            02 · Three ways in
+            02 · Four ways in
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
-              Use it, run it, <span className="muted">or hold it.</span>
+              Use it, sell it, run it, <span className="muted">or hold it.</span>
             </h2>
-            <p className="sub">Each role pays the others. You do not need a Mac to use the network, or to hold the token to run one.</p>
+            <p className="sub">Each role pays the others. You do not need a Mac to use the network, a wallet to try it, or the token to run a node.</p>
           </div>
         </div>
-        <div className="pillars">
+        <div className="pillars four">
           <article className="pillar">
             <span className="display d-l n">01</span>
             <h3 className="display d-s">Use it</h3>
@@ -379,22 +296,34 @@ export function Landing() {
           </article>
           <article className="pillar">
             <span className="display d-l n">02</span>
-            <h3 className="display d-s">Run a Mac</h3>
+            <h3 className="display d-s">Sell what you don't use</h3>
             <ul>
-              <li>Leave an Apple Silicon Mac open. One command, or download the menu-bar app.</li>
-              <li>Earn {nodePay} per million tokens served, tracked per job.</li>
-              <li>Pause any time. Nothing about the person asking ever reaches your machine.</li>
+              <li>List unused credit at a discount; buyers get it below face value.</li>
+              <li>{MARKET_FEE_PCT} fee on the sale, half of it back to holders next {epochWord}.</li>
             </ul>
-            <Link className="arrow-link" to="/download">
-              Download for Mac
+            <MarketDepthBook />
+            <Link className="arrow-link" to="/app/market">
+              Open the market
             </Link>
           </article>
           <article className="pillar">
             <span className="display d-l n">03</span>
+            <h3 className="display d-s">Run a Mac</h3>
+            <ul>
+              <li>Leave an Apple Silicon Mac open. One command, or the menu-bar app.</li>
+              <li>Earn {nodePay} per million tokens served, tracked per job.</li>
+              <li>Pause any time. Nothing about the person asking reaches your machine.</li>
+            </ul>
+            <Link className="arrow-link" to="/app/node">
+              Run a node
+            </Link>
+          </article>
+          <article className="pillar">
+            <span className="display d-l n">04</span>
             <h3 className="display d-s">Hold the token</h3>
             <ul>
               <li>Hold {minHold} and credits drop every {epochWord}. Nothing to claim.</li>
-              <li>The full epoch history is public, down to the wallet.</li>
+              <li>{usageOn ? 'Fees and the usage share, pro-rata, down to the wallet.' : 'The full epoch history is public, down to the wallet.'}</li>
               <li>Stake for a bigger share when staking is live.</li>
             </ul>
             <Link className="arrow-link" to="/docs">
@@ -404,28 +333,56 @@ export function Landing() {
         </div>
       </section>
 
-      {/* 4 · why this is different */}
+      {/* 4 · why it's different */}
       <section aria-labelledby="why-h">
         <div className="sec-head">
           <p className="eyebrow" id="why-h">
-            03 · Why this is different
+            03 · Why it's different
           </p>
           <h2 className="display d-m">
-            Real fees, real machines, <span className="muted">everything on the record.</span>
+            Real fees, real margins, real machines, <span className="muted">everything on the record.</span>
           </h2>
         </div>
         <div className="why">
-          {WHY.map((w) => (
+          {WHY(usageOn).map((w) => (
             <div className="why-item" key={w.k}>
               <span className="k">{w.k}</span>
               <h3 className="display d-s">{w.t}</h3>
-              <p>{w.c}</p>
+              <p>
+                {w.c}
+                {w.k.startsWith('vi') ? (
+                  <>
+                    {' '}
+                    <Link to="/numbers">See the numbers</Link>.
+                  </>
+                ) : null}
+              </p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* 5 · privacy */}
+      {/* 5 · switch in a minute */}
+      <section aria-labelledby="switch-h" className="switch-strip">
+        <div className="switch-copy">
+          <p className="eyebrow" id="switch-h">
+            Switch in a minute
+          </p>
+          <h2 className="display d-m">
+            Change two strings. <span className="muted">Keep your code.</span>
+          </h2>
+          <p className="sub">
+            Point any OpenAI-compatible client at the gateway and swap the key. Model ids are unchanged; <code className="mono">GET /v1/models</code> lists the catalogue with the
+            Mesh price next to list.
+          </p>
+          <Link className="arrow-link" to="/api#switch">
+            Snippets for curl, Python, Node, Cursor and more
+          </Link>
+        </div>
+        <Terminal code={SWITCH_SNIPPET} label="Base URL and key" wrap />
+      </section>
+
+      {/* 6 · privacy */}
       <section aria-labelledby="priv-h">
         <div className="ink privacy">
           <span className="glow" aria-hidden="true" />
@@ -451,7 +408,7 @@ export function Landing() {
         </div>
       </section>
 
-      {/* 6 · live numbers */}
+      {/* 7 · live numbers */}
       <section aria-labelledby="nums-h">
         <div className="sec-head">
           <p className="eyebrow" id="nums-h">
@@ -476,19 +433,22 @@ export function Landing() {
               ? `Live numbers unavailable right now (${error}).`
               : `${fmtInt(stats?.epochsRun ?? null)} epochs run · ${fmtInt(stats?.holdersEligibleLastEpoch ?? null)} wallets credited last epoch`}
           </span>
-          <Link to="/report">Weekly report</Link>
+          <Link to="/numbers">All the numbers</Link>
         </p>
       </section>
 
-      {/* 7 · final CTA */}
+      {/* 8 · final CTA */}
       <section className="final" aria-labelledby="final-h">
         <h2 className="display d-xl" id="final-h">
-          Three doors. <em>Same room.</em>
+          Four doors. <em>Same room.</em>
         </h2>
         <div className="row">
           <button type="button" className="btn primary" onClick={focusChat}>
             Start chatting
           </button>
+          <Link className="btn secondary" to="/app/market">
+            Open the market
+          </Link>
           <Link className="btn secondary" to="/download">
             Run a node
           </Link>

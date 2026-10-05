@@ -179,6 +179,9 @@ const state = {
   }
 })();
 
+/** Engine 2 (usage-revenue share) in mock mode: `VITE_MOCK_USAGE_SHARE=1` previews the "on" state of the homepage diagram and the report. */
+const MOCK_USAGE_SHARE_ON = import.meta.env.VITE_MOCK_USAGE_SHARE === '1';
+
 export const mockStats = async (): Promise<Stats> => {
   await sleep(350);
   const end = Math.floor(now() / EPOCH) * EPOCH;
@@ -215,6 +218,10 @@ export const mockStats = async (): Promise<Stats> => {
     beta: MOCK_BETA,
     verificationEnabled: true,
     starterGrants: { enabled: mockStarter.enabled, amountUsd: TOKENOMICS.starterCredits.amountUsd, granted: mockStarter.grants.length, remaining: Math.max(0, TOKENOMICS.starterCredits.maxWallets - mockStarter.grants.length) },
+    usageShareEnabled: MOCK_USAGE_SHARE_ON, // mirrors config/tokenomics.json: built, off by default
+    usageShareToHolders24hUsd: MOCK_USAGE_SHARE_ON ? 61.2 : 0,
+    upstreamDiscountBps: TOKENOMICS.upstreamDiscountBps,
+    upstreamMarkupBps: TOKENOMICS.upstreamMarkupBps,
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
@@ -774,7 +781,22 @@ export const mockReport = async (): Promise<Report> => {
       ...totals,
       creditsOutstandingUsd: round2(totals.creditsOutUsd + totals.starterCreditsUsd - totals.creditsUsedUsd),
       walletsWithCredits: 1_312,
-      treasury: { feeShareUsd: totals.treasuryInUsd, nodeRewardAccrualUsd: -totals.nodeRewardsUsd, buybackUsd: 0, opsUsd: ops, otherUsd: 0, balanceUsd: balance },
+      treasury: { feeShareUsd: totals.treasuryInUsd, nodeRewardAccrualUsd: -totals.nodeRewardsUsd, buybackUsd: 0, opsUsd: ops, otherUsd: 0, guestChatUsd: -38.4, marketFeeUsd: 61.18, balanceUsd: balance },
+      marketplace: { listed: 6_420, filled: 4_894, paid: 3_640.5, fills: 212, feesToHolders: 61.18, feesToTreasury: 61.18, openDepth: 1_526, openListings: 9, bestDiscountBps: 3000, avgDiscountBps: 2560 },
+      usageShare: {
+        enabled: MOCK_USAGE_SHARE_ON,
+        holderBps: 3000,
+        treasuryBps: 7000,
+        marginUsd: MOCK_USAGE_SHARE_ON ? 2_140.4 : 0,
+        toHoldersUsd: MOCK_USAGE_SHARE_ON ? 642.12 : 0,
+        toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 1_498.28 : 0,
+        requests: MOCK_USAGE_SHARE_ON ? 184_200 : 0,
+        bySource: {
+          network: { marginUsd: MOCK_USAGE_SHARE_ON ? 1_610.4 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 483.12 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 1_127.28 : 0, requests: MOCK_USAGE_SHARE_ON ? 131_000 : 0 },
+          upstream: { marginUsd: MOCK_USAGE_SHARE_ON ? 530 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 159 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 371 : 0, requests: MOCK_USAGE_SHARE_ON ? 53_200 : 0 },
+          marketplaceFee: { toHoldersUsd: 61.18, counted: true },
+        },
+      },
     },
     last7d,
     last30d,

@@ -40,17 +40,17 @@ export function TopNav() {
         Mesh
         <BetaPill />
       </Link>
-      <NavLink to="/" end className={cls}>
-        Home
+      <NavLink to="/app/chat" className={cls}>
+        Chat
       </NavLink>
-      <NavLink to="/app" end className={cls}>
-        App
+      <NavLink to="/app/market" className={cls}>
+        Market
       </NavLink>
-      <NavLink to="/app/stats" className={cls}>
-        Stats
+      <NavLink to="/app/node" className={cls}>
+        Run a node
       </NavLink>
-      <NavLink to="/report" className={cls}>
-        Report
+      <NavLink to="/numbers" className={cls}>
+        Numbers
       </NavLink>
       {pointsEnabled ? (
         <NavLink to="/leaderboard" className={cls}>
@@ -59,9 +59,6 @@ export function TopNav() {
       ) : null}
       <NavLink to="/docs" className={cls}>
         Docs
-      </NavLink>
-      <NavLink to="/download" className={cls}>
-        Download
       </NavLink>
       {session ? (
         <BalancePill />

@@ -1,5 +1,5 @@
 import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConnectModal } from './components/ConnectModal';
 import { Footer } from './components/Footer';
 import { TopNav } from './components/Nav';
@@ -18,9 +18,8 @@ import { Privacy, Risk, Terms } from './pages/Legal';
 import { NodePage } from './pages/Node';
 import { NotFound } from './pages/NotFound';
 import { usePointsEnabled, useStats } from './lib/hooks';
-import { ReportPage } from './pages/Report';
+import { Numbers } from './pages/Numbers';
 import { Stake } from './pages/Stake';
-import { StatsPage } from './pages/StatsPage';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -55,6 +54,12 @@ function LeaderboardRoute() {
   return <NotFound />;
 }
 
+/** Old addresses (/stats, /app/stats, /report) live on at /numbers; the hash (#epochs, #treasury…) comes along. */
+function ToNumbers() {
+  const { hash } = useLocation();
+  return <Navigate to={{ pathname: '/numbers', hash }} replace />;
+}
+
 function ScrollToTop() {
   const { pathname, hash } = useLocation();
   useEffect(() => {
@@ -80,14 +85,16 @@ export function App() {
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/risk" element={<Risk />} />
-            <Route path="/report" element={<ReportPage />} />
+            <Route path="/numbers" element={<Numbers />} />
+            <Route path="/stats" element={<ToNumbers />} />
+            <Route path="/report" element={<ToNumbers />} />
+            <Route path="/app/stats" element={<ToNumbers />} />
             <Route path="/leaderboard" element={<LeaderboardRoute />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="keys" element={<Keys />} />
               <Route path="chat" element={<Chat />} />
-              <Route path="stats" element={<StatsPage />} />
               <Route path="node" element={<NodePage />} />
               <Route path="stake" element={<Stake />} />
               <Route path="market" element={<Market />} />

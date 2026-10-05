@@ -71,6 +71,12 @@ export interface Stats {
   verificationEnabled?: boolean;
   /** Starter credits on first connect (docs/SWITCHING.md): granted so far and wallets still eligible (null = unlimited). */
   starterGrants?: StarterGrantsPublic;
+  /** Usage-revenue share to holders (docs/PRICING.md, engine 2): on/off and USD booked to the pool in the last 24h (0 while off). */
+  usageShareEnabled?: boolean;
+  usageShareToHolders24hUsd?: number;
+  /** Upstream pricing: frontier/fast models bill OpenRouter list minus this discount (or plus this markup), bps. */
+  upstreamDiscountBps?: number;
+  upstreamMarkupBps?: number;
   series24h: HourPoint[];
   epochSeconds: number;
   upstream: string;
@@ -397,12 +403,54 @@ export interface ReportMethod {
   network: string;
 }
 
+/** `totals.marketplace` on GET /report (docs/MARKETPLACE.md): what was listed, what changed hands, where the fee went. */
+export interface MarketplaceTotals {
+  listed: number;
+  filled: number;
+  paid: number;
+  fills: number;
+  feesToHolders: number;
+  feesToTreasury: number;
+  openDepth: number;
+  openListings: number;
+  bestDiscountBps: number | null;
+  avgDiscountBps: number | null;
+}
+
+/** `totals.usageShare` on GET /report (docs/PRICING.md, engine 2). */
+export interface UsageShareTotals {
+  enabled: boolean;
+  holderBps: number;
+  treasuryBps: number;
+  marginUsd: number;
+  toHoldersUsd: number;
+  toTreasuryUsd: number;
+  requests: number;
+  bySource: {
+    network: { marginUsd: number; toHoldersUsd: number; toTreasuryUsd: number; requests: number };
+    upstream: { marginUsd: number; toHoldersUsd: number; toTreasuryUsd: number; requests: number };
+    marketplaceFee: { toHoldersUsd: number; counted: boolean };
+  };
+}
+
 export interface Report {
   token: { name: string; ticker: string; chain: string; holderShareBps: number; treasuryShareBps: number };
   totals: PeriodTotals & {
     creditsOutstandingUsd: number;
     walletsWithCredits: number;
-    treasury: { feeShareUsd: number; nodeRewardAccrualUsd: number; buybackUsd: number; opsUsd: number; otherUsd: number; balanceUsd: number };
+    treasury: {
+      feeShareUsd: number;
+      nodeRewardAccrualUsd: number;
+      buybackUsd: number;
+      opsUsd: number;
+      otherUsd: number;
+      /** Treasury-paid guest chat (negative) and the treasury half of marketplace fees (positive); absent on older gateways. */
+      guestChatUsd?: number;
+      marketFeeUsd?: number;
+      balanceUsd: number;
+    };
+    marketplace?: MarketplaceTotals;
+    usageShare?: UsageShareTotals;
   };
   last7d: PeriodTotals;
   last30d: PeriodTotals;

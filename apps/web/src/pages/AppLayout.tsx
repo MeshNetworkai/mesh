@@ -22,8 +22,8 @@ export function AppLayout() {
   const { session, openModal, signOut } = useAuth();
   const { data: stats } = useStats(60_000);
   const loc = useLocation();
-  // Network stats and the node explainer are readable without a wallet; their wallet-specific parts handle it.
-  const publicRoute = loc.pathname.startsWith('/app/stats') || loc.pathname.startsWith('/app/node');
+  // The node explainer and the public liquidity book are readable without a wallet; their wallet-specific parts handle it.
+  const publicRoute = loc.pathname.startsWith('/app/node') || loc.pathname.startsWith('/app/market');
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'on' : '');
 
   return (
@@ -39,9 +39,6 @@ export function AppLayout() {
             </NavLink>
             <NavLink to="/app/chat" className={cls}>
               Chat
-            </NavLink>
-            <NavLink to="/app/stats" className={cls}>
-              Network
             </NavLink>
             <NavLink to="/app/node" className={cls}>
               Node
