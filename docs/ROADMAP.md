@@ -48,7 +48,6 @@ Once fees and usage are real, the treasury can do more than pay the Macs.
 
 | Status | Item | Detail |
 | --- | --- | --- |
-| later | Buyback floor with a public NAV chart | Treasury buybacks under a published rule, with the net asset value charted on the numbers page. |
 | later | More models on the network | Larger open models on 32 GB and 64 GB Macs, and more frontier models in the catalogue as providers qualify for zero data retention. |
 | later | Onboarding pack | First-run walkthrough, run-a-node guide with screenshots, launch thread. |
 

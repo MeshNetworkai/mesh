@@ -71,7 +71,6 @@ export const ROADMAP: RoadmapPhase[] = [
     name: 'After launch',
     summary: 'Once fees and usage are real, the treasury can do more than pay the Macs.',
     items: [
-      { title: 'Buyback floor with a public NAV chart', detail: 'Treasury buybacks under a published rule, with the net asset value charted on the numbers page.', status: 'later' },
       { title: 'More models on the network', detail: 'Larger open models on 32 GB and 64 GB Macs, and more frontier models in the catalogue as providers qualify for zero data retention.', status: 'later' },
       { title: 'Onboarding pack', detail: 'First-run walkthrough, run-a-node guide with screenshots, launch thread.', status: 'later' },
     ],
