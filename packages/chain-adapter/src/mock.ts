@@ -158,7 +158,7 @@ export class MockAdapter implements ChainAdapter {
   verifyWalletSignature(wallet: string, message: string, signature: string): boolean {
     if (signature === MockAdapter.sign(wallet, message)) return true;
     try {
-      const real = wallet.startsWith('0x') ? new EvmAdapter() : new SolanaAdapter();
+      const real = /^0x/i.test(wallet.trim()) ? new EvmAdapter() : new SolanaAdapter();
       return real.verifyWalletSignature(wallet, message, signature);
     } catch {
       return false;

@@ -1,8 +1,8 @@
 import { mkdirSync } from 'node:fs';
-import { DEFAULT_GATEWAY, DEFAULT_OLLAMA, loadConfig, saveConfig, type NodeConfig } from './config.js';
+import { DEFAULT_GATEWAY, DEFAULT_MAX_PARALLEL, DEFAULT_OLLAMA, loadConfig, parseMaxParallel, saveConfig, type NodeConfig } from './config.js';
 import { GatewayClient, GatewayError, type RegisterInput, type RegisterResult } from './gateway.js';
 import { describeSelection, selectModels } from './models.js';
-import { OLLAMA_PRIVACY_ENV, OllamaClient } from './ollama.js';
+import { OllamaClient, ollamaServeEnv } from './ollama.js';
 import { AGENT_VERSION, paths } from './paths.js';
 import { hasBrew, run, spawnDetached, systemInfo, which } from './system.js';
 import { c, out, table } from './ui.js';
@@ -22,6 +22,8 @@ export interface SetupOptions {
   with70b?: boolean;
   /** Skip model pulls (CI / already pulled). */
   skipPull?: boolean;
+  /** Jobs to run at once (default 1, or the previous config's value on a re-run). */
+  maxParallel?: number;
 }
 
 export const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
@@ -32,8 +34,9 @@ export function normalizeLinkCode(raw: string): string {
 }
 
 /** What to send to POST /nodes/register: a link code when we have one, else the legacy wallet. */
-export function registerInput(opts: Pick<SetupOptions, 'link' | 'wallet'>, sys: { chip: string; ramGb: number }, models: string[]): RegisterInput {
-  const base = { chip: sys.chip, ramGb: sys.ramGb, models, agentVersion: AGENT_VERSION };
+export function registerInput(opts: Pick<SetupOptions, 'link' | 'wallet' | 'maxParallel'>, sys: { chip: string; ramGb: number }, models: string[]): RegisterInput {
+  const base: Omit<RegisterInput, 'linkCode' | 'wallet'> = { chip: sys.chip, ramGb: sys.ramGb, models, agentVersion: AGENT_VERSION };
+  if (opts.maxParallel !== undefined && opts.maxParallel !== DEFAULT_MAX_PARALLEL) base.maxParallel = parseMaxParallel(opts.maxParallel);
   if (opts.link) return { ...base, linkCode: normalizeLinkCode(opts.link) };
   if (opts.wallet) return { ...base, wallet: opts.wallet };
   throw new Error('--link <code> (from the web app: Run a node -> Link a Mac) or --wallet <addr> is required');
@@ -67,7 +70,8 @@ export function ensureOllamaInstalled(): string | null {
   }
   const brew = hasBrew();
   if (!brew) {
-    out.fail('Ollama is not installed and native Apple Silicon Homebrew (/opt/homebrew) is missing. Install Ollama for Apple Silicon from the link below, open it once, then re-run.');
+    if (process.platform === 'darwin') out.fail('Ollama is not installed and native Apple Silicon Homebrew (/opt/homebrew) is missing, so it cannot be installed automatically.');
+    else out.fail('Ollama is not installed.');
     out.line(`   Download it from ${c.cyan(OLLAMA_DOWNLOAD_URL)}, open it once, then re-run this command.`);
     return null;
   }
@@ -84,15 +88,16 @@ export function ensureOllamaInstalled(): string | null {
   return after;
 }
 
-/** Makes sure `ollama serve` answers; launches it detached when it does not. */
-export async function ensureOllamaRunning(client: OllamaClient, bin: string, waitMs = 30_000): Promise<boolean> {
+/** Makes sure `ollama serve` answers; launches it detached (with the privacy env and OLLAMA_NUM_PARALLEL) when it does not. */
+export async function ensureOllamaRunning(client: OllamaClient, bin: string, waitMs = 30_000, maxParallel = DEFAULT_MAX_PARALLEL): Promise<boolean> {
   if (await client.isUp()) {
     out.ok(`Ollama is running at ${client.baseUrl}`);
+    if (maxParallel > 1) out.line(`   (already running, so OLLAMA_NUM_PARALLEL=${maxParallel} was not applied; recent Ollama versions size request slots automatically)`);
     return true;
   }
   mkdirSync(paths.logsDir(), { recursive: true });
   out.step(`starting ollama serve (log: ${paths.ollamaLog()})`);
-  spawnDetached(bin, ['serve'], paths.ollamaLog(), OLLAMA_PRIVACY_ENV);
+  spawnDetached(bin, ['serve'], paths.ollamaLog(), ollamaServeEnv(maxParallel));
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 500));
@@ -136,12 +141,21 @@ export async function setup(opts: SetupOptions): Promise<NodeConfig> {
 
   if (!opts.link && !opts.wallet) throw new Error('--link <code> (from the web app: Run a node -> Link a Mac) or --wallet <addr> is required');
   const link = opts.link ? normalizeLinkCode(opts.link) : undefined;
+  let previous: NodeConfig | null = null;
+  try {
+    previous = loadConfig();
+  } catch (err) {
+    // A corrupt config must not block re-running setup: it is about to be rewritten.
+    out.warn(`${(err as Error).message}; starting fresh`);
+  }
+  const maxParallel = opts.maxParallel !== undefined ? parseMaxParallel(opts.maxParallel) : (previous?.maxParallel ?? DEFAULT_MAX_PARALLEL);
 
   out.title('mesh-node setup');
   out.line(table([
     ['machine', `${sys.chip} · ${sys.ramGb} GB · ${sys.platform}/${sys.arch}`],
     link ? ['link code', `${link}  (wallet signed in the browser)`] : ['wallet', `${opts.wallet}  (legacy unsigned registration)`],
     ['gateway', gatewayUrl],
+    ...(maxParallel > 1 ? [['parallel jobs', String(maxParallel)] as [string, string]] : []),
   ]));
   if (sys.platform === 'darwin' && sys.arch !== 'arm64') out.warn('Intel Mac detected: Ollama works but models run slowly without Apple Silicon.');
 
@@ -149,7 +163,7 @@ export async function setup(opts: SetupOptions): Promise<NodeConfig> {
   const bin = ensureOllamaInstalled();
   if (!bin) process.exit(1);
   const ollama = new OllamaClient(ollamaUrl);
-  if (!(await ensureOllamaRunning(ollama, bin))) process.exit(1);
+  if (!(await ensureOllamaRunning(ollama, bin, 30_000, maxParallel))) process.exit(1);
 
   out.title('2. Models');
   const models = opts.models?.length ? opts.models : selectModels(sys.ramGb, { with70b: opts.with70b });
@@ -161,8 +175,7 @@ export async function setup(opts: SetupOptions): Promise<NodeConfig> {
   }
 
   out.title('3. Register');
-  const previous = loadConfig();
-  const input = registerInput({ link, wallet: opts.wallet }, sys, ready);
+  const input = registerInput({ link, wallet: opts.wallet, maxParallel }, sys, ready);
   const webHint = 'the Mesh web app (Run a node page)';
   let reg: RegisterResult | null = null;
   if (previous && previous.gateway === gatewayUrl) {
@@ -196,9 +209,11 @@ export async function setup(opts: SetupOptions): Promise<NodeConfig> {
     chip: sys.chip,
     ramGb: sys.ramGb,
     registeredAt: Math.floor(Date.now() / 1000),
+    maxParallel,
   };
   saveConfig(cfg);
   out.ok(`registered as ${c.bold(reg.nodeId)} · paid to ${wallet}${reg.walletVerified ? ' (wallet verified)' : ''}`);
+  if (typeof reg.maxParallel === 'number' && reg.maxParallel < maxParallel) out.warn(`the gateway caps this node at ${reg.maxParallel} parallel job(s); it will route at most that many at once`);
   out.ok(`config saved to ${paths.config()} (0600)`);
 
   out.title('Next');

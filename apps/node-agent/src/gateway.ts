@@ -1,7 +1,7 @@
 /**
  * Gateway node protocol client (docs/NODE_PROTOCOL.md). Field names here are the wire contract:
- *   POST /nodes/register {linkCode | wallet, chip, ramGb, models[], agentVersion} -> {nodeId, nodeToken, wallet}
- *   POST /nodes/:id/heartbeat {models, busy, loadAvg?}
+ *   POST /nodes/register {linkCode | wallet, chip, ramGb, models[], agentVersion, maxParallel?} -> {nodeId, nodeToken, wallet, maxParallel}
+ *   POST /nodes/:id/heartbeat {models, busy, loadAvg?, maxParallel?}
  *   GET  /nodes/:id/jobs/next (long-poll <= 25 s) -> 204 | Job
  *   POST /nodes/:id/jobs/:jobId/chunk {seq, delta}
  *   POST /nodes/:id/jobs/:jobId/done  {promptTokens, completionTokens, finishReason}
@@ -21,6 +21,8 @@ export interface RegisterInput {
   ramGb: number;
   models: string[];
   agentVersion: string;
+  /** Jobs this node runs at once (Ollama OLLAMA_NUM_PARALLEL). The gateway caps it (routing.maxParallelPerNode). */
+  maxParallel?: number;
   /** Re-register a stored id (requires its current token as bearer; the gateway rotates the token). */
   nodeId?: string;
 }
@@ -32,9 +34,27 @@ export interface RegisterResult {
   wallet?: string;
   walletVerified?: boolean;
   linked?: boolean;
+  /** What the gateway accepted for maxParallel (it may be lower than what we asked for). */
+  maxParallel?: number;
   heartbeatEverySec?: number;
   offlineAfterSec?: number;
   pollMaxWaitMs?: number;
+}
+
+export interface HeartbeatBody {
+  models: string[];
+  /** Pin (true) or release (false) the node as "no capacity" until the next heartbeat. Not a count. */
+  busy: boolean;
+  loadAvg?: number;
+  maxParallel?: number;
+}
+
+export interface HeartbeatResult {
+  ok?: boolean;
+  heartbeatEverySec?: number;
+  offlineAfterSec?: number;
+  queuedJobs?: number;
+  maxParallel?: number;
 }
 
 export interface JobMessage {
@@ -57,7 +77,7 @@ export interface Job {
 
 export interface NodeStats {
   nodeId?: string;
-  status: 'online' | 'busy' | 'offline' | string;
+  status: 'online' | 'idle' | 'busy' | 'offline' | string;
   uptimePct24h: number;
   jobs24h: number;
   tokens24h: number;
@@ -68,6 +88,9 @@ export interface NodeStats {
   ramGb?: number;
   models?: string[];
   wallet?: string;
+  maxParallel?: number;
+  runningJobs?: number;
+  quarantined?: boolean;
 }
 
 export class GatewayError extends Error {
@@ -75,12 +98,39 @@ export class GatewayError extends Error {
     readonly status: number,
     message: string,
     readonly code: string | null = null,
+    /** From a `retry-after` header (429/503), in ms; callers wait at least this long. */
+    readonly retryAfterMs: number | null = null,
   ) {
     super(message);
+  }
+  /** Network failure, 5xx or 429: worth retrying with backoff. 4xx (other than 429) is final. */
+  get transient(): boolean {
+    return this.status === 0 || this.status === 429 || this.status >= 500;
   }
 }
 
 export const LONG_POLL_MS = 25_000;
+
+/** `retry-after` as seconds or an HTTP date -> ms (null when absent/unparseable). Capped at 5 minutes. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | null {
+  if (!value) return null;
+  const sec = Number(value);
+  let ms: number;
+  if (Number.isFinite(sec)) ms = sec * 1000;
+  else {
+    const at = Date.parse(value);
+    if (Number.isNaN(at)) return null;
+    ms = at - now;
+  }
+  return Math.max(0, Math.min(ms, 5 * 60_000));
+}
+
+/** One signal that fires when either the timeout or the caller's signal does. */
+function withTimeout(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!signal) return timeout;
+  return AbortSignal.any([timeout, signal]);
+}
 
 export class GatewayClient {
   readonly baseUrl: string;
@@ -96,7 +146,7 @@ export class GatewayClient {
     this.token = token;
   }
 
-  private async call<T>(method: string, path: string, body?: unknown, opts: { timeoutMs?: number; auth?: boolean } = {}): Promise<T> {
+  private async call<T>(method: string, path: string, body?: unknown, opts: { timeoutMs?: number; auth?: boolean; signal?: AbortSignal } = {}): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (opts.auth !== false && this.token) headers.authorization = `Bearer ${this.token}`;
@@ -106,10 +156,13 @@ export class GatewayClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
+        signal: withTimeout(opts.timeoutMs ?? 15_000, opts.signal),
       });
     } catch (err) {
-      throw new GatewayError(0, `could not reach gateway at ${this.baseUrl}: ${(err as Error).message}`, 'network');
+      const e = err as Error & { cause?: { code?: string } };
+      if (opts.signal?.aborted) throw new GatewayError(0, `${method} ${path} aborted`, 'aborted');
+      const why = e.name === 'TimeoutError' ? 'timed out' : e.cause?.code ?? e.message;
+      throw new GatewayError(0, `could not reach gateway at ${this.baseUrl}: ${why}`, 'network');
     }
     if (res.status === 204) return undefined as T;
     if (!res.ok) {
@@ -128,10 +181,16 @@ export class GatewayClient {
       } catch {
         /* non-JSON */
       }
-      throw new GatewayError(res.status, `${method} ${path} -> ${message}`, code);
+      throw new GatewayError(res.status, `${method} ${path} -> ${message}`, code, parseRetryAfter(res.headers.get('retry-after')));
     }
     const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    if (!text) return undefined as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A proxy / captive portal answering 200 with HTML must not crash the loop with a bare SyntaxError.
+      throw new GatewayError(res.status, `${method} ${path} -> unreadable reply (not JSON)`, 'bad_json');
+    }
   }
 
   /** No auth for a fresh identity; the stored token as bearer when `input.nodeId` re-registers an existing node. */
@@ -139,20 +198,26 @@ export class GatewayClient {
     return this.call<RegisterResult>('POST', '/nodes/register', input, { auth: Boolean(input.nodeId) });
   }
 
-  heartbeat(nodeId: string, body: { models: string[]; busy: boolean; loadAvg?: number }): Promise<unknown> {
-    return this.call('POST', `/nodes/${encodeURIComponent(nodeId)}/heartbeat`, body);
+  heartbeat(nodeId: string, body: HeartbeatBody): Promise<HeartbeatResult | undefined> {
+    return this.call<HeartbeatResult | undefined>('POST', `/nodes/${encodeURIComponent(nodeId)}/heartbeat`, body);
   }
 
-  /** Long-polls for the next job (gateway holds up to `wait` ms); resolves null on 204. */
-  nextJob(nodeId: string, waitMs = LONG_POLL_MS): Promise<Job | null> {
+  /**
+   * Long-polls for the next job (gateway holds up to `wait` ms); resolves null on 204. The client-side
+   * timeout is the poll wait plus a grace period so a healthy gateway's 204 always arrives before it.
+   * `signal` lets the caller abandon a parked poll (shutdown) instead of waiting it out.
+   */
+  nextJob(nodeId: string, waitMs = LONG_POLL_MS, signal?: AbortSignal): Promise<Job | null> {
     return this.call<Job | undefined>('GET', `/nodes/${encodeURIComponent(nodeId)}/jobs/next?wait=${waitMs}`, undefined, {
       timeoutMs: waitMs + 10_000,
+      signal,
     }).then((j) => j ?? null);
   }
 
   /**
-   * Sends one chunk. A transient failure (network, 5xx) is retried once with the same `seq`; the
-   * gateway de-duplicates. A 4xx (409 job_not_running) propagates so the caller stops generating.
+   * Sends one chunk. A transient failure (network, 5xx, 429) is retried once with the same `seq`
+   * after a short pause; the gateway de-duplicates. A 4xx (409 job_not_running) propagates so the
+   * caller stops generating.
    */
   async chunk(nodeId: string, jobId: string, seq: number, delta: string): Promise<unknown> {
     const path = `/nodes/${encodeURIComponent(nodeId)}/jobs/${encodeURIComponent(jobId)}/chunk`;
@@ -160,7 +225,10 @@ export class GatewayClient {
       return await this.call('POST', path, { seq, delta });
     } catch (err) {
       const e = err as GatewayError;
-      if (e instanceof GatewayError && (e.status === 0 || e.status >= 500)) return this.call('POST', path, { seq, delta });
+      if (e instanceof GatewayError && e.transient && e.code !== 'aborted') {
+        await new Promise((r) => setTimeout(r, Math.min(e.retryAfterMs ?? 250, 2000)));
+        return this.call('POST', path, { seq, delta });
+      }
       throw err;
     }
   }

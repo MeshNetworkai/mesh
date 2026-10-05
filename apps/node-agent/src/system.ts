@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, openSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, openSync } from 'node:fs';
 import { cpus, loadavg, platform, totalmem } from 'node:os';
 
 export interface SystemInfo {
@@ -75,10 +75,19 @@ export function run(cmd: string, args: string[], opts: { inherit?: boolean } = {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: opts.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'] }) ?? '';
 }
 
-/** Starts a detached background process whose output goes to `logFile`. */
-export function spawnDetached(cmd: string, args: string[], logFile: string, env: Record<string, string> = {}): number | undefined {
+/**
+ * Starts a detached background process whose output goes to `logFile`. The parent's copy of the log
+ * fd is closed once the child has its own, and a spawn failure (binary vanished, not executable) is
+ * swallowed via the 'error' handler instead of surfacing as an uncaught EventEmitter error later.
+ */
+export function spawnDetached(cmd: string, args: string[], logFile: string, env: Record<string, string> = {}, onError?: (err: Error) => void): number | undefined {
   const fd = openSync(logFile, 'a');
-  const child = spawn(cmd, args, { detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...env } });
-  child.unref();
-  return child.pid;
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...env } });
+    child.on('error', (err) => onError?.(err));
+    child.unref();
+    return child.pid;
+  } finally {
+    closeSync(fd);
+  }
 }

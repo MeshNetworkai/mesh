@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { GatewayClient, type Job } from '../src/gateway.js';
 import { OllamaClient } from '../src/ollama.js';
-import { deadlineBudget, runJob, toOllamaMessages, toOllamaOptions } from '../src/runner.js';
+import { MAX_FAIL_REASON_CHARS, deadlineBudget, runJob, sanitizeReason, toOllamaMessages, toOllamaOptions, usageFromFinal } from '../src/runner.js';
 import { fakeGateway, fakeOllama } from './fakes.js';
 
 const job = (over: Partial<Job> = {}): Job => ({
@@ -114,7 +114,128 @@ describe('runJob', () => {
   });
 });
 
+describe('runJob failure paths', () => {
+  let ollama: ReturnType<typeof fakeOllama>;
+  let gw: ReturnType<typeof fakeGateway>;
+  afterEach(async () => {
+    await Promise.all([ollama?.stop(), gw?.stop()]);
+  });
+  const run = (j: Job, opts = {}) => runJob(j, new GatewayClient(gw.state.token ? gwUrl : gwUrl, gw.state.token), gw.state.nodeId, new OllamaClient(ollamaUrl), { batchMs: 1, ...opts });
+  let ollamaUrl = '';
+  let gwUrl = '';
+  const boot = async (o: Parameters<typeof fakeOllama>[0], g: Parameters<typeof fakeGateway>[0] = {}) => {
+    ollama = fakeOllama(o);
+    gw = fakeGateway(g);
+    [ollamaUrl, gwUrl] = await Promise.all([ollama.start(), gw.start()]);
+  };
+
+  it('an Ollama error line mid-stream POSTs fail (not done) and keeps the chunks already sent', async () => {
+    await boot({ reply: ['a', 'b', 'c', 'd'], streamErrorAfter: 2, delayMs: 2 });
+    const res = await run(job());
+    expect(res.ok).toBe(false);
+    expect(res.outcome).toBe('failed');
+    expect(gw.state.done).toHaveLength(0);
+    expect(gw.state.failed).toHaveLength(1);
+    expect(gw.state.failed[0].error).toMatch(/runner process has terminated/);
+    expect(gw.state.chunks.map((c) => c.delta).join('')).toBe('ab');
+  });
+
+  it('a connection dropped mid-stream POSTs fail with a reason that names no text', async () => {
+    await boot({ reply: ['x', 'y', 'z'], dropAfter: 1, delayMs: 2 });
+    const res = await run(job());
+    expect(res.ok).toBe(false);
+    expect(gw.state.failed).toHaveLength(1);
+    expect(gw.state.failed[0].error).toMatch(/stream ended unexpectedly|aborted|terminated/);
+  });
+
+  it('garbage in the stream is reported without echoing the bytes (JSON.parse messages quote input)', async () => {
+    await boot({ reply: ['x', 'y', 'z'], garbageAfter: 1, delayMs: 2 });
+    const res = await run(job());
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/malformed JSON on line 2/);
+    expect(res.error).not.toContain('SECRET_GARBAGE_LINE');
+    expect(gw.state.failed[0].error).not.toContain('SECRET_GARBAGE');
+  });
+
+  it('a stalled Ollama (headers, then silence) fails after stallMs instead of hanging forever', async () => {
+    await boot({ hang: true });
+    const started = Date.now();
+    const res = await run(job({ deadlineMs: null }), { stallMs: 120 });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/produced nothing for 0s/);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(gw.state.failed).toHaveLength(1);
+  });
+
+  it('an empty reply is reported as a failure, never as done', async () => {
+    await boot({ reply: [] });
+    const res = await run(job());
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/no output/);
+    expect(gw.state.done).toHaveLength(0);
+    expect(gw.state.failed).toHaveLength(1);
+  });
+
+  it('409 empty_output from /done is logged and swallowed: no /fail, no throw', async () => {
+    await boot({ reply: ['hi'] }, { doneStatus: { status: 409, error: 'empty_output' } });
+    const lines: string[] = [];
+    const res = await run(job(), { log: (m: string) => lines.push(m) });
+    expect(res.ok).toBe(false);
+    expect(res.outcome).toBe('gateway_rejected');
+    expect(gw.state.failed).toHaveLength(0);
+    expect(lines.join('\n')).toMatch(/abandoned .*empty_output/);
+  });
+
+  it('409 job_not_running from /done (job cancelled while we finished) does not POST fail', async () => {
+    await boot({ reply: ['hi'] }, { doneStatus: { status: 409, error: 'job_not_running' } });
+    const res = await run(job());
+    expect(res.outcome).toBe('gateway_rejected');
+    expect(gw.state.failed).toHaveLength(0);
+  });
+
+  it('missing Ollama counts fall back to a chars/4 estimate, capped by maxTokens', async () => {
+    await boot({ reply: ['twelve chars', ' and twelve.'], omitCounts: true });
+    const res = await run(job({ maxTokens: 4 }));
+    expect(res.ok).toBe(true);
+    expect(res.completionTokens).toBe(4); // 24 chars -> 6, capped to maxTokens 4
+    expect(res.promptTokens).toBe(1); // 'hi' -> ceil(2/4) = 1
+    expect(gw.state.done[0].body).toMatchObject({ promptTokens: 1, completionTokens: 4 });
+  });
+
+  it('a malformed job (no messages / no model) is failed cleanly and never rejects', async () => {
+    await boot({ reply: ['x'] });
+    const bad = await run({ jobId: 'j_bad', model: 'm', messages: undefined as unknown as Job['messages'] });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/no messages/);
+    expect(gw.state.failed.map((f) => f.jobId)).toEqual(['j_bad']);
+    const worse = await run({} as Job);
+    expect(worse.ok).toBe(false);
+    expect(worse.error).toMatch(/malformed job/);
+  });
+
+  it('a Retry-After on a transient chunk failure is honoured on the single retry', async () => {
+    await boot({ reply: ['a'] }, { failNext: { count: 1, status: 503, retryAfter: '0' } });
+    const res = await run(job());
+    expect(res.ok).toBe(true);
+    expect(gw.state.chunks).toHaveLength(1);
+  });
+});
+
 describe('mapping helpers', () => {
+  it('sanitizeReason flattens control characters and caps the length the gateway accepts', () => {
+    expect(sanitizeReason('a\r\nb\u0000c')).toBe('a b c');
+    expect(sanitizeReason('')).toBe('unknown error');
+    const long = sanitizeReason('x'.repeat(2000));
+    expect(long.length).toBeLessThanOrEqual(MAX_FAIL_REASON_CHARS);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('usageFromFinal prefers Ollama counts and estimates only what is missing', () => {
+    expect(usageFromFinal({ promptTokens: 10, completionTokens: 20, doneReason: 'stop' }, 400, 400, 1000)).toEqual({ promptTokens: 10, completionTokens: 20 });
+    expect(usageFromFinal({ promptTokens: null, completionTokens: null, doneReason: 'stop' }, 400, 9, null)).toEqual({ promptTokens: 100, completionTokens: 3 });
+    expect(usageFromFinal({ promptTokens: null, completionTokens: 50, doneReason: 'length' }, 0, 200, 32)).toEqual({ promptTokens: 0, completionTokens: 32 });
+  });
+
   it('flattens OpenAI content arrays', () => {
     expect(
       toOllamaMessages([

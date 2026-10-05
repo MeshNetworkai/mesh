@@ -3,7 +3,8 @@
  * Mesh relay load test: gateway + N fake nodes + M concurrent chat requests, all in one process
  * (plus the gateway child). No Ollama, no OpenRouter, no chain: the gateway runs with the mock
  * adapter and the offline mock upstream, nodes register unsigned (NODES_REQUIRE_SIGNATURE=false)
- * and answer every job with a fake stream of TOKENS chunks.
+ * and answer every job with a fake stream of TOKENS chunks. Spot-check verification is off
+ * (VERIFICATION_ENABLED=false) so the job count is exactly the request count.
  *
  *   node scripts/loadtest/relay.mjs                      # N=20 nodes, M=200 requests
  *   N=50 M=1000 node scripts/loadtest/relay.mjs
@@ -11,6 +12,7 @@
  *
  * Options (flag or env):
  *   --nodes N          NODES          fake nodes to register                       (20)
+ *   --parallel P       PARALLEL       maxParallel each fake node advertises and serves at once (1)
  *   --requests M       REQUESTS       chat requests to fire                        (200)
  *   --concurrency C    CONCURRENCY    max in-flight client requests (default: M, i.e. all at once)
  *   --tokens T         TOKENS         completion chunks each node streams per job  (300)
@@ -47,6 +49,7 @@ const flag = (name, env, def) => {
 const num = (v) => Number(v);
 const opts = {
   nodes: num(flag('nodes', 'NODES', process.env.N ?? 20)),
+  parallel: num(flag('parallel', 'PARALLEL', 1)),
   requests: num(flag('requests', 'REQUESTS', process.env.M ?? 200)),
   tokens: num(flag('tokens', 'TOKENS', 300)),
   chunkDelayMs: num(flag('chunk-delay', 'CHUNK_DELAY_MS', 0)),
@@ -58,6 +61,10 @@ const opts = {
   json: flag('json', null, null),
 };
 opts.concurrency = num(flag('concurrency', 'CONCURRENCY', opts.requests));
+if (!Number.isInteger(opts.parallel) || opts.parallel < 1) {
+  console.error(`--parallel must be a whole number >= 1 (got ${opts.parallel})`);
+  process.exit(2);
+}
 // Node agents long-poll up to this long (docs/NODE_PROTOCOL.md). Short here so shutdown is quick.
 const POLL_WAIT_MS = 5_000;
 const HEARTBEAT_EVERY_MS = 20_000;
@@ -112,6 +119,7 @@ async function spawnGateway() {
     STATS_CACHE_MS: '0',
     GEO_BLOCK_ENFORCE: 'false',
     ALERTS_ENABLED: 'false',
+    VERIFICATION_ENABLED: 'false', // no spot-check re-runs: jobs == requests, nodes are never quarantined mid-test
     CORS_ORIGINS: '*',
     LOG_LEVEL: opts.logLevel,
     NODE_ENV: 'development',
@@ -149,6 +157,9 @@ class FakeNode {
     this.tag = tag;
     this.wallet = `loadtest_node_${i}`;
     this.jobs = 0;
+    this.running = 0;
+    this.maxRunning = 0;
+    this.maxParallel = 1;
     this.chunkPosts = [];
     this.errors = [];
     this.stopped = false;
@@ -158,14 +169,21 @@ class FakeNode {
     const r = await jsonFetch(`${this.base}/nodes/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ wallet: this.wallet, chip: 'loadtest', ramGb: 16, models: [this.tag], agentVersion: 'loadtest' }),
+      body: JSON.stringify({ wallet: this.wallet, chip: 'loadtest', ramGb: 16, models: [this.tag], agentVersion: 'loadtest', maxParallel: opts.parallel }),
     });
     this.id = r.nodeId;
+    // The gateway may cap maxParallel (routing.maxParallelPerNode); serve what it accepted.
+    this.maxParallel = Math.max(1, Math.min(opts.parallel, r.maxParallel ?? opts.parallel));
     this.auth = { authorization: `Bearer ${r.nodeToken}`, 'content-type': 'application/json' };
   }
 
   async heartbeat() {
-    await jsonFetch(`${this.base}/nodes/${this.id}/heartbeat`, { method: 'POST', headers: this.auth, body: JSON.stringify({ models: [this.tag], busy: false }) });
+    // `busy` is a pin (docs/NODE_PROTOCOL.md §2): only pin when every slot is taken; the gateway counts running jobs itself.
+    await jsonFetch(`${this.base}/nodes/${this.id}/heartbeat`, {
+      method: 'POST',
+      headers: this.auth,
+      body: JSON.stringify({ models: [this.tag], busy: this.running >= this.maxParallel, maxParallel: this.maxParallel }),
+    });
   }
 
   async serve(job) {
@@ -180,23 +198,35 @@ class FakeNode {
     }
     const done = await fetch(`${path}/done`, { method: 'POST', headers: this.auth, body: JSON.stringify({ promptTokens: 24, completionTokens: opts.tokens, finishReason: 'stop' }) });
     if (done.ok) this.jobs++;
-    else if (done.status !== 409) throw new Error(`done -> ${done.status}`);
+    else if (done.status !== 409) throw new Error(`done -> ${done.status}`); // 409 job_not_running / empty_output: gateway already closed it
   }
 
-  async run() {
-    this.hb = setInterval(() => this.heartbeat().catch((e) => this.errors.push(`heartbeat: ${e.message}`)), HEARTBEAT_EVERY_MS);
+  /** One poll->serve worker per slot: a node with maxParallel P keeps up to P long-polls parked and P jobs streaming. */
+  async worker() {
     while (!this.stopped) {
       try {
         const res = await fetch(`${this.base}/nodes/${this.id}/jobs/next?wait=${POLL_WAIT_MS}`, { headers: this.auth });
         if (res.status === 204) continue;
         if (!res.ok) throw new Error(`jobs/next -> ${res.status}`);
-        await this.serve(await res.json());
+        const job = await res.json();
+        this.running++;
+        this.maxRunning = Math.max(this.maxRunning, this.running);
+        try {
+          await this.serve(job);
+        } finally {
+          this.running--;
+        }
       } catch (e) {
         if (this.stopped) break;
         this.errors.push(e.message);
         await sleep(200);
       }
     }
+  }
+
+  async run() {
+    this.hb = setInterval(() => this.heartbeat().catch((e) => this.errors.push(`heartbeat: ${e.message}`)), HEARTBEAT_EVERY_MS);
+    await Promise.all(Array.from({ length: this.maxParallel }, () => this.worker()));
     clearInterval(this.hb);
   }
 
@@ -282,7 +312,7 @@ async function runPool(n, concurrency, fn) {
 
 // ---------------------------------------------------------------------------- main
 async function main() {
-  log(`nodes=${opts.nodes} requests=${opts.requests} concurrency=${opts.concurrency} tokens/job=${opts.tokens} chunkDelay=${opts.chunkDelayMs}ms model=${opts.model}`);
+  log(`nodes=${opts.nodes} parallel=${opts.parallel} requests=${opts.requests} concurrency=${opts.concurrency} tokens/job=${opts.tokens} chunkDelay=${opts.chunkDelayMs}ms model=${opts.model}`);
   const gw = opts.gateway ? { url: opts.gateway.replace(/\/$/, ''), stop: async () => {} } : await spawnGateway();
   const base = gw.url;
   const admin = { 'x-admin-token': opts.adminToken, 'content-type': 'application/json' };
@@ -310,7 +340,9 @@ async function main() {
     for (const n of nodes) n.run();
     await sleep(300); // let every node park a long-poll before the burst
     const online = await jsonFetch(`${base}/nodes`);
-    log(`registered ${nodes.length} nodes in ${fmt(registerMs)}; gateway reports online=${online.online} idle=${online.idle}`);
+    const accepted = nodes[0]?.maxParallel ?? 1;
+    if (accepted < opts.parallel) log(`gateway capped maxParallel at ${accepted} (asked ${opts.parallel}; routing.maxParallelPerNode)`);
+    log(`registered ${nodes.length} nodes in ${fmt(registerMs)}; gateway reports online=${online.online} idle=${online.idle} slots=${online.slots ?? '?'}`);
 
     // The burst.
     const t0 = performance.now();
@@ -353,6 +385,7 @@ async function main() {
     }
     const nodeErrors = nodes.flatMap((n) => n.errors.map((e) => `${n.id}: ${e}`));
     const perNodeJobs = nodes.map((n) => n.jobs);
+    const perNodeMaxRunning = nodes.map((n) => n.maxRunning);
 
     const result = {
       config: { ...opts, tag, pollWaitMs: POLL_WAIT_MS },
@@ -360,7 +393,19 @@ async function main() {
       throughput: { requestsPerSec: Math.round((ok.length / wallMs) * 1000 * 10) / 10, tokensPerSec: Math.round((tokensOut / wallMs) * 1000) },
       requests: { total: results.length, ok: ok.length, failed: failed.length, byRoute, fallbackReasons, errorKinds },
       latencyMs: { firstToken, firstTokenNode, firstTokenUpstream, total, totalNode, totalUpstream, nodeChunkPost: chunkPost },
-      nodes: { count: nodes.length, registerMs: Math.round(registerMs), jobsDone: perNodeJobs.reduce((a, b) => a + b, 0), perNodeJobs, min: Math.min(...perNodeJobs), max: Math.max(...perNodeJobs), errors: nodeErrors.slice(0, 20), errorCount: nodeErrors.length },
+      nodes: {
+        count: nodes.length,
+        maxParallel: accepted,
+        registerMs: Math.round(registerMs),
+        jobsDone: perNodeJobs.reduce((a, b) => a + b, 0),
+        perNodeJobs,
+        min: Math.min(...perNodeJobs),
+        max: Math.max(...perNodeJobs),
+        /** Highest number of jobs any node had streaming at once (should reach maxParallel under load). */
+        peakConcurrentPerNode: Math.max(...perNodeMaxRunning),
+        errors: nodeErrors.slice(0, 20),
+        errorCount: nodeErrors.length,
+      },
       gateway: { nodes: nodesAfter, stats: statsAfter && { jobs24h: statsAfter.jobs24h, servedByNetwork24h: statsAfter.servedByNetwork24h, servedByNetworkPercent: statsAfter.servedByNetworkPercent, networkTokens24h: statsAfter.networkTokens24h } },
     };
 
@@ -368,6 +413,7 @@ async function main() {
     const line = (k, v) => console.log(`  ${k.padEnd(34)} ${v}`);
     console.log('\nMesh relay load test');
     line('nodes / requests / concurrency', `${opts.nodes} / ${opts.requests} / ${opts.concurrency}`);
+    line('maxParallel per node (peak seen)', `${accepted} (${result.nodes.peakConcurrentPerNode})`);
     line('tokens per job / chunk delay', `${opts.tokens} / ${opts.chunkDelayMs}ms`);
     line('wall time', fmt(wallMs));
     line('throughput', `${result.throughput.requestsPerSec} req/s, ${result.throughput.tokensPerSec} tokens/s to clients`);

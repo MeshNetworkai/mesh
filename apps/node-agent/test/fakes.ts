@@ -7,7 +7,11 @@ export async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${port}`;
 }
 
-export const close = (server: Server) => new Promise<void>((r) => server.close(() => r()));
+export const close = (server: Server) =>
+  new Promise<void>((r) => {
+    server.close(() => r());
+    server.closeAllConnections();
+  });
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
@@ -29,12 +33,23 @@ export interface FakeOllamaOptions {
   /** Return this HTTP error for /api/chat. */
   chatError?: { status: number; message: string };
   models?: string[];
+  /** After this many tokens, send an in-stream `{error}` line (Ollama runner crash mid-reply). */
+  streamErrorAfter?: number;
+  /** After this many tokens, cut the connection without a final line. */
+  dropAfter?: number;
+  /** After this many tokens, write garbage that is not JSON. */
+  garbageAfter?: number;
+  /** Omit prompt_eval_count / eval_count from the final line (older Ollama, cached prompt). */
+  omitCounts?: boolean;
+  /** Hang after the headers: no tokens ever (stall). */
+  hang?: boolean;
 }
 
 /** Speaks enough of Ollama's HTTP API for the agent: /api/tags, /api/pull, streamed /api/chat. */
 export function fakeOllama(opts: FakeOllamaOptions = {}) {
   const reply = opts.reply ?? ['Hello', ' from', ' the', ' mesh', '.'];
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const concurrency = { now: 0, max: 0 };
   const server = createServer(async (req, res) => {
     const path = req.url ?? '/';
     const body = req.method === 'POST' ? await readJson(req) : {};
@@ -49,27 +64,44 @@ export function fakeOllama(opts: FakeOllamaOptions = {}) {
     }
     if (path === '/api/chat') {
       if (opts.chatError) return json(res, opts.chatError.status, { error: opts.chatError.message });
+      concurrency.now++;
+      concurrency.max = Math.max(concurrency.max, concurrency.now);
+      const release = () => {
+        concurrency.now--;
+      };
+      res.on('close', release);
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+      if (opts.hang) {
+        res.flushHeaders();
+        return; // never writes; the client closes it
+      }
+      let i = 0;
       for (const tok of reply) {
         if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
         if (res.destroyed) return;
+        if (opts.streamErrorAfter !== undefined && i === opts.streamErrorAfter) {
+          res.write(JSON.stringify({ error: 'runner process has terminated: signal: killed' }) + '\n');
+          return res.end();
+        }
+        if (opts.dropAfter !== undefined && i === opts.dropAfter) return res.destroy();
+        if (opts.garbageAfter !== undefined && i === opts.garbageAfter) {
+          res.write('this is not json SECRET_GARBAGE_LINE\n');
+          return res.end();
+        }
         res.write(JSON.stringify({ model: body.model, message: { role: 'assistant', content: tok }, done: false }) + '\n');
+        i++;
       }
-      res.write(
-        JSON.stringify({
-          model: body.model,
-          message: { role: 'assistant', content: '' },
-          done: true,
-          done_reason: 'stop',
-          prompt_eval_count: opts.promptTokens ?? 12,
-          eval_count: reply.length,
-        }) + '\n',
-      );
+      const finalLine: Record<string, unknown> = { model: body.model, message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop' };
+      if (!opts.omitCounts) {
+        finalLine.prompt_eval_count = opts.promptTokens ?? 12;
+        finalLine.eval_count = reply.length;
+      }
+      res.write(JSON.stringify(finalLine) + '\n');
       return res.end();
     }
     json(res, 404, { error: 'not found' });
   });
-  return { server, requests, start: () => listen(server), stop: () => close(server) };
+  return { server, requests, concurrency, start: () => listen(server), stop: () => close(server) };
 }
 
 export interface FakeGatewayState {
@@ -84,6 +116,15 @@ export interface FakeGatewayState {
   nodeId: string;
   /** Make /chunk fail with this status (tests the fail path). */
   chunkStatus?: number;
+  /** Make /done answer this status with this error code (e.g. 409 empty_output). */
+  doneStatus?: { status: number; error: string };
+  /** Answer the next N calls to any authenticated route with this status (5xx / 429 injection). */
+  failNext?: { count: number; status: number; retryAfter?: string };
+  /** Long-polls parked right now and the most seen at once. */
+  pollsInFlight: number;
+  maxPollsInFlight: number;
+  /** How long an empty poll is held (ms). */
+  pollHoldMs: number;
   /** Reject bearer tokens that do not match `token`. */
   strictAuth: boolean;
   /** Wallet reported back by /nodes/register. */
@@ -109,6 +150,9 @@ export function fakeGateway(init: Partial<FakeGatewayState> = {}) {
     strictAuth: true,
     wallet: 'walletFromGateway',
     usedLinkCodes: [],
+    pollsInFlight: 0,
+    maxPollsInFlight: 0,
+    pollHoldMs: 60,
     ...init,
   };
   const server = createServer(async (req, res) => {
@@ -145,16 +189,24 @@ export function fakeGateway(init: Partial<FakeGatewayState> = {}) {
     const id = decodeURIComponent(m[1]);
     const rest = m[2] ?? '';
     if (id !== state.nodeId) return json(res, 404, { error: 'node_not_found' });
+    if (state.failNext && state.failNext.count > 0) {
+      state.failNext.count--;
+      if (state.failNext.retryAfter) res.setHeader('retry-after', state.failNext.retryAfter);
+      return json(res, state.failNext.status, { error: state.failNext.status === 429 ? 'rate_limited' : 'unavailable' });
+    }
     if (rest === '/heartbeat') {
       state.heartbeats.push(body);
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, maxParallel: typeof body.maxParallel === 'number' ? Math.min(body.maxParallel as number, 4) : 1 });
     }
     if (rest === '/jobs/next') {
       state.polls++;
       const job = state.queue.shift();
       if (!job) {
         // Short "long poll" so tests stay quick.
-        await new Promise((r) => setTimeout(r, 60));
+        state.pollsInFlight++;
+        state.maxPollsInFlight = Math.max(state.maxPollsInFlight, state.pollsInFlight);
+        await new Promise((r) => setTimeout(r, state.pollHoldMs));
+        state.pollsInFlight--;
         res.writeHead(204);
         return res.end();
       }
@@ -166,8 +218,10 @@ export function fakeGateway(init: Partial<FakeGatewayState> = {}) {
       if (jm[2] === 'chunk') {
         if (state.chunkStatus) return json(res, state.chunkStatus, { error: 'chunk_rejected' });
         state.chunks.push({ jobId, seq: body.seq as number, delta: body.delta as string });
-      } else if (jm[2] === 'done') state.done.push({ jobId, body });
-      else state.failed.push({ jobId, error: body.error as string });
+      } else if (jm[2] === 'done') {
+        if (state.doneStatus) return json(res, state.doneStatus.status, { error: state.doneStatus.error, message: state.doneStatus.error });
+        state.done.push({ jobId, body });
+      } else state.failed.push({ jobId, error: body.error as string });
       return json(res, 200, { ok: true });
     }
     if (rest === '' || rest === '/') {

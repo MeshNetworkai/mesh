@@ -18,7 +18,7 @@ import { publicKeyToAddress } from 'viem/utils';
 import { privateKeyToAccount } from 'viem/accounts';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { NotWiredError, type ChainAdapter, type ChainAdapterExtras, type HolderBalance, type StakeInfo, type SweepDetail } from './types.js';
-import { toRaw, toUnits } from './rpc.js';
+import { assertBps, toRaw, toUnits } from './rpc.js';
 import { timeWeightedBalances } from './timeweight.js';
 import { erc20Abi, feeVaultAbi, meshStakingAbi, quoterV2Abi, swapRouter02Abi } from './evm/abi.js';
 import {
@@ -260,7 +260,8 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
     const vault = this.vault();
     const decimals = await this.decimals();
     const dryRun = this.opts.dryRun ?? false;
-    const holderBps = this.opts.holderShareBps ?? 5000;
+    const holderBps = assertBps(this.opts.holderShareBps ?? 5000, 'holderShareBps');
+    assertBps(this.opts.slippageBps ?? 100, 'slippageBps');
     const txIds: Hex[] = [];
     const total = await this.publicClient.readContract({ address: vault, abi: feeVaultAbi, functionName: 'pending', args: [token] });
     if (total === 0n) {
@@ -375,15 +376,56 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
     return this.write({ address: this.token(), abi: erc20Abi, functionName: 'transferFrom', args: [treasury, to, raw] });
   }
 
+  /**
+   * EIP-191 `personal_sign` check. Tolerant of what wallets actually send: `0X` / uppercase / lowercase /
+   * checksummed addresses (compared case-insensitively, never by checksum), signatures with or without
+   * `0x`, `v` as 0/1, 27/28 or EIP-155 style, and 64-byte EIP-2098 compact signatures.
+   */
   verifyWalletSignature(wallet: string, message: string, signature: string): boolean {
     try {
-      if (!isAddress(wallet)) return false;
-      const recovered = recoverMessageAddressSync(message, signature as Hex);
-      return recovered.toLowerCase() === wallet.toLowerCase();
+      const addr = normalizeEvmAddress(wallet);
+      if (!addr) return false;
+      const recovered = recoverMessageAddressSync(message, normalizeEvmSignature(signature));
+      return recovered.toLowerCase() === addr;
     } catch {
       return false;
     }
   }
+}
+
+/** Lowercase `0x` + 40 hex, or null when the string is not an address at all. Checksum is NOT required. */
+export function normalizeEvmAddress(wallet: string): `0x${string}` | null {
+  const w = wallet.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(w)) return null;
+  return isAddress(w, { strict: false }) ? (w as `0x${string}`) : null;
+}
+
+/**
+ * Canonical 65-byte `0x` hex signature with v in {27, 28}. Accepts: missing `0x`, uppercase hex, v as
+ * 0/1 (Ledger, some hardware wallets), v >= 35 (chain-id folded in), and 64-byte EIP-2098 compact form.
+ */
+export function normalizeEvmSignature(signature: string): Hex {
+  let hex = signature.trim();
+  if (/^0x/i.test(hex)) hex = hex.slice(2);
+  if (!/^[0-9a-fA-F]+$/.test(hex)) throw new Error('signature is not hex');
+  hex = hex.toLowerCase();
+  if (hex.length === 128) {
+    // EIP-2098: yParity lives in the top bit of s.
+    const r = hex.slice(0, 64);
+    const yParityAndS = BigInt(`0x${hex.slice(64)}`);
+    const yParity = Number(yParityAndS >> 255n);
+    const s = (yParityAndS & ((1n << 255n) - 1n)).toString(16).padStart(64, '0');
+    return `0x${r}${s}${(27 + yParity).toString(16)}`;
+  }
+  // 65 bytes normally; an EIP-155 style v (35 + 2 * chainId) can take a few more bytes.
+  if (hex.length < 130 || hex.length > 128 + 16) throw new Error(`signature must be 64 or 65 bytes (got ${hex.length / 2})`);
+  const vRaw = Number.parseInt(hex.slice(128), 16);
+  let v: number;
+  if (vRaw === 0 || vRaw === 1) v = 27 + vRaw;
+  else if (vRaw === 27 || vRaw === 28) v = vRaw;
+  else if (vRaw >= 35) v = 27 + ((vRaw - 35) % 2);
+  else throw new Error(`invalid recovery byte ${vRaw}`);
+  return `0x${hex.slice(0, 128)}${v.toString(16)}`;
 }
 
 /** Uniswap v3 SwapRouter02 + QuoterV2 (works against any router with the same selector, e.g. the test MockSwapRouter). */

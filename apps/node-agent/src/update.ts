@@ -13,7 +13,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { platform, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Logger } from './log.js';
@@ -121,8 +121,11 @@ export async function checkForUpdate(opts: CheckOptions): Promise<CheckResult> {
 
 export const sha256Hex = (buf: Uint8Array): string => createHash('sha256').update(buf).digest('hex');
 
+/** Temp download path beside `target`. `.mjs` so Node runs the ESM bundle for the smoke test whatever the extension of `target`. */
+export const updateTmpPath = (target: string) => `${target}.update.tmp.mjs`;
+
 /**
- * Downloads `bundleUrl` into `<target>.update.tmp`, verifies the hash and that the body looks like
+ * Downloads `bundleUrl` into `<target>.update.tmp.mjs`, verifies the hash and that the body looks like
  * the bundle (shebang / JS, not an HTML error page). Returns the temp path; the caller renames it.
  */
 export async function downloadVerified(latest: LatestRelease, target: string, fetchImpl: FetchLike = fetch, timeoutMs = 120_000): Promise<string> {
@@ -141,7 +144,7 @@ export async function downloadVerified(latest: LatestRelease, target: string, fe
   const head = Buffer.from(body.subarray(0, 64)).toString('utf8');
   if (!/^(#!\/usr\/bin\/env node|\/\/|import |"use strict")/.test(head)) throw new Error('downloaded file does not look like mesh-node.js (HTML error page?). Nothing was changed.');
   mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.update.tmp`;
+  const tmp = updateTmpPath(target);
   if (existsSync(tmp)) unlinkSync(tmp);
   writeFileSync(tmp, body, { mode: 0o755 });
   chmodSync(tmp, 0o755);
@@ -165,21 +168,84 @@ export interface ApplyOptions {
   target?: string;
   fetchImpl?: FetchLike;
   restart?: () => 'restarted' | 'not installed' | 'failed';
+  /** Smoke test for the downloaded bundle before it replaces the live one (default: run it with --version). */
+  verifyRuns?: (bundle: string, expectedVersion: string) => void;
 }
 
 export interface ApplyResult {
   target: string;
   version: string;
   service: 'restarted' | 'not installed' | 'failed';
+  /** Where the previous bundle was kept (`mesh-node update --rollback` restores it). */
+  backup?: string | null;
 }
 
-/** Download, verify, atomically replace, restart. Throws before touching the target on any error. */
+export const backupPath = (target: string) => `${target}.prev`;
+
+/**
+ * Runs the downloaded bundle once (`node <bundle> --version`) so a file that passes the hash check but
+ * cannot start (wrong Node version, truncated by a proxy that preserved length, a bad release) is
+ * caught here, while the working copy is still in place.
+ */
+export function verifyBundleRuns(bundle: string, expectedVersion: string, nodeBin = process.execPath): void {
+  let out: string;
+  try {
+    out = execFileSync(nodeBin, [bundle, '--version'], { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MESH_HOME: dirname(bundle) } });
+  } catch (err) {
+    const e = err as Error & { stderr?: string; killed?: boolean };
+    const lines = (e.stderr || e.message || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const why = e.killed ? 'it did not finish within 20s' : (lines.find((l) => /error/i.test(l) && !/^Node\.js v/.test(l)) ?? lines[lines.length - 1] ?? 'it exited with an error').slice(0, 200);
+    throw new Error(`downloaded mesh-node.js does not start (${why}). Nothing was changed.`);
+  }
+  if (!out.includes(expectedVersion)) throw new Error(`downloaded mesh-node.js reports version "${out.trim().slice(0, 40)}", expected ${expectedVersion}. Nothing was changed.`);
+}
+
+/**
+ * Download, verify (hash + smoke run), keep the old bundle as `<target>.prev`, replace atomically,
+ * restart. Throws before touching the target on any download/verify error. If the service fails to
+ * come back the previous bundle is put back and the error says so.
+ */
 export async function applyUpdate(opts: ApplyOptions): Promise<ApplyResult> {
   const target = opts.target ?? join(paths.binDir(), 'mesh-node.js');
   const tmp = await downloadVerified(opts.latest, target, opts.fetchImpl);
+  try {
+    (opts.verifyRuns ?? verifyBundleRuns)(tmp, opts.latest.version);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* already gone */
+    }
+    throw err;
+  }
+  const backup = backupPath(target);
+  let haveBackup = false;
+  if (existsSync(target)) {
+    copyFileSync(target, backup);
+    chmodSync(backup, 0o755);
+    haveBackup = true;
+  }
   renameSync(tmp, target);
+  const restart = opts.restart ?? restartServiceIfInstalled;
+  const service = restart();
+  if (service === 'failed' && haveBackup) {
+    // The new bundle is in place but launchd could not bring it up: put the old one back and retry.
+    copyFileSync(backup, target);
+    const again = restart();
+    throw new Error(`mesh-node ${opts.latest.version} was installed but the service failed to restart; the previous version was restored (service ${again}). Run \`mesh-node logs\` for details.`);
+  }
+  return { target, version: opts.latest.version, service, backup: haveBackup ? backup : null };
+}
+
+/** `mesh-node update --rollback`: swap `<target>.prev` back in and restart. */
+export function rollbackUpdate(opts: { target?: string; restart?: () => 'restarted' | 'not installed' | 'failed' } = {}): ApplyResult {
+  const target = opts.target ?? join(paths.binDir(), 'mesh-node.js');
+  const backup = backupPath(target);
+  if (!existsSync(backup)) throw new Error(`nothing to roll back to (${backup} does not exist)`);
+  copyFileSync(backup, target);
+  chmodSync(target, 0o755);
   const service = (opts.restart ?? restartServiceIfInstalled)();
-  return { target, version: opts.latest.version, service };
+  return { target, version: 'previous', service, backup };
 }
 
 /**

@@ -15,7 +15,7 @@ import {
   unpackMint,
 } from '@solana/spl-token';
 import { NotWiredError, type ChainAdapter, type ChainAdapterExtras, type HolderBalance, type StakeInfo, type SweepDetail } from './types.js';
-import { jsonRpc, JsonRpcError, toRaw, toUnits, type FetchLike } from './rpc.js';
+import { assertBps, jsonRpc, JsonRpcError, toRaw, toUnits, type FetchLike } from './rpc.js';
 import { averageSnapshots, replayBackward, timeWeightedBalances, type TransferEvent } from './timeweight.js';
 import { balancesByOwner, dasTokenAccountsByMint, heliusTransfersForMint } from './solana/helius.js';
 import { JupiterClient, type JupiterOptions } from './solana/jupiter.js';
@@ -228,7 +228,8 @@ export class SolanaAdapter implements ChainAdapter, ChainAdapterExtras {
     const mint = this.mint();
     const decimals = await this.decimals();
     const dryRun = this.opts.dryRun ?? false;
-    const holderBps = this.opts.holderShareBps ?? 5000;
+    const holderBps = assertBps(this.opts.holderShareBps ?? 5000, 'holderShareBps');
+    assertBps(this.opts.slippageBps ?? 100, 'slippageBps');
     const txIds: string[] = [];
     const { accounts, mintWithheld, total } = await this.withheld();
     if (total === 0n) {
@@ -405,13 +406,21 @@ export class SolanaAdapter implements ChainAdapter, ChainAdapterExtras {
     ]);
   }
 
+  /**
+   * ed25519 over the UTF-8 message bytes. The signature may be base58 (Phantom, Solflare), base64
+   * (wallets that hand back a Uint8Array which the web app serialised), hex, or a JSON byte array;
+   * every decoding that yields 64 bytes is tried, so a base64 string that also happens to be valid
+   * base58 cannot be rejected by picking the wrong alphabet first.
+   */
   verifyWalletSignature(wallet: string, message: string, signature: string): boolean {
     try {
-      const pubkey = bs58.decode(wallet);
+      const pubkey = bs58.decode(wallet.trim());
       if (pubkey.length !== 32) return false;
-      const sig = decodeSignature(signature);
-      if (!sig || sig.length !== 64) return false;
-      return nacl.sign.detached.verify(new TextEncoder().encode(message), sig, pubkey);
+      const msg = new TextEncoder().encode(message);
+      for (const sig of decodeSignatureCandidates(signature)) {
+        if (nacl.sign.detached.verify(msg, sig, pubkey)) return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -424,20 +433,48 @@ function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
 }
 
-function decodeSignature(sig: string): Uint8Array | null {
+/** Every 64-byte interpretation of `sig` (base58, base64/base64url, hex, JSON byte array), deduplicated. */
+export function decodeSignatureCandidates(sig: string): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  const seen = new Set<string>();
+  const push = (b: Uint8Array | null | undefined) => {
+    if (!b || b.length !== 64) return;
+    const key = Buffer.from(b).toString('hex');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(b);
+  };
+  const s = sig.trim();
+  if (!s) return out;
+  if (s.startsWith('[') || s.startsWith('{')) {
+    // JSON: `[1,2,...]` or `{"0":1,"1":2,...}` (a Uint8Array run through JSON.stringify) or `{signature: ...}`.
+    try {
+      const parsed = JSON.parse(s) as unknown;
+      const arr = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? bytesFromObject(parsed as Record<string, unknown>) : null;
+      if (arr && arr.length === 64 && arr.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) push(Uint8Array.from(arr));
+    } catch {
+      /* not JSON */
+    }
+    return out;
+  }
+  const hex = s.replace(/^0x/i, '');
+  if (/^[0-9a-fA-F]{128}$/.test(hex)) push(Uint8Array.from(Buffer.from(hex, 'hex')));
   try {
-    const b = bs58.decode(sig);
-    if (b.length === 64) return b;
+    push(bs58.decode(s));
   } catch {
     /* not base58 */
   }
-  try {
-    const b = new Uint8Array(Buffer.from(sig, 'base64'));
-    if (b.length === 64) return b;
-  } catch {
-    /* not base64 */
-  }
-  return null;
+  if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(s)) push(new Uint8Array(Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64')));
+  return out;
+}
+
+function bytesFromObject(o: Record<string, unknown>): number[] | null {
+  if (Array.isArray(o.signature)) return o.signature as number[];
+  if (o.signature && typeof o.signature === 'object') return bytesFromObject(o.signature as Record<string, unknown>);
+  if (o.data && Array.isArray(o.data)) return o.data as number[]; // Buffer.toJSON()
+  const keys = Object.keys(o);
+  if (keys.length === 0 || !keys.every((k) => /^\d+$/.test(k))) return null;
+  return keys.map((k) => Number(k)).sort((a, b) => a - b).map((k) => o[String(k)] as number);
 }
 
 /** Parse MESH_SOLANA_KEYPAIR: base58 secret key, JSON byte array, or a path to a solana-keygen file. */
