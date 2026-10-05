@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { DotField, heroFieldEnabled } from '../components/DotField';
 import { Engines } from '../components/Engines';
 import { GuestChat } from '../components/GuestChat';
 import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
+import { SpendCompare } from '../components/SpendCompare';
 import { Terminal, Tile } from '../components/ui';
 import { PUBLIC_API_URL, STORAGE, TOKENOMICS, pctFromBps } from '../config';
 import { fmtCompact, fmtCost, fmtInt, fmtTime, fmtUsd } from '../lib/format';
@@ -108,6 +110,7 @@ export function Landing() {
     <div className="wrap">
       {/* 1 · hero: one centred column; the live chat is the object, wide, with the model picker visible */}
       <section className="hero home-hero" aria-labelledby="hero-h1">
+        {heroFieldEnabled() ? <DotField /> : null}
         <div className="home-hero-copy">
           <p className="eyebrow">
             {T.name} · ${T.ticker}
@@ -172,6 +175,9 @@ export function Landing() {
           </div>
         </div>
       </section>
+
+      {/* 1b · the price comparison, straight from the catalogue */}
+      <SpendCompare />
 
       {/* 2 · how the money moves */}
       <section aria-labelledby="how-h">

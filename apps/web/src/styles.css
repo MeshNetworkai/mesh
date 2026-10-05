@@ -3500,3 +3500,288 @@ table.schema table.schema {
 .market-amount .btn {
   flex: 0 0 auto;
 }
+
+/* ---------- v3 homepage: nav account menu, hero dot field, spend comparison, compact guest composer ---------- */
+
+/* Balance pill as a menu button (components/Nav.tsx BalanceMenu). */
+.navmenu {
+  position: relative;
+  margin-left: 8px;
+  display: inline-flex;
+}
+.navmenu .pill.balance {
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  margin-left: 0;
+}
+.navmenu .pill.balance .chat-pill-caret {
+  margin-left: 2px;
+  transition: transform 0.15s;
+}
+.navmenu .pill.balance.open .chat-pill-caret {
+  transform: translateY(1px) rotate(225deg);
+}
+.navmenu-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgba(5, 9, 18, 0.12);
+  z-index: 20;
+}
+.navmenu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-2);
+  text-decoration: none;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+.navmenu-item:hover,
+.navmenu-item:focus-visible {
+  color: var(--fg);
+  background: var(--bg-2);
+  outline: none;
+}
+.navmenu-item[aria-current='page'] {
+  color: var(--fg);
+}
+.navmenu-sep {
+  display: block;
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--line);
+}
+@media (max-width: 520px) {
+  .navmenu {
+    margin-left: 2px;
+  }
+  /* The nav's backdrop-filter makes it the containing block for fixed children, so the menu stays an
+     absolute dropdown here too: wider rows for thumbs, anchored to the pill's right edge. */
+  .navmenu-list {
+    min-width: 220px;
+  }
+  .navmenu-item {
+    padding: 13px 14px;
+    font-size: 15px;
+  }
+}
+
+/* Hero dot field (components/DotField.tsx): a canvas behind the hero only. The hero isolates its stacking so a
+   z-index: -1 child sits behind the hero's content and not behind the page background; the old radial tint
+   (.hero::before) was hidden by that very bug and stays off here so the look does not change. */
+.home-hero {
+  isolation: isolate;
+}
+.home-hero::before {
+  display: none;
+}
+.home-hero .dotfield {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  display: block;
+}
+
+/* Spend comparison (components/SpendCompare.tsx). */
+.spend {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  padding: 32px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.spend-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.spend-head .d-m {
+  max-width: 22ch;
+}
+.spend-vendors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  font-size: 13px;
+}
+.spend-vendors .sep {
+  margin-right: 8px;
+  color: var(--faint);
+}
+.spend-body {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 32px;
+  align-items: start;
+}
+.spend-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.spend-pick > * {
+  max-width: 100%;
+}
+.spend-pick .lbl {
+  font-weight: 500;
+}
+.spend-side {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+.spend-side .chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+.spend-served {
+  padding-top: 4px;
+}
+.spend-nums {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.spend-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 22px;
+  min-width: 0;
+}
+.spend-col + .spend-col {
+  border-left: 1px solid var(--line);
+}
+.spend-col .l {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.spend-col .n {
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: clamp(36px, 4vw, 52px);
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.spend-col.mesh .n {
+  color: var(--accent);
+}
+.spend-col .d {
+  font-size: 13px;
+  color: var(--muted);
+}
+.spend-bar {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  padding: 14px 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.spend-bar-track {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.spend-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.spend-bar-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.spend-bar[data-state='parity'] .spend-bar-text {
+  font-weight: 500;
+  color: var(--fg-2);
+}
+@media (max-width: 860px) {
+  .spend {
+    padding: 24px 20px;
+  }
+  .spend-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+@media (max-width: 420px) {
+  .spend-col {
+    padding: 16px 16px;
+  }
+  .spend-col .n {
+    font-size: 30px;
+  }
+  .spend-bar {
+    padding-inline: 16px;
+  }
+}
+
+/* Guest chat card: the app composer, compact. */
+.guestchat .chat-scroll {
+  min-height: 240px;
+  max-height: 380px;
+}
+.home-hero .guestchat .chat-scroll {
+  min-height: 200px;
+}
+.guestchat .thread-col > .msg.ai,
+.guestchat .thread-col > .msg.err {
+  max-width: 92%;
+}
+.guestchat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 12px;
+}
+.guestchat-composer .composer {
+  border-color: var(--line-2);
+  box-shadow: 0 12px 40px rgba(5, 9, 18, 0.08);
+}
+.guestchat-composer .composer-help {
+  padding-inline: 4px;
+}
+.guestchat .openapp {
+  font-weight: 500;
+  color: var(--fg-2);
+  padding: 0;
+}
+/* Model picker (input variant): on narrow screens the price hint gives way to the model name. */
+@media (max-width: 520px) {
+  .mp-hint {
+    display: none;
+  }
+}

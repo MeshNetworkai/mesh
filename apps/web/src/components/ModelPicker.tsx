@@ -178,7 +178,7 @@ export function ModelPicker({
           <>
             <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
               <span style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{current.displayName}</span>
-              <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+              <span className="muted mp-hint" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                 {fmtPair(current.meshPrice)}
                 {off !== null ? ` · ${off}% below list` : ''}
               </span>

@@ -35,7 +35,9 @@ test.describe('landing', () => {
     expect(chatBox.width).toBeGreaterThan(800);
     // Live guest chat: quota pill from GET /v1/guest/quota, model picker, suggested prompts, composer.
     await expect(chat).toContainText('Live · Mesh network');
-    await expect(chat.locator('.pill.num')).toContainText(/\d+ \/ \d+ free/);
+    await expect(chat.locator('.head .pill.num')).toContainText(/\d+ \/ \d+ free/);
+    // The composer bar reads like the app's: model pill, free counter, Send.
+    await expect(chat.locator('.composer .pill.counter')).toContainText(/\d+ of \d+ free today/);
     await expect(chat.getByLabel('Model')).toBeVisible();
     await expect(chat.getByRole('button', { name: 'Explain how Mesh pays for AI' })).toBeVisible();
     await expect(chat.getByLabel('Message')).toBeVisible();
@@ -45,6 +47,28 @@ test.describe('landing', () => {
     await expect(figures).toContainText('1.5%');
     await expect(figures).toContainText('1,000 MESH');
     await expect(figures).toContainText('2.5%');
+    // "Same models. Less spend." between the figures and the engines: live catalogue, list vs Mesh per 1M tokens.
+    const spend = page.locator('#spend');
+    await expect(spend.getByRole('heading', { name: /Same models\. Less spend\./ })).toBeVisible();
+    const figBox = (await figures.boundingBox())!;
+    const spendBox = (await spend.boundingBox())!;
+    const enginesBox = (await engines.boundingBox())!;
+    expect(spendBox.y).toBeGreaterThan(figBox.y + figBox.height);
+    expect(spendBox.y + spendBox.height).toBeLessThan(enginesBox.y);
+    await expect(spend.locator('.spend-vendors')).toContainText(/GPT|Claude|Gemini|Llama|Qwen|DeepSeek/);
+    await expect(spend.locator('.spend-col.mesh .n')).not.toHaveText('—');
+    // Default pick is an open model that is cheaper on Mesh: the saving bar is shown and never invented.
+    await expect(spend.locator('.spend-bar[data-state="saving"]')).toContainText(/You save \$[\d.]+ · \d+% less/);
+    const listPrice = Number((await spend.locator('.spend-col').first().locator('.n').innerText()).replace('$', ''));
+    const meshPrice = Number((await spend.locator('.spend-col.mesh .n').innerText()).replace('$', ''));
+    expect(meshPrice).toBeLessThan(listPrice);
+    // A frontier model at list (config upstreamDiscountBps = 0): the parity line, no saving bar.
+    await spend.locator('#spend-model').click();
+    await page.getByRole('option', { name: /GPT-5|Claude|Gemini/ }).first().click();
+    await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('At list price today — served privately with zero data retention');
+    await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('Discounts on frontier models switch on with the pricing decision');
+    await expect(spend.locator('.spend-bar[data-state="saving"]')).toHaveCount(0);
+    await expect(spend.locator('.spend-served')).toContainText('Served by upstream, privacy upstream · zero data retention');
     // Numbered sections in order.
     for (const t of ['01 · How the money moves', '02 · Four ways in', "03 · Why it's different", '04 · Privacy, stated plainly', '05 · Live stats']) {
       await expect(page.getByText(t, { exact: true })).toBeVisible();
@@ -316,21 +340,71 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
-  test('top nav: App · Market · Run a node · Stats · Docs, market and node readable signed out', async ({ page }) => {
+  test('top nav: Chat · Market · Run a node · Stats · Docs, market and node readable signed out', async ({ page }) => {
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Primary' });
     const labels = await nav.getByRole('link').allInnerTexts();
-    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['App', 'Market', 'Run a node', 'Stats', 'Docs']);
-    await expect(nav.getByRole('link', { name: 'App' })).toHaveAttribute('href', '/app/chat');
+    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['Chat', 'Market', 'Run a node', 'Stats', 'Docs']);
+    await expect(nav.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/chat');
+    await expect(nav.getByRole('link', { name: 'App', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('link', { name: 'Download' })).toHaveCount(0);
     await expect(page.locator('footer').getByRole('link', { name: 'Download for Mac' })).toBeVisible();
     await expect(nav.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+    await expect(nav.getByRole('button', { name: 'Your credits' })).toHaveCount(0);
     await nav.getByRole('link', { name: 'Market' }).click();
     await expect(page).toHaveURL(/\/app\/market$/);
     await expect(page.locator('span.display', { hasText: 'Credit market' })).toBeVisible();
     await expect(page.getByText('Connect a wallet to see your credits')).toHaveCount(0);
     await nav.getByRole('link', { name: 'Run a node' }).click();
     await expect(page).toHaveURL(/\/app\/node$/);
+  });
+
+  test('top nav signed in: the balance pill opens the account menu (Overview · Keys · Node · Stake · Market · Sign out), keyboard and outside click', async ({ page }) => {
+    await signIn(page);
+    await page.goto('/');
+    const nav = page.getByRole('navigation', { name: 'Primary' });
+    const pill = nav.getByRole('button', { name: 'Your credits' });
+    await expect(pill).toContainText('Credits');
+    await expect(pill).toHaveAttribute('aria-expanded', 'false');
+    await expect(nav.getByRole('button', { name: 'Connect wallet' })).toHaveCount(0);
+    await pill.click();
+    const menu = page.getByRole('menu', { name: 'Account' });
+    await expect(menu).toBeVisible();
+    await expect(pill).toHaveAttribute('aria-expanded', 'true');
+    expect(await menu.getByRole('menuitem').allInnerTexts()).toEqual(['Overview', 'Keys', 'Node', 'Stake', 'Market', 'Sign out']);
+    for (const [name, href] of [
+      ['Overview', '/app'],
+      ['Keys', '/app/keys'],
+      ['Node', '/app/node'],
+      ['Stake', '/app/stake'],
+      ['Market', '/app/market'],
+    ]) {
+      await expect(menu.getByRole('menuitem', { name })).toHaveAttribute('href', href);
+    }
+    // Arrow keys move focus, Escape closes and returns focus to the pill.
+    await expect(menu.getByRole('menuitem', { name: 'Overview' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(menu.getByRole('menuitem', { name: 'Keys' })).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(menu.getByRole('menuitem', { name: 'Sign out' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(pill).toBeFocused();
+    // Outside click closes it.
+    await pill.click();
+    await expect(menu).toBeVisible();
+    await page.getByRole('heading', { level: 1 }).click();
+    await expect(menu).toHaveCount(0);
+    // Following an item closes it on the route change.
+    await pill.click();
+    await menu.getByRole('menuitem', { name: 'Keys' }).click();
+    await expect(page).toHaveURL(/\/app\/keys$/);
+    await expect(menu).toHaveCount(0);
+    // Sign out from the menu: back to the connect button.
+    await pill.click();
+    await menu.getByRole('menuitem', { name: 'Sign out' }).click();
+    await expect(nav.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+    await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_session');
   });
 
   test('stats page: live tiles, epochs, weekly report, treasury/market/usage-share; /numbers and /report redirect with the hash', async ({ page }) => {

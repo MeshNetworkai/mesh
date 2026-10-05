@@ -6,4 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_MOCK?: string;
   /** Mock mode only: preview the usage-revenue share as switched on. */
   readonly VITE_MOCK_USAGE_SHARE?: string;
+  /** Homepage hero dot field (components/DotField.tsx): '0' turns it off. Default on. */
+  readonly VITE_HERO_FIELD?: string;
 }

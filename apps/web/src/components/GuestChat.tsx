@@ -145,16 +145,18 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
           placeholder={exhausted ? 'Free messages used for today' : 'Ask the network…'}
           tools={<ModelPicker id={`${id}-model`} variant="pill" label="Model" models={models} value={model} onChange={setModel} disabled={locked} />}
           status={
-            <Link className="small muted openapp" to="/app/chat">
-              Open the app
-            </Link>
+            <span className="pill sm num counter" aria-live="polite" title={`${limit ?? TOKENOMICS.guest.messagesPerDay} free messages a day, no sign-in`}>
+              {remaining === null ? `${limit ?? TOKENOMICS.guest.messagesPerDay} free a day` : `${Math.max(0, remaining)} of ${limit ?? TOKENOMICS.guest.messagesPerDay} free today`}
+            </span>
           }
         />
+        <p className="small muted composer-help">
+          Free messages run on Macs in the {TOKENOMICS.name} network or zero-data-retention providers; nothing is stored after the reply.{' '}
+          <Link className="openapp" to="/app/chat">
+            Open the app
+          </Link>
+        </p>
       </div>
-      <p className="small muted">
-        {limit ?? 5} free messages a day, no sign-up. Network models run on a Mac in the {TOKENOMICS.name} network; the rest go upstream with
-        zero-data-retention providers. Nothing is stored after the reply. Frontier models need a wallet.
-      </p>
     </div>
   );
 }
