@@ -19,6 +19,8 @@
     "meta-llama/llama-3.3-70b-instruct": { "promptUsdPerM": 0.1, "completionUsdPerM": 0.32, "tier": "open", "vendor": "Meta", "displayName": "Llama 3.3 70B" },
     "meta-llama/llama-3.1-8b-instruct": { "promptUsdPerM": 0.05, "completionUsdPerM": 0.08, "tier": "open", "vendor": "Meta", "displayName": "Llama 3.1 8B" },
     "qwen/qwen-2.5-72b-instruct": { "promptUsdPerM": 0.12, "completionUsdPerM": 0.39, "tier": "open", "vendor": "Qwen", "displayName": "Qwen 2.5 72B" },
+    "qwen-2.5-14b": { "promptUsdPerM": 0.06, "completionUsdPerM": 0.18, "tier": "open", "vendor": "Qwen", "displayName": "Qwen 2.5 14B", "note": "network-only (the installer pulls it on Macs with 32 GB+); list price is a reference between the 7B and 72B upstream prices" },
+    "llama-3.1-70b": { "promptUsdPerM": 0.1, "completionUsdPerM": 0.32, "tier": "open", "vendor": "Meta", "displayName": "Llama 3.1 70B", "note": "network-only (--with-70b on 64 GB Macs); list price mirrors Llama 3.3 70B upstream" },
     "qwen/qwen-2.5-7b-instruct": { "promptUsdPerM": 0.04, "completionUsdPerM": 0.1, "tier": "open", "vendor": "Qwen", "displayName": "Qwen 2.5 7B" },
     "mistralai/mistral-large": { "promptUsdPerM": 2.0, "completionUsdPerM": 6.0, "tier": "frontier", "vendor": "Mistral", "displayName": "Mistral Large" },
     "openai/gpt-4o-mini": { "promptUsdPerM": 0.15, "completionUsdPerM": 0.6 },

@@ -51,6 +51,8 @@ alone; `--dry-run` prints the diff). The file records `_refreshedAt`.
 | qwen/qwen-2.5-72b-instruct | open | 0.12 | 0.39 | upstream |
 | meta-llama/llama-3.1-8b-instruct (`llama-3.1-8b`) | open | 0.05 | 0.08 | both |
 | qwen/qwen-2.5-7b-instruct (`qwen-2.5-7b`) | open | 0.04 | 0.10 | both |
+| `qwen-2.5-14b` (network only; what 32 GB+ Macs pull) | open | 0.06 | 0.18 | network |
+| `llama-3.1-70b` (network only; `--with-70b` on 64 GB Macs) | open | 0.10 | 0.32 | network |
 
 Network models bill the flat network price instead: **$0.02 per 1M total tokens** (`networkPricePerMTokens`),
 for any model a node serves.

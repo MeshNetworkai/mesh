@@ -163,7 +163,7 @@ describe('GET /v1/models', () => {
     expect(body.data.find((m: { id: string }) => m.id === 'llama-3.1-8b').online).toBe(1);
     // one row per Ollama tag: the upstream-style sibling is accepted as a model name but not listed twice
     expect(body.data.find((m: { id: string }) => m.id === 'meta-llama/llama-3.1-8b-instruct')).toBeUndefined();
-    expect(body.data.filter((m: { mesh_network: boolean }) => m.mesh_network).map((m: { id: string }) => m.id)).toEqual(['llama-3.1-8b', 'qwen-2.5-7b', 'mesh/mock']);
+    expect(body.data.filter((m: { mesh_network: boolean }) => m.mesh_network).map((m: { id: string }) => m.id)).toEqual(['llama-3.1-8b', 'qwen-2.5-14b', 'qwen-2.5-7b', 'llama-3.1-70b', 'mesh/mock']);
     expect(body.data.find((m: { id: string }) => m.id === 'qwen-2.5-7b').online).toBe(0);
 
     const g = await app.inject({ method: 'GET', url: '/v1/models?guest=1' });

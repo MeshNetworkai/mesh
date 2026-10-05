@@ -342,6 +342,8 @@ const ModelPriceSchema = z.object({
   tier: z.enum(MODEL_TIERS).optional(),
   vendor: z.string().min(1).optional(),
   displayName: z.string().min(1).optional(),
+  /** Free-text provenance for hand-set prices (network-only models without an upstream sibling). */
+  note: z.string().optional(),
 });
 
 export const ModelPricesSchema = z.object({
