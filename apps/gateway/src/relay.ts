@@ -92,6 +92,25 @@ export function headerSafe(v: string): string {
 }
 
 /**
+ * Fires once when the client goes away before the response has ended. `IncomingMessage` 'close' is not
+ * enough on its own: since Node 16 it fires when the request body has been consumed, and behind a reverse
+ * proxy the signal that matters is the connection closing under us. Listen on the response and the
+ * socket too, and treat any of them closing before `writableEnded` as the client being gone.
+ */
+export function onClientGone(req: FastifyRequest, reply: FastifyReply, cb: () => void): void {
+  let fired = false;
+  const raw = reply.raw;
+  const fire = () => {
+    if (fired || raw.writableEnded) return;
+    fired = true;
+    cb();
+  };
+  raw.on('close', fire);
+  req.raw.on('aborted', fire);
+  req.raw.socket?.on('close', fire);
+}
+
+/**
  * SSE writer with backpressure: when the socket buffer is full, wait for `drain` — or for the
  * connection to close, so a client that goes away mid-wait can never park the handler forever
  * (`raw.write` on a destroyed socket returns false and no `drain` ever follows).
@@ -180,11 +199,9 @@ async function serveFromNetwork(
   // Wake the relay wait immediately when the client goes away so the job is abandoned (and the
   // node told to stop via 409) now, not after the first-token/stall budget expires.
   let liveRelay: { close(): void } | null = null;
-  req.raw.on('close', () => {
-    if (!raw.writableEnded) {
-      clientGone = true;
-      liveRelay?.close();
-    }
+  onClientGone(req, reply, () => {
+    clientGone = true;
+    liveRelay?.close();
   });
   const writeHeaders = (nodeId: string, servedBy: RouteDecision['servedBy']) => {
     if (headersWritten) return;
@@ -467,11 +484,9 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   const decoder = new TextDecoder();
   const reader = upstreamRes.body.getReader();
   let aborted = false;
-  req.raw.on('close', () => {
-    if (!raw.writableEnded) {
-      aborted = true;
-      reader.cancel().catch(() => undefined);
-    }
+  onClientGone(req, reply, () => {
+    aborted = true;
+    reader.cancel().catch(() => undefined);
   });
   // Pass lines through as they complete; just before the upstream's `data: [DONE]` add one chunk
   // carrying `mesh` (privacy tier + served-by) so clients see the same final-chunk shape as for nodes.

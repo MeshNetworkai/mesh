@@ -274,6 +274,42 @@ describe('relay safety: buffers, headers, long-polls', () => {
   });
 });
 
+describe('node path: a client that disconnects mid-stream abandons the job (real socket)', () => {
+  it('after the client aborts, the node\'s next chunk gets 409 and done records nothing', async () => {
+    const calm: TokenomicsConfig = { ...fastConfig, routing: { ...fastConfig.routing, firstTokenTimeoutMs: 5000, stallTimeoutMs: 5000 } };
+    const { app, key } = await boot(calm);
+    const n = await fakeNode(app, { nodeId: 'mac-abort' });
+    await n.heartbeat({ models: ['llama3.1:8b'], busy: false });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (app.server.address() as { port: number }).port;
+    const ac = new AbortController();
+    const client = fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama-3.1-8b', stream: true, messages: [{ role: 'user', content: 'long essay please' }] }),
+      signal: ac.signal,
+    });
+    const job = (await n.pull(2000)).json();
+    expect((await n.chunk(job.jobId, 0, 'Bread ')).statusCode).toBe(200);
+    const res = await client;
+    expect(res.status).toBe(200);
+    await res.body!.getReader().read(); // first bytes reached the client
+    ac.abort(); // the user pressed Stop
+    // The gateway must notice the closed connection and abandon the job, so the node stops generating.
+    let status = 200;
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      status = (await n.chunk(job.jobId, 1, 'is old.')).statusCode;
+      if (status === 409) break;
+      await sleep(25);
+    }
+    expect(status).toBe(409);
+    expect((await n.done(job.jobId, { promptTokens: 10, completionTokens: 700, finishReason: 'stop' })).statusCode).toBe(409);
+    // nothing paid, nothing counted as served
+    expect((await app.inject({ method: 'GET', url: '/nodes' })).json()).toMatchObject({ busy: 0, tokens24h: 0 });
+  });
+});
+
 // ---------------------------------------------------------------- part 2: load-test bottlenecks
 
 describe('queueing when every node is busy (bottleneck 1)', () => {
