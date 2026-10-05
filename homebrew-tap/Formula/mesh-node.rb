@@ -13,8 +13,8 @@
 class MeshNode < Formula
   desc "Run a Mesh inference node on your Mac: serve AI replies from Ollama and earn for them"
   homepage "https://github.com/MeshNetworkai/mesh"
-  url "https://github.com/MeshNetworkai/mesh/releases/download/v0.1.0/mesh-node-0.1.0-darwin-arm64.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  url "https://github.com/MeshNetworkai/mesh/releases/download/v0.1.1/mesh-node-0.1.1-darwin-arm64.tar.gz"
+  sha256 "ab526ed818d40435bde314a54871359edc18fc6c1364de32f819422b2822ab4b"
   license "MIT"
 
   # The bundle is plain JavaScript for Node 18+; Homebrew's `node` is the supported runtime.
