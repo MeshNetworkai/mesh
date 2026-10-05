@@ -439,7 +439,10 @@ EOF
   fi
   rm -f "$caddy_tmp"
   systemctl enable --now caddy >/dev/null
-  systemctl reload caddy || systemctl restart caddy
+  # The Caddyfile turns the admin API off, which `systemctl reload caddy` needs, so a reload can never
+  # succeed here: restart (a second of downtime on config changes only; in-flight SSE streams drop).
+  systemctl restart caddy
+  systemctl is-active --quiet caddy || { journalctl -u caddy -n 30 --no-pager; die "caddy failed to start — see the log above"; }
   if [[ -n "$DOMAIN" ]]; then
     ok "caddy serving https://${DOMAIN}, https://api.${DOMAIN} (certificate is issued automatically once DNS points here)"
   else
