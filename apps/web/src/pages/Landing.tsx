@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { DotField, heroFieldEnabled } from '../components/DotField';
 import { Engines } from '../components/Engines';
 import { GuestChat } from '../components/GuestChat';
+import { Hero3D, hero3dEnabled } from '../components/Hero3D';
 import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
 import { SpendCompare } from '../components/SpendCompare';
@@ -110,7 +110,7 @@ export function Landing() {
     <div className="wrap">
       {/* 1 · hero: one centred column; the live chat is the object, wide, with the model picker visible */}
       <section className="hero home-hero" aria-labelledby="hero-h1">
-        {heroFieldEnabled() ? <DotField /> : null}
+        {hero3dEnabled() ? <Hero3D /> : null}
         <div className="home-hero-copy">
           <p className="eyebrow">
             {T.name} · ${T.ticker}

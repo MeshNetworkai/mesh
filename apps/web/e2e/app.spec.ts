@@ -33,6 +33,19 @@ test.describe('landing', () => {
     expect(Math.abs(h1Box.x + h1Box.width / 2 - vw / 2)).toBeLessThan(8);
     expect(Math.abs(chatBox.x + chatBox.width / 2 - vw / 2)).toBeLessThan(8);
     expect(chatBox.width).toBeGreaterThan(800);
+    // The 3D backdrop (components/Hero3D.tsx) is decorative: hidden from AT, behind the copy, never catches clicks.
+    // It mounts only where WebGL 2 exists, so its presence is not asserted; its behaviour is.
+    const backdrop = page.getByTestId('hero-3d');
+    if ((await backdrop.count()) > 0) {
+      await expect(backdrop).toHaveAttribute('aria-hidden', 'true');
+      const style = await backdrop.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { pointerEvents: cs.pointerEvents, zIndex: cs.zIndex, position: cs.position };
+      });
+      expect(style).toEqual({ pointerEvents: 'none', zIndex: '-1', position: 'absolute' });
+      const box = (await backdrop.boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(vw - 1); // bleeds to the viewport edges
+    }
     // Live guest chat: quota pill from GET /v1/guest/quota, model picker, suggested prompts, composer.
     await expect(chat).toContainText('Live · Mesh network');
     await expect(chat.locator('.head .pill.num')).toContainText(/\d+ \/ \d+ free/);
