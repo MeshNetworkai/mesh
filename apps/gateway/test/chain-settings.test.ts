@@ -7,7 +7,7 @@ import { effectiveChain, normaliseExclude, readOverrides, resolveAdapter, writeO
 import { loadEnv } from '../src/env.js';
 import { ADMIN, memDb, TEST_ENV, testConfig, testServer } from './helpers.js';
 
-/** Admin → Token: chain_settings overrides, /admin/chain routes, adapter resolution (docs/DEV_HANDOFF.md). */
+/** Admin → Token: chain_settings overrides, /admin/chain routes, adapter resolution (the internal docs repo). */
 
 const TOKEN = '0x1000000000000000000000000000000000000001';
 const VAULT = '0x2000000000000000000000000000000000000002';

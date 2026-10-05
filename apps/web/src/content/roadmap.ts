@@ -2,7 +2,7 @@
  * Roadmap rendered at the end of /docs (pages/Docs.tsx → "Roadmap") and mirrored in docs/ROADMAP.md.
  *
  * Editing rules: plain strings, no dates, no numbers that live in config/tokenomics.json. One item per
- * line of the checklist (docs/CHECKLIST.md). `status` is the only thing that changes as work lands:
+ * line of the checklist (the internal docs repo). `status` is the only thing that changes as work lands:
  *   done       shipped and live
  *   now        in the open beta, being finished or switched on
  *   next       after the token launches

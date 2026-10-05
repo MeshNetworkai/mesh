@@ -30,7 +30,7 @@ pnpm install && pnpm -r typecheck && pnpm -r build && pnpm test && pnpm --filter
 - **[EVM]** token + fee receiver deployed, same `meta` fields with `chain: "evm"`; RPC URL and the
   sweep signer private key ready.
 - If the chain adapter is **not** wired yet, you launch with `MESH_ADAPTER=mock` and feed fees by
-  hand (`/admin/fake-fees`); say so in the launch thread (see `docs/LAUNCH_COPY.md`, risk paragraph).
+  hand (`/admin/fake-fees`); say so in the launch thread (see the internal docs repo, risk paragraph).
 
 ---
 
@@ -250,7 +250,7 @@ Any ☐ left → **no-go**; post "launch moved to <time>" rather than launching 
 # starter credits for the friends list (one audited batch)
 curl -s -X POST $G/admin/starter-credits -H "$A" -H "$J" \
   -d '{"note":"launch","items":[{"wallet":"<w1>","amountUsd":2},{"wallet":"<w2>","amountUsd":2}]}' | jq '.count, .totalUsd'
-# post the thread (docs/LAUNCH_COPY.md), send the node operator invite
+# post the thread (the internal docs repo), send the node operator invite
 # watch the first real epoch land at the top of the hour
 watch -n 30 "curl -s $G/epochs?limit=1 | jq -c '.epochs[0]'"
 ```

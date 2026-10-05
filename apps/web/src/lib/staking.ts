@@ -17,7 +17,7 @@ interface EvmDeployJson {
 }
 
 /**
- * Robinhood Chain mainnet (Arbitrum Orbit L2, docs/CHAIN_DECISION.md): where $MESH lives. Defined here so
+ * Robinhood Chain mainnet (Arbitrum Orbit L2, the internal docs repo): where $MESH lives. Defined here so
  * wagmi knows it even before config/deploy.robinhood.json carries the token address.
  */
 export const ROBINHOOD_CHAIN: Chain = defineChain({

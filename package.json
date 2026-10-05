@@ -31,5 +31,6 @@
       "better-sqlite3",
       "esbuild"
     ]
-  }
+  },
+  "license": "BUSL-1.1"
 }

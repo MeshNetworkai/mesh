@@ -2,7 +2,7 @@
 
 One page for anyone writing or designing for Mesh: name, voice, the copy we shipped, and where the assets live.
 The design system itself (colour, type, components) is `docs/design-system.html`; tokens are in
-`packages/design-tokens/tokens.css`. Launch copy variants and the thread are in `docs/LAUNCH_COPY.md`.
+`packages/design-tokens/tokens.css`. Launch copy variants and the thread are in the internal docs repo.
 
 ## Name and ticker
 
@@ -54,7 +54,7 @@ Never say:
 - "holders earn from usage" in the present tense while `usageShare.enabled` is false; it is "built, switches on with the pricing decision"
 - "on Solana", "on Base" or any chain as settled; the team decides on launch day
 - "invite-only", "waitlist" as the state of the product; the beta is open (`beta.inviteRequired: false`)
-- "Orbio" or any rival by name in public copy; the comparison is internal (`docs/LAUNCH_COPY.md` §0)
+- Any rival by name in public copy; comparisons stay in the internal docs repo
 - "/numbers", "/report" as page names; the public page is `/stats`
 - anything with an exclamation mark, rockets, emojis, "to the moon"
 
@@ -73,7 +73,7 @@ The homepage v2 hero is live on the landing page and the OG image (`pages/Landin
 
 When the gateway reports `usageShareEnabled: true` the middle line becomes "Usage funds it." and the lede
 adds "and a share of what paid requests earn". The earlier hero ("Trading pays for private AI.") is retired;
-its variants are kept in `docs/LAUNCH_COPY.md` §1 for ads.
+its variants are kept in the internal docs repo for ads.
 
 Landing section copy that was changed from the first build:
 

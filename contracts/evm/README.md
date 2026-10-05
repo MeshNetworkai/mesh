@@ -1,6 +1,6 @@
 # contracts/evm — Foundry project
 
-Decision (docs/CHAIN_DECISION.md): the $MESH token is launched on **Robinhood Chain via Pons**
+Decision (the internal docs repo): the $MESH token is launched on **Robinhood Chain via Pons**
 (the launchpad mints a plain ERC-20 and routes creator fees through its Fee Escrow). This repo
 therefore does **not** deploy a token. What it deploys is the fee plumbing on our side.
 

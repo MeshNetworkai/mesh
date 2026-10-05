@@ -3,7 +3,7 @@
 > Working list, not final content. Oliver designs the public roadmap content later; until then this
 > page and the "Roadmap" section at the bottom of `/docs` show the same items. The web version renders
 > from `apps/web/src/content/roadmap.ts` (plain strings, a `status` per item, no dates): edit that file
-> and mirror the change here, or the other way round. Items come from `docs/CHECKLIST.md`.
+> and mirror the change here, or the other way round. Items come from the internal docs repo.
 
 Statuses: **done** shipped and live · **now** in the open beta, being finished or switched on ·
 **next** after the token launches · **later** on the list, not scheduled · **exploring** researched,
@@ -31,7 +31,7 @@ marketplace and the catalogue. What is left before launch.
 
 ## Launch
 
-The token launches on Robinhood Chain via Pons on launch day (docs/CHAIN_DECISION.md). Everything
+The token launches on Robinhood Chain via Pons on launch day (the internal docs repo). Everything
 below waits for that one event.
 
 | Status | Item | Detail |
@@ -63,7 +63,7 @@ Ideas with research done and no commitment.
 
 ## Internal notes (not for the public page)
 
-- The "now" items map to `docs/CHECKLIST.md` → Production readiness and Beating Orbio. Tick them there
+- The "now" items map to the internal docs repo → Production readiness. Tick them there
   first, then flip the status here.
 - Usage share: the suggested on-state is network price $0.08/M, node pay $0.06/M, 30 % of margin to
   holders (`docs/PRICING.md` §3). Public copy never quotes those numbers until the switch is flipped;

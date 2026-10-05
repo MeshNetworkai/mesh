@@ -595,7 +595,7 @@ function StarterPanel({ token, onUnauthorized, onChanged }: { token: string; onU
  * pastes the addresses the dev hands back here instead of editing config/deploy.robinhood.json. Saved values
  * live in the gateway DB (chain_settings, audited) and win over the JSON when the adapter is built at start-up.
  * "Check" verifies them against the chain; the live adapter switches on at the next restart once token + fee
- * vault are known (docs/DEV_HANDOFF.md).
+ * vault are known (the internal docs repo).
  */
 const CHAIN_FIELD_HELP: Record<ChainField, { label: string; hint: string; placeholder?: string }> = {
   token: { label: 'Token', hint: 'The $MESH ERC-20 the Pons factory minted (from the dev: TokenLaunched event).', placeholder: '0x…' },

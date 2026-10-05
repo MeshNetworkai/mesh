@@ -7,9 +7,9 @@ What you need on your Mac:
 
 - the server's SSH key file at `~/Documents/mesh-keys/mesh_deploy` (the one that lets `root` in)
 - this repository checked out at `~/Documents/mesh`
-- the server IP: **80.78.27.94**
+- the server IP (from your hosting provider)
 
-The domain is optional for now. Without it the site runs on plain `http://80.78.27.94`; once you have
+The domain is optional for now. Without it the site runs on plain `http://YOUR_SERVER_IP`; once you have
 bought one, see "After you buy the domain" at the bottom (two minutes, nothing is lost).
 
 ---
@@ -20,7 +20,7 @@ Open **Terminal** on the Mac and paste this as one line. Replace `DOMAIN` with y
 (for example `meshnetwork.ai`), or delete `--domain DOMAIN` entirely if you do not have one yet:
 
 ```sh
-ssh -i ~/Documents/mesh-keys/mesh_deploy root@80.78.27.94 'bash -s' -- --domain DOMAIN < ~/Documents/mesh/scripts/vps/bootstrap.sh
+ssh -i ~/Documents/mesh-keys/mesh_deploy root@YOUR_SERVER_IP 'bash -s' -- --domain DOMAIN < ~/Documents/mesh/scripts/vps/bootstrap.sh
 ```
 
 It installs everything (firewall, Docker, Caddy for HTTPS, a `mesh` user, backups) and finishes with a
@@ -41,7 +41,7 @@ Running it again later is safe: it keeps the secrets and only updates what chang
 The repository is private, so the server needs its own key to download the code.
 
 1. On GitHub open the repo **MeshNetworkai/mesh** -> **Settings** -> **Deploy keys** -> **Add deploy key**.
-2. Title: `mesh-vps 80.78.27.94`
+2. Title: `mesh-vps YOUR_SERVER_IP`
 3. Key: paste the `ssh-ed25519 ...` line the bootstrap printed.
 4. Leave **Allow write access** unchecked. Click **Add key**.
 
@@ -50,7 +50,7 @@ The repository is private, so the server needs its own key to download the code.
 GitHub's robot deploys by logging in to the server as `mesh` with the same key you used in step 1.
 
 1. In the repo: **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**.
-2. Add **`VPS_HOST`** with value `80.78.27.94`.
+2. Add **`VPS_HOST`** with value `YOUR_SERVER_IP`.
 3. Add **`VPS_SSH_KEY`** with the *contents* of the key file. To copy it to the clipboard, run in Terminal:
 
    ```sh
@@ -67,9 +67,9 @@ At your domain provider, create these records, all pointing at the server:
 
 | Type | Name  | Value              |
 | ---- | ----- | ------------------ |
-| A    | `@`   | `80.78.27.94`      |
-| A    | `api` | `80.78.27.94`      |
-| A    | `www` | `80.78.27.94`      |
+| A    | `@`   | `YOUR_SERVER_IP`      |
+| A    | `api` | `YOUR_SERVER_IP`      |
+| A    | `www` | `YOUR_SERVER_IP`      |
 | AAAA | `@`, `api`, `www` (optional) | `2a0a:3840:8078:27::504e:1b5e:1337` |
 
 If the domain is on **Cloudflare**: keep the orange cloud (proxied) on, and set
@@ -87,8 +87,8 @@ also offers `restart`, `logs` (last 200 lines of the gateway), `health` and `bac
 
 Check it worked:
 
-- `https://api.DOMAIN/health` (or `http://80.78.27.94/health` without a domain) shows `"ok": true`
-- `https://DOMAIN` (or `http://80.78.27.94`) shows the web app
+- `https://api.DOMAIN/health` (or `http://YOUR_SERVER_IP/health` without a domain) shows `"ok": true`
+- `https://DOMAIN` (or `http://YOUR_SERVER_IP`) shows the web app
 
 ---
 
@@ -97,7 +97,7 @@ Check it worked:
 Run step 1 again with the domain, then do step 4 (DNS) and step 5 (Run workflow -> deploy):
 
 ```sh
-ssh -i ~/Documents/mesh-keys/mesh_deploy root@80.78.27.94 'bash -s' -- --domain DOMAIN < ~/Documents/mesh/scripts/vps/bootstrap.sh
+ssh -i ~/Documents/mesh-keys/mesh_deploy root@YOUR_SERVER_IP 'bash -s' -- --domain DOMAIN < ~/Documents/mesh/scripts/vps/bootstrap.sh
 ```
 
 Secrets, data and the deploy key stay exactly as they were; only the web addresses change.

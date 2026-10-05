@@ -186,7 +186,7 @@ the holder; the fee sweep is the only transaction.
 
 ### 3a. Fee source: Robinhood Chain via Pons (`PonsEvmAdapter`)
 
-The decided launch (docs/CHAIN_DECISION.md) does not use a transfer fee of ours. The token is minted by the
+The decided launch (the internal docs repo) does not use a transfer fee of ours. The token is minted by the
 Pons factory on Robinhood Chain; Pons charges the trading fee on the bonding curve and, after graduation,
 through its Uniswap v4 hook, and credits the creator's share to its **Fee Escrow**
 (`0xd3AF…Ac9e`) as a balance for `creatorFeeRecipient`. That recipient is our **`PonsFeeVault`**

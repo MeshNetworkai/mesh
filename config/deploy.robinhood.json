@@ -1,5 +1,5 @@
 {
-  "_comment": "TEMPLATE for the Robinhood Chain mainnet launch via Pons (docs/DEV_HANDOFF.md). Every field is present; null = fill in after the launch / our PonsFeeVault deploy. The admin Token panel (Admin → Token) can override token, feeVault, creditPool, treasury, stable, swapRouter, priceFeed, deployBlock, excludeWallets without editing this file; what it saves lives in the gateway DB (chain_settings) and wins over these values. While token or feeVault is null the gateway stays on the mock adapter (`/health` → adapter: mock (waiting for token)).",
+  "_comment": "TEMPLATE for the Robinhood Chain mainnet launch via Pons (the internal docs repo). Every field is present; null = fill in after the launch / our PonsFeeVault deploy. The admin Token panel (Admin → Token) can override token, feeVault, creditPool, treasury, stable, swapRouter, priceFeed, deployBlock, excludeWallets without editing this file; what it saves lives in the gateway DB (chain_settings) and wins over these values. While token or feeVault is null the gateway stays on the mock adapter (`/health` → adapter: mock (waiting for token)).",
   "chain": "evm",
   "network": "robinhood",
   "chainId": 4663,

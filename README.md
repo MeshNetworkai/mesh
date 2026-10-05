@@ -3,7 +3,7 @@
 Mesh is a token whose trading fees buy AI inference for the people who hold it, spent through an
 OpenAI-compatible gateway, served by Macs and by frontier providers, and sold on a marketplace when
 unused. Open beta at https://mesh-network.ai; the token launches on launch day on Robinhood Chain via
-Pons (docs/CHAIN_DECISION.md); fees reach the gateway through our PonsFeeVault (docs/DEV_HANDOFF.md).
+Pons (the internal docs repo); fees reach the gateway through our PonsFeeVault (the internal docs repo).
 
 **Two engines, one hourly pool.** Every hour the gateway builds one credit pool and splits it pro rata
 across wallets holding at least 1,000 $MESH, time-weighted over the hour (`config/tokenomics.json`).
@@ -326,6 +326,11 @@ at the proxy in production, as before; the page is only as protected as the toke
   (`distribution.holdingAge.enabled`), points / leaderboard / referrals (`points.enabled`), invite
   gating (`beta.inviteRequired`), upstream discount or markup (`requestPricing`).
 - **Waiting for the token launch:** chain decision and `config/deploy.<network>.json` (the team deploys;
-  `docs/DEV_HANDOFF.md`), live chain adapters, staking contract address, on-chain node payouts, USDC
+  the internal docs repo), live chain adapters, staking contract address, on-chain node payouts, USDC
   checkout for the marketplace, buyback floor. Roadmap: `docs/ROADMAP.md`.
 - **Single instance:** rate limits, relays, stats cache and alert state are per process (`docs/ARCHITECTURE.md` §8–9).
+
+
+## License
+
+Business Source License 1.1 — source-available. Personal, educational and evaluation use, and running a node on the Mesh network, are allowed; offering the code or a derivative as a hosted service, token product or competing network is not, until the Change Date (6 October 2029), when it becomes Apache 2.0. See `LICENSE`.

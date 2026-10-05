@@ -10,7 +10,7 @@
  * Needs network access to api.devnet.solana.com (or MESH_SOLANA_RPC_URL). When the airdrop is
  * rate-limited (very common) the script exits 0 with a clear SKIP message so CI stays green.
  * No Jupiter leg: there is no MESH/USDC route on devnet; collectFees() is exercised on mainnet
- * with --dry-run first (see docs/CHAIN_DECISION.md).
+ * with --dry-run first (see the internal docs repo).
  */
 import {
   Keypair, SystemProgram,

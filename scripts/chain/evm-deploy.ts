@@ -12,7 +12,7 @@
  *   robinhood         chainId 4663,  RPC $ROBINHOOD_RPC_URL or https://rpc.mainnet.chain.robinhood.com
  *   robinhood-testnet chainId 46630, RPC $ROBINHOOD_TESTNET_RPC_URL or https://rpc.testnet.chain.robinhood.com
  *
- * NOTE: with the Pons launch (docs/CHAIN_DECISION.md) this script is the FALLBACK path only — the token is
+ * NOTE: with the Pons launch (the internal docs repo) this script is the FALLBACK path only — the token is
  * minted by the Pons factory, and our contract is PonsFeeVault (contracts/evm/script/DeployPonsFeeVault.s.sol).
  *   anvil             chainId 31337, RPC http://127.0.0.1:8545
  *

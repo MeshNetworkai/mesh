@@ -12,8 +12,8 @@ both are indexed by Jupiter within minutes, which is what `collectFees()` swaps 
   register via Metaplex. Wallets and Jupiter show the ticker from this.
 - **Decide who holds what** before liquidity: supply is minted to the deployer (= treasury) ATA. Move
   the team allocation to its lock/multisig now; every later transfer between non-exempt accounts
-  pays the fee (Token-2022 has no exempt list, see "fee leakage" in `docs/CHAIN_DECISION.md`).
-- Treasury wallet must stay funded with SOL for hourly sweeps (budget in `docs/CHAIN_DECISION.md`).
+  pays the fee (Token-2022 has no exempt list, see "fee leakage" in the internal docs repo).
+- Treasury wallet must stay funded with SOL for hourly sweeps (budget in the internal docs repo).
 
 ## 1a. Raydium CPMM (recommended: supports Token-2022 transfer-fee mints)
 

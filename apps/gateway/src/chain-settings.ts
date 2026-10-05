@@ -1,6 +1,6 @@
 /**
  * Chain / token settings the founder pastes in Admin → Token, so the launched token can be plugged in
- * without editing JSON (docs/DEV_HANDOFF.md). Overrides live in `chain_settings` (migration 17) and win
+ * without editing JSON (the internal docs repo). Overrides live in `chain_settings` (migration 17) and win
  * over `config/deploy.<network>.json` when the adapter is built. The live EVM adapter only goes live
  * once `token` + `feeVault` are known; until then the gateway runs the MockAdapter and says so.
  */

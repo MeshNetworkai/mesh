@@ -3,7 +3,7 @@
   "ticker": "MESH",
   "chain": "evm",
   "deployNetwork": "robinhood",
-  "_comment_chain": "Robinhood Chain (Arbitrum Orbit L2, chainId 4663) via a Pons launch — docs/CHAIN_DECISION.md. deployNetwork picks config/deploy.<network>.json (MESH_DEPLOY_NETWORK overrides; use robinhood-testnet for the rehearsal).",
+  "_comment_chain": "Robinhood Chain (Arbitrum Orbit L2, chainId 4663) via a Pons launch — the internal docs repo. deployNetwork picks config/deploy.<network>.json (MESH_DEPLOY_NETWORK overrides; use robinhood-testnet for the rehearsal).",
   "tradeFeeBps": 150,
   "_comment_tradeFeeBps": "Pons: 1% base fee (creator keeps 70% of it) + creatorTaxBps 80 (100% to creator) ≈ 1.5% of volume to the creator = us. Informative for the web copy; fees are set at launch on Pons, not here.",
   "holderShareBps": 5000,
