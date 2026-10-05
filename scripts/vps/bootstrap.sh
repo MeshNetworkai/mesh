@@ -248,6 +248,7 @@ main() {
     [[ -n "$REPO" ]] || REPO="${MESH_REPO:-}"
     [[ -n "$PUBLIC_IP" ]] || PUBLIC_IP="${MESH_PUBLIC_IP:-}"
     [[ -n "$CLOUDFLARE" ]] || CLOUDFLARE="${MESH_CLOUDFLARE:-false}"
+    SOCIAL_X="${SOCIAL_X:-}"; SOCIAL_TELEGRAM="${SOCIAL_TELEGRAM:-}"; HERO_3D="${HERO_3D:-1}"
   fi
   REPO="${REPO:-$DEFAULT_REPO}"
   CLOUDFLARE="${CLOUDFLARE:-false}"
@@ -423,6 +424,10 @@ MESH_PUBLIC_IP=${PUBLIC_IP}
 MESH_CLOUDFLARE=${CLOUDFLARE}
 MESH_GATEWAY_PORT=${GATEWAY_PORT}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT}
+# Web build options (edit, then: deploy.sh deploy). Footer social links are hidden while empty.
+SOCIAL_X=${SOCIAL_X:-}
+SOCIAL_TELEGRAM=${SOCIAL_TELEGRAM:-}
+HERO_3D=${HERO_3D:-1}
 EOF
   ok "settings written to ${SETTINGS}"
 
@@ -615,6 +620,7 @@ build_web() {
     -e HOME=/tmp -e COREPACK_HOME=/tmp/corepack -e CI=true \
     -e npm_config_store_dir=/pnpm-store \
     -e VITE_API_URL="$API_URL" -e VITE_PUBLIC_API_URL="$API_URL" \
+    -e VITE_SOCIAL_X="${SOCIAL_X:-}" -e VITE_SOCIAL_TELEGRAM="${SOCIAL_TELEGRAM:-}" -e VITE_HERO_3D="${HERO_3D:-1}" \
     -v "$SRC:/app" -v "$ROOT/cache/pnpm-store:/pnpm-store" -w /app \
     node:20-alpine sh -c '
       set -e

@@ -2,11 +2,11 @@ import { Link } from 'react-router-dom';
 import { PUBLIC_API_URL, TOKENOMICS } from '../config';
 import { usePointsEnabled, useTheme } from '../lib/hooks';
 
-/** Social links: placeholders until the accounts exist (docs/BRAND.md lists them). */
+/** Social links come from the build environment (VITE_SOCIAL_X, VITE_SOCIAL_TELEGRAM); unset = not shown. No placeholders on a live site. */
 const SOCIAL: Array<{ label: string; href: string }> = [
-  { label: 'X', href: 'https://x.com/mesh_placeholder' },
-  { label: 'Telegram', href: 'https://t.me/mesh_placeholder' },
-];
+  { label: 'X', href: (import.meta.env.VITE_SOCIAL_X as string | undefined) ?? '' },
+  { label: 'Telegram', href: (import.meta.env.VITE_SOCIAL_TELEGRAM as string | undefined) ?? '' },
+].filter((s) => /^https?:\/\//.test(s.href));
 
 const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string; href?: string; points?: boolean }> }> = [
   {

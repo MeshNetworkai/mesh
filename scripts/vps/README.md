@@ -103,6 +103,16 @@ ssh -i ~/Documents/mesh-keys/mesh_deploy root@YOUR_SERVER_IP 'bash -s' -- --doma
 Secrets, data and the deploy key stay exactly as they were; only the web addresses change.
 The deploy afterwards is needed because the web app is built with the API address baked in.
 
+## Footer links and the 3D hero
+
+`/opt/mesh/deploy.env` holds three web build options. The footer's X and Telegram links stay hidden until you fill them in; the hero animation is on by default.
+
+```
+ssh -i ~/Documents/mesh-keys/mesh_deploy mesh@YOUR_SERVER_IP "sed -i 's|^SOCIAL_X=.*|SOCIAL_X=https://x.com/YOUR_HANDLE|; s|^SOCIAL_TELEGRAM=.*|SOCIAL_TELEGRAM=https://t.me/YOUR_GROUP|' /opt/mesh/deploy.env && /opt/mesh/deploy.sh deploy"
+```
+
+Set `HERO_3D=0` the same way to ship the still hero instead of the animation.
+
 ## Good to know
 
 - **Backups**: the database is copied every night (03:15 UTC) to `/opt/mesh/backups` on the server,
