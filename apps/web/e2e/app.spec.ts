@@ -46,7 +46,7 @@ test.describe('landing', () => {
     await expect(figures).toContainText('1,000 MESH');
     await expect(figures).toContainText('2.5%');
     // Numbered sections in order.
-    for (const t of ['01 · How the money moves', '02 · Four ways in', "03 · Why it's different", '04 · Privacy, stated plainly', '05 · Live numbers']) {
+    for (const t of ['01 · How the money moves', '02 · Four ways in', "03 · Why it's different", '04 · Privacy, stated plainly', '05 · Live stats']) {
       await expect(page.getByText(t, { exact: true })).toBeVisible();
     }
     // Four ways in, with the live liquidity book (GET /market/book) in the "sell" column.
@@ -55,10 +55,10 @@ test.describe('landing', () => {
     await expect(page.locator('.pillar').filter({ hasText: "Sell what you don't use" }).getByRole('link', { name: 'Open the market' })).toHaveAttribute('href', '/app/market');
     // Switch strip points at the API page's guide.
     await expect(page.getByRole('link', { name: /Snippets for curl/ })).toHaveAttribute('href', '/api#switch');
-    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run; the numbers link goes to /numbers.
+    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run; the stats link goes to /stats.
     await expect(page.getByText('Fees collected', { exact: true }).locator('..')).toContainText('$100');
     await expect(page.getByText(/1 epochs run/)).toBeVisible();
-    await expect(page.getByRole('link', { name: 'All the numbers' })).toHaveAttribute('href', '/numbers');
+    await expect(page.getByRole('link', { name: 'All the stats' })).toHaveAttribute('href', '/stats');
     await expect(page.getByRole('heading', { name: /Four doors/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
@@ -123,6 +123,86 @@ test.describe('beta admin', () => {
   });
 });
 
+test.describe('chat without a wallet', () => {
+  // The free quota is per visitor per day (GET /v1/guest/quota), so these two tests share the budget: the
+  // first spends one message, the second reads the counter and spends the rest.
+  test("a guest conversation carries on after sign-in, on the wallet's credits", async ({ page }) => {
+    await page.goto('/app/chat');
+    await expect(page.getByRole('heading', { name: 'What do you want to ask?' })).toBeVisible();
+    await expect(page.locator('.pill.counter')).toHaveText('5 of 5 free today');
+    await page.locator('#prompt').fill('Remember this one');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.msg.ai .via').first()).toContainText('free');
+    await expect(page.locator('.pill.counter')).toHaveText('4 of 5 free today');
+    // Sign in (cookie + hint) and reload: the guest history moves to the wallet's key.
+    await signIn(page);
+    await page.reload();
+    await page.locator('.chat-item-title', { hasText: 'Remember this one' }).click();
+    await expect(page.locator('.msg.user')).toContainText('Remember this one');
+    await expect(page.locator('.chat-rail-foot')).not.toContainText('Sign in to save history');
+    await expect(page.locator('.pill.balance[aria-live]')).toBeVisible();
+    await expect(page.locator('#privacy')).toHaveCount(1);
+    const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('mesh.chat.history.')));
+    expect(keys).toEqual(['mesh.chat.history.mockwallet_alice']);
+    // No key in this browser yet: the first message creates one named "Chat" and the reply is billed to the wallet.
+    await page.locator('#model').click();
+    await page.getByRole('option', { name: /Mesh mock/ }).click();
+    await page.locator('#prompt').fill('And now on credits');
+    await page.keyboard.press('Enter');
+    const reply = page.locator('.msg.ai').nth(1);
+    await expect(reply).toContainText('Hello from the Mesh mock upstream');
+    await expect(reply.locator('.via')).toContainText('mesh/mock');
+    await expect(reply.locator('.via')).not.toContainText('free');
+    await expect(page.locator('.chat-rail-foot')).toContainText('Using key Chat');
+  });
+
+  test('/app/chat works as a guest: welcome, free counter, a streamed reply, history in the rail, connect card when the free messages run out', async ({ page }) => {
+    await page.goto('/app/chat');
+    await expect(page.getByRole('heading', { name: 'What do you want to ask?' })).toBeVisible();
+    await expect(page.getByText('Answers come from Macs in the Mesh network or zero-data-retention providers.')).toBeVisible();
+    await expect(page.locator('.chips.suggest .chip')).toHaveCount(4);
+    // Guest mode: the counter from GET /v1/guest/quota, the model pill, no privacy pill (the guest route picks the tier), no footer.
+    const counter = page.locator('.pill.counter');
+    await expect(counter).toHaveText(/^\d of 5 free today$/);
+    const left = Number((await counter.textContent())!.trim()[0]);
+    expect(left).toBeGreaterThan(1);
+    await expect(page.locator('#model')).toBeEnabled();
+    await expect(page.locator('#privacy')).toHaveCount(0);
+    await expect(page.locator('footer')).toHaveCount(0);
+    await expect(page.locator('.chat-rail-foot')).toContainText('Sign in to save history and use frontier models.');
+
+    const prompt = page.locator('#prompt');
+    await prompt.fill('What did my fees buy?');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const reply = page.locator('.msg.ai').first();
+    await expect(reply).toContainText(/\S+/);
+    await expect(reply.locator('.via')).toContainText('served by');
+    await expect(reply.locator('.via')).toContainText('free');
+    await expect(reply.getByRole('button', { name: 'Copy reply' })).toBeVisible();
+    await expect(counter).toHaveText(`${left - 1} of 5 free today`);
+    // The conversation is titled by its first message and survives a reload (localStorage, guest key).
+    await expect(page.locator('.chat-item-title')).toHaveText('What did my fees buy?');
+    await page.reload();
+    await page.locator('.chat-item-title').click();
+    await expect(page.locator('.msg.user')).toContainText('What did my fees buy?');
+    expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('mesh.chat.history.')))).toEqual(['mesh.chat.history.guest']);
+
+    // Use the rest of today's free messages: the inline connect card appears and the composer locks.
+    for (let i = left - 1; i > 0; i--) {
+      await prompt.fill(`Message ${i}`);
+      await page.keyboard.press('Enter');
+      await expect(counter).toHaveText(`${i - 1} of 5 free today`);
+      await expect(page.locator('.msg.ai .via')).toHaveCount(left - i + 1);
+    }
+    const card = page.locator('.connect-card');
+    await expect(card).toContainText('Connect a wallet to keep going');
+    await expect(card).toContainText("You have used today's 5 free messages.");
+    await expect(prompt).toBeDisabled();
+    await card.getByRole('button', { name: 'Connect wallet' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
+  });
+});
+
 test.describe('signed-in app', () => {
   test('dev-login → dashboard shows the credit balance', async ({ page }) => {
     const session = await signIn(page);
@@ -154,9 +234,9 @@ test.describe('signed-in app', () => {
     await page.keyboard.press('Escape').catch(() => undefined);
 
     await page.goto('/app/chat');
-    await expect(page.locator('span.display', { hasText: 'Chat' })).toBeVisible();
-    const keySelect = page.locator('#key');
-    await expect(keySelect).toContainText('e2e');
+    // The chat uses the newest key kept in this browser (the one just created); the rail says which.
+    await expect(page.locator('.chat-rail-foot')).toContainText('Using key e2e');
+    await expect(page.getByRole('heading', { name: 'What do you want to ask?' })).toBeVisible();
     // The picker defaults to the network's Llama 3.1 8B; pick the offline mock so the reply is deterministic.
     const model = page.locator('#model');
     await expect(model).toBeEnabled();
@@ -236,11 +316,12 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
-  test('top nav: Chat · Market · Run a node · Numbers · Docs, market and node readable signed out', async ({ page }) => {
+  test('top nav: App · Market · Run a node · Stats · Docs, market and node readable signed out', async ({ page }) => {
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Primary' });
     const labels = await nav.getByRole('link').allInnerTexts();
-    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['Chat', 'Market', 'Run a node', 'Numbers', 'Docs']);
+    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['App', 'Market', 'Run a node', 'Stats', 'Docs']);
+    await expect(nav.getByRole('link', { name: 'App' })).toHaveAttribute('href', '/app/chat');
     await expect(nav.getByRole('link', { name: 'Download' })).toHaveCount(0);
     await expect(page.locator('footer').getByRole('link', { name: 'Download for Mac' })).toBeVisible();
     await expect(nav.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
@@ -252,8 +333,9 @@ test.describe('signed-in app', () => {
     await expect(page).toHaveURL(/\/app\/node$/);
   });
 
-  test('numbers page: live tiles, epochs, weekly report, treasury/market/usage-share; /stats and /report redirect with the hash', async ({ page }) => {
-    await page.goto('/numbers');
+  test('stats page: live tiles, epochs, weekly report, treasury/market/usage-share; /numbers and /report redirect with the hash', async ({ page }) => {
+    await page.goto('/stats');
+    await expect(page.locator('.statement .eyebrow')).toContainText('Stats ·');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.locator('main')).toContainText(/\$|No fees collected yet/);
     for (const id of ['live', 'epochs', 'report', 'treasury']) await expect(page.locator(`section#${id}`)).toBeVisible();
@@ -268,16 +350,16 @@ test.describe('signed-in app', () => {
     await expect(page.locator('main')).not.toContainText('Something broke');
     // Old addresses redirect and keep their hash.
     await page.goto('/report#treasury');
-    await expect(page).toHaveURL(/\/numbers#treasury$/);
-    await page.goto('/stats');
-    await expect(page).toHaveURL(/\/numbers$/);
+    await expect(page).toHaveURL(/\/stats#treasury$/);
+    await page.goto('/numbers');
+    await expect(page).toHaveURL(/\/stats$/);
     await page.goto('/app/stats');
-    await expect(page).toHaveURL(/\/numbers$/);
+    await expect(page).toHaveURL(/\/stats$/);
   });
 
   test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {
     await page.goto('/');
-    // Download lives in the footer only (the top nav is Chat · Market · Run a node · Numbers · Docs).
+    // Download lives in the footer only (the top nav is App · Market · Run a node · Stats · Docs).
     await page.locator('footer').getByRole('link', { name: 'Download for Mac' }).click();
     await expect(page).toHaveURL(/\/download$/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Run a node');

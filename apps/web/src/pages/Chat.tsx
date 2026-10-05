@@ -1,28 +1,31 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Composer, MessageList, Suggestions, turnId, viaFromResult, type Turn } from '../components/ChatThread';
 import { ModelPicker } from '../components/ModelPicker';
-import { Empty, Notice, Spinner } from '../components/ui';
-import { STORAGE } from '../config';
+import { Notice } from '../components/ui';
+import { STORAGE, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
 import { ApiError, type ChatMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { fmtCost, fmtLatency, fmtUsd } from '../lib/format';
+import { GUEST_OWNER, loadHistory, migrateGuestHistory, newConversationId, saveHistory, titleFor, type Conversation } from '../lib/chatHistory';
+import { fmtUsd, shortAddr } from '../lib/format';
 import { useKeys, useLocalStorage, useMe, useStats } from '../lib/hooks';
-import { loadSecrets } from '../lib/keystore';
+import { loadSecrets, rememberSecret } from '../lib/keystore';
 import { errorMessage, useToast } from '../lib/toast';
 import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type CatalogueModel, type PrivacyTier } from '../lib/types';
 
-interface Turn {
-  id: number;
-  role: 'user' | 'assistant' | 'error';
-  content: string;
-  streaming?: boolean;
-  via?: { servedBy: string; model: string; cost: number | null; latencyMs: number; savedUsd: number | null };
-}
+/**
+ * /app/chat: the chat app. Works without a wallet (the gateway's free guest messages, POST
+ * /v1/guest/chat: network and fast tiers only, a few a day) and with one (the wallet's credits
+ * through an API key kept in this browser; one is created on first use). History lives in
+ * localStorage per wallet (lib/chatHistory.ts) and the guest list is folded in on sign-in, so a
+ * conversation started before connecting carries on after.
+ */
 
-const PASTE = '__paste__';
 /** Default model: the network's own Llama 3.1 8B (docs/PRICING.md); the first network model if the catalogue renamed it. */
 const DEFAULT_MODEL = 'llama-3.1-8b';
+const PROMPTS = ['Explain how Mesh pays for AI', 'Write a tweet about privacy', 'Draft a polite follow-up email', 'Explain public-key cryptography simply'];
+const WELCOME = 'Answers come from Macs in the Mesh network or zero-data-retention providers. Nothing is stored after the reply.';
 
 export function pickDefaultModel(ms: CatalogueModel[]): string {
   return (ms.find((m) => m.id === DEFAULT_MODEL) ?? ms.find((m) => m.served !== 'upstream') ?? ms[0])?.id ?? '';
@@ -30,36 +33,78 @@ export function pickDefaultModel(ms: CatalogueModel[]): string {
 
 export function Chat() {
   const toast = useToast();
-  const { token } = useAuth();
+  const { session, token, openModal } = useAuth();
+  const owner = session?.wallet ?? GUEST_OWNER;
+  const guest = !session;
   const keys = useKeys();
   const me = useMe(0);
   const stats = useStats(0);
-  const [secrets, setSecrets] = useState<Record<string, string>>(() => loadSecrets());
-  useEffect(() => setSecrets(loadSecrets()), [keys.data]);
 
-  const usable = useMemo(() => (keys.data ?? []).filter((k) => !k.revoked && secrets[String(k.id)]), [keys.data, secrets]);
-
-  const [keyChoice, setKeyChoice] = useLocalStorage<string>(STORAGE.chatKey, '');
-  const [pasted, setPasted] = useState('');
-  const apiKey = keyChoice === PASTE ? pasted.trim() : (secrets[keyChoice] ?? '');
-
-  // default to the newest usable key once keys load
+  // Full-height shell: the page (not the window) scrolls, the composer stays put.
   useEffect(() => {
-    if (!keyChoice && usable.length) setKeyChoice(String(usable[0].id));
-    if (keyChoice && keyChoice !== PASTE && !secrets[keyChoice] && usable.length) setKeyChoice(String(usable[0].id));
-  }, [usable, keyChoice, secrets, setKeyChoice]);
+    document.body.dataset.chatPage = '1';
+    return () => {
+      delete document.body.dataset.chatPage;
+    };
+  }, []);
 
-  // Privacy tier for this chat (docs/PRIVACY.md). Sent as X-Mesh-Privacy; trusted by default.
-  const [privacyRaw, setPrivacy] = useLocalStorage<string>(STORAGE.chatPrivacy, 'trusted');
-  const privacy: PrivacyTier = (PRIVACY_TIERS as string[]).includes(privacyRaw) ? (privacyRaw as PrivacyTier) : 'trusted';
+  /* ---------- history (this browser only) ---------- */
+  // Mounting already signed in (reload after connecting): fold any guest history in right away.
+  const [convs, setConvs] = useState<Conversation[]>(() => (owner === GUEST_OWNER ? loadHistory(owner) : migrateGuestHistory(owner)));
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const ownerRef = useRef(owner);
+  const convsRef = useRef(convs);
+  convsRef.current = convs;
+  const dirty = useRef(false);
 
-  // The catalogue (GET /v1/models) does not need a key, so the picker is ready before one is chosen.
+  useEffect(() => {
+    if (ownerRef.current === owner) return;
+    const prev = ownerRef.current;
+    ownerRef.current = owner;
+    if (prev === GUEST_OWNER) {
+      // Signed in mid-conversation: the guest list becomes the wallet's and the open chat stays open.
+      setConvs(migrateGuestHistory(owner));
+    } else {
+      setConvs(loadHistory(owner));
+      setActiveId(null);
+    }
+  }, [owner]);
+
+  const commit = useCallback((fn: (prev: Conversation[]) => Conversation[]) => {
+    dirty.current = true;
+    setConvs(fn);
+  }, []);
+  const flush = useCallback(() => {
+    if (!dirty.current) return;
+    dirty.current = false;
+    saveHistory(ownerRef.current, convsRef.current);
+  }, []);
+  // Streaming deltas arrive every few ms: write a little after they pause, and at once when a reply ends,
+  // when the tab is hidden or unloaded, and when the page is left.
+  useEffect(() => {
+    if (!dirty.current) return;
+    const t = window.setTimeout(flush, 250);
+    return () => window.clearTimeout(t);
+  }, [convs, flush]);
+  useEffect(() => {
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+      flush();
+    };
+  }, [flush]);
+
+  const active = convs.find((c) => c.id === activeId) ?? null;
+  const turns = active?.turns ?? [];
+
+  /* ---------- models + settings ---------- */
   const [models, setModels] = useState<CatalogueModel[] | null>(null);
   const [modelsErr, setModelsErr] = useState<string | null>(null);
   const [model, setModel] = useLocalStorage<string>(STORAGE.chatModel, '');
   useEffect(() => {
     let alive = true;
-    setModelsErr(null);
     api
       .getCatalogue()
       .then((c) => {
@@ -73,196 +118,305 @@ export function Chat() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const current = models?.find((m) => m.id === model) ?? null;
 
-  const [turns, setTurns] = useState<Turn[]>([]);
+  // Privacy tier (docs/PRIVACY.md), sent as X-Mesh-Privacy on wallet chats. Guest messages take the gateway's guest route.
+  const [privacyRaw, setPrivacy] = useLocalStorage<string>(STORAGE.chatPrivacy, 'trusted');
+  const privacy: PrivacyTier = (PRIVACY_TIERS as string[]).includes(privacyRaw) ? (privacyRaw as PrivacyTier) : 'trusted';
+
+  /* ---------- guest quota ---------- */
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const [limit, setLimit] = useState<number>(TOKENOMICS.guest.messagesPerDay);
+  const [guestEnabled, setGuestEnabled] = useState(TOKENOMICS.guest.enabled);
+  const [exhausted, setExhausted] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api
+      .getGuestQuota()
+      .then((q) => {
+        if (!alive) return;
+        setRemaining(q.remaining);
+        setLimit(q.limit);
+        setGuestEnabled(q.enabled);
+        if (q.remaining <= 0) setExhausted(true);
+      })
+      .catch(() => {
+        /* quota unknown until the first send */
+      });
+    const off = api.onGuestRemaining((n) => {
+      if (!alive) return;
+      setRemaining(n);
+      if (n <= 0) setExhausted(true);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  /* ---------- the wallet's key (created on first use) ---------- */
+  const [secrets, setSecrets] = useState<Record<string, string>>(() => loadSecrets());
+  useEffect(() => setSecrets(loadSecrets()), [keys.data]);
+  const usable = useMemo(() => (keys.data ?? []).filter((k) => !k.revoked && secrets[String(k.id)]), [keys.data, secrets]);
+  const activeKey = usable[0] ?? null;
+
+  const ensureKey = async (): Promise<string> => {
+    if (activeKey) return secrets[String(activeKey.id)];
+    if (!token) throw new Error('Connect a wallet first');
+    const created = await api.createKey(token, { name: 'Chat' });
+    rememberSecret(created.id, created.key);
+    void keys.reload();
+    return created.key;
+  };
+
+  /* ---------- sending ---------- */
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const idRef = useRef(1);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+  const needsWallet = guest && current !== null && !current.guestAllowed;
+  const locked = guest && (exhausted || needsWallet || !guestEnabled);
 
-  const send = async (e?: FormEvent) => {
-    e?.preventDefault();
-    const text = input.trim();
-    if (!text || busy || !apiKey || !model) return;
+  const send = async (text: string) => {
+    const content = text.trim();
+    if (!content || busy || !model || locked) return;
     setInput('');
-    const userTurn: Turn = { id: idRef.current++, role: 'user', content: text };
-    const aiId = idRef.current++;
+    const userTurn: Turn = { id: turnId(), role: 'user', content };
+    const aiId = turnId();
+    const aiTurn: Turn = { id: aiId, role: 'assistant', content: '', streaming: true };
     const history: ChatMessage[] = [
       ...turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content })),
-      { role: 'user', content: text },
+      { role: 'user', content },
     ];
-    setTurns((ts) => [...ts, userTurn, { id: aiId, role: 'assistant', content: '', streaming: true }]);
+    let convId = activeId;
+    const now = Date.now();
+    if (!convId || !convs.some((c) => c.id === convId)) {
+      convId = newConversationId();
+      const id = convId;
+      commit((cs) => [{ id, title: titleFor(content), createdAt: now, updatedAt: now, turns: [userTurn, aiTurn] }, ...cs]);
+      setActiveId(id);
+    } else {
+      const id = convId;
+      commit((cs) => cs.map((c) => (c.id === id ? { ...c, updatedAt: now, turns: [...c.turns, userTurn, aiTurn] } : c)));
+    }
+    const id = convId;
+    const patch = (fn: (t: Turn) => Turn) => commit((cs) => cs.map((c) => (c.id === id ? { ...c, turns: c.turns.map((t) => (t.id === aiId ? fn(t) : t)) } : c)));
+
     setBusy(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    const onDelta = (delta: string) => patch((t) => ({ ...t, content: t.content + delta }));
     try {
-      const res = await api.streamChat(
-        { apiKey, model, messages: history, signal: ctrl.signal, upstreamName: stats.data?.upstream, privacy },
-        (delta) => setTurns((ts) => ts.map((t) => (t.id === aiId ? { ...t, content: t.content + delta } : t))),
-      );
-      setTurns((ts) =>
-        ts.map((t) =>
-          t.id === aiId
-            ? {
-                ...t,
-                streaming: false,
-                via: {
-                  servedBy: res.servedBy,
-                  model: res.model,
-                  cost: typeof res.usage?.cost === 'number' ? res.usage.cost : null,
-                  latencyMs: res.latencyMs,
-                  // Network credits: only present when a Mesh node served the reply and savings are shown.
-                  savedUsd: res.mesh && typeof res.mesh.savedUsd === 'number' ? res.mesh.savedUsd : null,
-                },
-              }
-            : t,
-        ),
-      );
-      void me.reload();
+      let res: api.ChatResult;
+      if (guest) {
+        res = await api.streamGuestChat({ messages: history, model, signal: ctrl.signal, upstreamName: stats.data?.upstream }, onDelta);
+      } else {
+        const apiKey = await ensureKey();
+        res = await api.streamChat({ apiKey, model, messages: history, signal: ctrl.signal, upstreamName: stats.data?.upstream, privacy }, onDelta);
+        void me.reload();
+      }
+      patch((t) => ({ ...t, streaming: false, via: viaFromResult(res, guest) }));
     } catch (err) {
       const aborted = (err as Error).name === 'AbortError';
-      setTurns((ts) =>
-        ts
-          .map((t) => (t.id === aiId && t.content ? { ...t, streaming: false } : t))
-          .filter((t) => !(t.id === aiId && !t.content))
-          .concat(aborted ? [] : [{ id: idRef.current++, role: 'error' as const, content: friendlyError(err) }]),
+      const quota = err instanceof ApiError && (err.code === 'guest_quota_exhausted' || (guest && err.status === 429));
+      if (quota) {
+        setExhausted(true);
+        setRemaining(0);
+      }
+      commit((cs) =>
+        cs.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                turns: c.turns
+                  .map((t) => (t.id === aiId && t.content ? { ...t, streaming: false } : t))
+                  .filter((t) => !(t.id === aiId && !t.content))
+                  .concat(aborted || quota ? [] : [{ id: turnId(), role: 'error' as const, content: friendlyError(err) }]),
+              }
+            : c,
+        ),
       );
-      if (!aborted && !(err instanceof ApiError && err.status === 402)) toast.error(errorMessage(err));
+      if (!aborted && !quota && !(err instanceof ApiError && err.status === 402)) toast.error(errorMessage(err));
     } finally {
       setBusy(false);
       abortRef.current = null;
     }
   };
+  useEffect(() => {
+    if (!busy) flush();
+  }, [busy, flush]);
 
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
+  const stop = () => abortRef.current?.abort();
+
+  /* ---------- rail ---------- */
+  const [railOpen, setRailOpen] = useState(false);
+  const openChat = (id: string | null) => {
+    abortRef.current?.abort();
+    setActiveId(id);
+    setRailOpen(false);
+  };
+  const deleteChat = (id: string) => {
+    if (id === activeId) abortRef.current?.abort();
+    commit((cs) => cs.filter((c) => c.id !== id));
+    if (id === activeId) setActiveId(null);
   };
 
-  const noKeys = !keys.loading && usable.length === 0 && keyChoice !== PASTE;
-
-  return (
-    <>
-      <div className="row between">
-        <span className="display d-s">Chat</span>
-        <span className="pill balance" aria-live="polite">
-          Credits <b>{me.data ? fmtUsd(me.data.balance.usd, 3) : '…'}</b>
-        </span>
+  /* ---------- render ---------- */
+  const starter = TOKENOMICS.starterCredits.enabled;
+  const connectCard = locked ? (
+    <div className="connect-card" role="note">
+      <div className="connect-copy">
+        <span className="display d-s">Connect a wallet to keep going</span>
+        <p className="small">
+          {!guestEnabled
+            ? 'Free messages are paused on this gateway right now.'
+            : needsWallet && current
+              ? `${current.displayName} is a ${current.tier ?? 'frontier'} model; it needs a wallet.`
+              : `You have used today's ${limit} free messages.`}{' '}
+          {starter ? 'Starter credits are on us.' : 'Signing a message proves you hold the wallet. No transaction, no fee.'}
+        </p>
       </div>
+      <button type="button" className="btn primary" onClick={openModal}>
+        Connect wallet
+      </button>
+    </div>
+  ) : null;
 
-      <div className="chat-controls">
-        <div className="field">
-          <label htmlFor="key">API key</label>
-          <select id="key" className="input sm mono" value={keyChoice} onChange={(e) => setKeyChoice(e.target.value)}>
-            {usable.length === 0 ? <option value="">No key available</option> : null}
-            {usable.map((k) => (
-              <option key={k.id} value={String(k.id)}>
-                {k.name ?? 'untitled'} · {k.masked.slice(0, 14)}…
-              </option>
-            ))}
-            <option value={PASTE}>Paste a key…</option>
-          </select>
-        </div>
-        {keyChoice === PASTE ? (
-          <div className="field">
-            <label htmlFor="paste">Key</label>
-            <input id="paste" className="input sm mono" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="mesh_sk_…" autoComplete="off" />
-          </div>
-        ) : null}
-        <div className="field">
-          <label htmlFor="model">Model</label>
-          <ModelPicker id="model" models={models} value={model} onChange={setModel} placeholder={modelsErr ? 'Could not load models' : 'Loading…'} />
-        </div>
-        <div className="field">
-          <label htmlFor="privacy">Privacy</label>
-          <select id="privacy" className="input sm" value={privacy} onChange={(e) => setPrivacy(e.target.value)} aria-describedby="privacy-help">
+  const tools = (
+    <>
+      <ModelPicker id="model" variant="pill" label="Model" models={models} value={model} onChange={setModel} placeholder={modelsErr ? 'Could not load models' : 'Loading…'} />
+      {guest ? null : (
+        <label className="pill sm chat-pill select" title={PRIVACY_TIER_INFO[privacy].blurb}>
+          <span className="dot" aria-hidden="true" style={{ background: privacy === 'upstream_zdr' ? 'var(--info)' : 'var(--accent)' }} />
+          <span className="chat-pill-name">{PRIVACY_TIER_INFO[privacy].label}</span>
+          <span className="chat-pill-caret" aria-hidden="true" />
+          {/* The real control sits over the pill, invisible: native menu, keyboard and screen-reader behaviour for free. */}
+          <select id="privacy" aria-label="Privacy" value={privacy} onChange={(e) => setPrivacy(e.target.value)}>
             {PRIVACY_TIERS.map((t) => (
               <option key={t} value={t}>
                 {PRIVACY_TIER_INFO[t].label}
               </option>
             ))}
           </select>
-        </div>
-      </div>
-      <p id="privacy-help" className="small muted" style={{ margin: 0 }}>
-        {PRIVACY_TIER_INFO[privacy].blurb} Whoever serves a reply sees your prompt in plaintext while it runs; the gateway never stores it.{' '}
-        <Link to="/docs#privacy">How the tiers work</Link>.
-      </p>
-      {modelsErr ? <Notice kind="bad">{modelsErr}</Notice> : null}
+        </label>
+      )}
+    </>
+  );
 
-      {noKeys ? (
-        <Empty
-          title="No key in this browser"
-          action={
-            <div className="row">
-              <Link className="btn accent sm" to="/app/keys">
-                Create a key
-              </Link>
-              <button className="btn secondary sm" onClick={() => setKeyChoice(PASTE)}>
-                Paste one
+  const status = guest ? (
+    <span className="pill sm num counter" aria-live="polite" title={`${limit} free messages a day, no sign-in`}>
+      {remaining === null ? `${limit} free a day` : `${Math.max(0, remaining)} of ${limit} free today`}
+    </span>
+  ) : (
+    <span className="pill sm balance num" aria-live="polite">
+      Credits <b>{me.data ? fmtUsd(me.data.balance.usd, 3) : '…'}</b>
+    </span>
+  );
+
+  const welcome = (
+    <div className="chat-welcome">
+      <h1 className="display d-m">What do you want to ask?</h1>
+      <p className="lede">{WELCOME}</p>
+      <Suggestions prompts={PROMPTS} onPick={(p) => void send(p)} disabled={busy || locked || !model} />
+    </div>
+  );
+
+  return (
+    <div className="chatapp">
+      {railOpen ? <div className="chat-scrim" onClick={() => setRailOpen(false)} aria-hidden="true" /> : null}
+      <aside id="chat-rail" className={`chat-rail${railOpen ? ' open' : ''}`} aria-label="Conversations">
+        <div className="chat-rail-head">
+          <button type="button" className="btn secondary sm new-chat" onClick={() => openChat(null)}>
+            New chat
+          </button>
+          <button type="button" className="btn ghost sm rail-close" onClick={() => setRailOpen(false)} aria-label="Close conversations">
+            Close
+          </button>
+        </div>
+        <nav className="chat-list" aria-label="Past conversations">
+          {convs.length === 0 ? <p className="small muted">Your chats stay in this browser. Nothing is kept on the gateway.</p> : null}
+          {convs.map((c) => (
+            <div key={c.id} className={`chat-item${c.id === activeId ? ' on' : ''}`}>
+              <button type="button" className="chat-item-title" onClick={() => openChat(c.id)} aria-current={c.id === activeId ? 'page' : undefined}>
+                {c.title}
+              </button>
+              <button type="button" className="chat-item-del" onClick={() => deleteChat(c.id)} aria-label={`Delete “${c.title}”`} title="Delete">
+                ×
               </button>
             </div>
-          }
-        >
-          Keys are shown once when created, so chat can only use keys created here or pasted in.
-        </Empty>
-      ) : null}
-
-      <div className="chat">
-        <div className="chat-scroll" ref={scrollRef} aria-live="polite" aria-busy={busy}>
-          {turns.length === 0 ? (
-            <p className="small muted" style={{ padding: '24px 0' }}>
-              Ask anything. Each reply shows which tier served it (trusted node, network node or ZDR upstream), the model, what it cost, what
-              you saved versus list price and how long it took.
-            </p>
-          ) : null}
-          {turns.map((t) => (
-            <div key={t.id} className={`msg ${t.role === 'user' ? 'user' : t.role === 'error' ? 'err' : 'ai'}`}>
-              {t.content}
-              {t.streaming ? <span className="caret" aria-hidden="true" /> : null}
-              {t.via ? (
-                <span className="via">
-                  served by {t.via.servedBy} · {t.via.model} · {t.via.cost === null ? 'cost n/a' : fmtCost(t.via.cost)}
-                  {t.via.savedUsd !== null && t.via.savedUsd > 0 ? <> · saved {fmtCost(t.via.savedUsd)} vs list</> : null} · {fmtLatency(t.via.latencyMs)}
-                </span>
-              ) : null}
-            </div>
           ))}
-        </div>
-        <form className="composer" onSubmit={send}>
-          <label className="sr-only" htmlFor="prompt">
-            Message
-          </label>
-          <textarea
-            id="prompt"
-            className="input"
-            rows={2}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKey}
-            placeholder={apiKey ? 'Message… (Enter to send, Shift+Enter for newline)' : 'Select or paste an API key to start'}
-            disabled={!apiKey || !model}
-          />
-          {busy ? (
-            <button type="button" className="btn secondary" onClick={() => abortRef.current?.abort()}>
-              <Spinner /> Stop
-            </button>
+        </nav>
+        <div className="chat-rail-foot">
+          {session ? (
+            <>
+              <div className="row" style={{ gap: 8 }}>
+                <span className="pill sm mono" title={session.wallet}>
+                  {shortAddr(session.wallet, 5, 4)}
+                </span>
+              </div>
+              <p className="small muted key-line">
+                {activeKey ? (
+                  <>
+                    Using key <b>{activeKey.name ?? 'untitled'}</b>
+                  </>
+                ) : keys.loading ? (
+                  'Loading keys…'
+                ) : (
+                  'A key is created on your first message'
+                )}{' '}
+                · <Link to="/app/keys">Keys</Link>
+              </p>
+            </>
           ) : (
-            <button type="submit" className="btn primary" disabled={!input.trim() || !apiKey || !model || !token}>
-              Send
-            </button>
+            <>
+              <p className="small muted">Sign in to save history and use frontier models.</p>
+              <button type="button" className="btn secondary sm" onClick={openModal} style={{ alignSelf: 'flex-start' }}>
+                Connect wallet
+              </button>
+            </>
           )}
-        </form>
-      </div>
-    </>
+          <nav className="chat-applinks small" aria-label="App sections">
+            <Link to="/app">Overview</Link>
+            <Link to="/app/keys">Keys</Link>
+            <Link to="/app/node">Node</Link>
+            <Link to="/app/stake">Stake</Link>
+            <Link to="/app/market">Market</Link>
+          </nav>
+        </div>
+      </aside>
+
+      <section className={`chat-main${turns.length === 0 ? ' is-empty' : ''}`} aria-label="Chat">
+        <div className="chat-topbar">
+          <button type="button" className="btn ghost sm rail-toggle" onClick={() => setRailOpen(true)} aria-expanded={railOpen} aria-controls="chat-rail">
+            Chats
+          </button>
+          <span className="small muted chat-title">{active ? active.title : 'New chat'}</span>
+        </div>
+        {modelsErr ? <Notice kind="bad">{modelsErr}</Notice> : null}
+        <MessageList turns={turns} busy={busy} empty={welcome} after={connectCard} />
+        <div className="chat-composer">
+          <Composer
+            id="prompt"
+            value={input}
+            onChange={setInput}
+            onSend={(t) => void send(t)}
+            onStop={stop}
+            busy={busy}
+            disabled={locked || !model}
+            placeholder={locked ? 'Connect a wallet to keep chatting' : 'Ask anything…'}
+            tools={tools}
+            status={status}
+          />
+          <p className="small muted composer-help">
+            {guest
+              ? `Free messages run on network nodes or zero-data-retention providers. Frontier models need a wallet.`
+              : `${PRIVACY_TIER_INFO[privacy].blurb} Whoever serves a reply sees the prompt while it runs; the gateway never stores it.`}{' '}
+            <Link to="/docs#privacy">How the tiers work</Link>
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -270,6 +424,7 @@ function friendlyError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 402) return `Out of credits. ${err.message}`;
     if (err.status === 401) return 'That API key was rejected. Create a new one under Keys.';
+    if (err.status === 403 && err.code === 'model_not_allowed_for_guests') return 'That model needs a wallet. Connect one to use it.';
     if (err.status === 429) return 'Rate limited. Wait a moment and try again.';
     return err.message;
   }

@@ -11,9 +11,9 @@ import { fmtDiscount } from '../lib/marketMath';
 import type { PeriodTotals } from '../lib/types';
 
 /**
- * /numbers: every public figure on one page. Live network (GET /stats, /nodes), the epoch history
+ * /stats: every public figure on one page. Live network (GET /stats, /nodes), the epoch history
  * (GET /epochs), then the treasury report (GET /report) with its ledger, the credit marketplace and the
- * usage-revenue share. Anchors: #live, #epochs, #report, #treasury. Replaces /app/stats and /report.
+ * usage-revenue share. Anchors: #live, #epochs, #report, #treasury. Replaces /numbers, /app/stats and /report.
  */
 
 const EPOCH_ROWS = 24;
@@ -45,7 +45,7 @@ function SectionHead({ id, title, aside }: { id: string; title: string; aside?: 
   );
 }
 
-export function Numbers() {
+export function StatsPage() {
   useHashScroll();
   const st = useStats();
   const epochs = useEpochs(EPOCH_ROWS);
@@ -75,9 +75,9 @@ export function Numbers() {
   const treasuryOut = tr ? -(tr.nodeRewardAccrualUsd + tr.opsUsd + tr.buybackUsd + tr.otherUsd + (tr.guestChatUsd ?? 0)) : null;
 
   return (
-    <div className="wrap tight numbers">
+    <div className="wrap tight stats">
       <div className="statement">
-        <span className="eyebrow">Numbers · {T.name} · public, no wallet needed</span>
+        <span className="eyebrow">Stats · {T.name} · public, no wallet needed</span>
         {rloading ? (
           <Skeleton w="18ch" h="1.1em" className="statement-skel" />
         ) : r && r.feesIn > 0 ? (

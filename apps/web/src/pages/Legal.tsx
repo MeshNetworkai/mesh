@@ -352,7 +352,7 @@ export function Privacy() {
             <Clause n="8" title="Public by design">
               <p>
                 Epoch history, network totals, the treasury report and the marketplace book are public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
-                <code>/epochs</code>, <code>/report</code> and <code>/market/*</code>, and on the numbers page. They contain counts and dollar totals,
+                <code>/epochs</code>, <code>/report</code> and <code>/market/*</code>, and on the stats page. They contain counts and dollar totals,
                 never wallets, keys or prompts; open listings are shown without the seller's address.
               </p>
             </Clause>
@@ -381,7 +381,7 @@ export function Risk() {
                 {TOKENOMICS.name} credits are a share of trading fees already collected, converted to US-dollar-denominated inference credits, plus,
                 when it is switched on, a share of the margin on paid usage. They are not a return, a yield or income, and no amount is promised or
                 guaranteed. An {epochWord} with little or no trading distributes little or nothing from fees; the usage share is off today and may be
-                switched on, off or re-tuned. The numbers page shows every epoch, including the empty ones.
+                switched on, off or re-tuned. The stats page shows every epoch, including the empty ones.
               </p>
             </Clause>
             <Clause n="2" title="The token can lose all its value">

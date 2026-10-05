@@ -55,7 +55,7 @@ Never say:
 - "on Solana", "on Base" or any chain as settled; the team decides on launch day
 - "invite-only", "waitlist" as the state of the product; the beta is open (`beta.inviteRequired: false`)
 - "Orbio" or any rival by name in public copy; the comparison is internal (`docs/LAUNCH_COPY.md` §0)
-- "/stats", "/report" as page names; the public page is `/numbers`
+- "/numbers", "/report" as page names; the public page is `/stats`
 - anything with an exclamation mark, rockets, emojis, "to the moon"
 
 Numbers come from config and are written in full: "1.5 % fee", "$0.02 per million tokens", "1,000 MESH".
@@ -89,10 +89,11 @@ Landing section copy that was changed from the first build:
 | Route | Purpose | File |
 | --- | --- | --- |
 | `/` | Hero ("Trades fund it. Macs serve it. Holders use it.") with the free guest chat and key figures, "How the money moves" two-engine diagram, four ways in (use, sell, run, hold), why it's different, switch strip, privacy tiers, live numbers, final CTA | `apps/web/src/pages/Landing.tsx` (chat: `components/GuestChat.tsx`, diagram: `components/Engines.tsx`) |
-| `/docs` | Prose docs: what Mesh is, credits (two engines, time-weighting, starter credits), using credits, live model catalogue, marketplace, running a Mac, privacy tiers, verification, staking, the numbers page, FAQ, risk, roadmap | `apps/web/src/pages/Docs.tsx`, roadmap data `src/content/roadmap.ts` (mirrored in `docs/ROADMAP.md`) |
+| `/docs` | Prose docs: what Mesh is, credits (two engines, time-weighting, starter credits), using credits, live model catalogue, marketplace, running a Mac, privacy tiers, verification, staking, the stats page, FAQ, risk, roadmap | `apps/web/src/pages/Docs.tsx`, roadmap data `src/content/roadmap.ts` (mirrored in `docs/ROADMAP.md`) |
 | `/api` | "Switch in a minute" plus the API reference rendered from `apps/gateway/openapi.yaml` (grouped, examples, curl, copy) | `apps/web/src/pages/ApiDocs.tsx` |
-| `/numbers` | Public numbers: live network, every epoch, weekly report, treasury, marketplace, usage share (replaces `/stats` and `/report`) | `apps/web/src/pages/Numbers.tsx` |
+| `/stats` | Public stats: live network, every epoch, weekly report, treasury, marketplace, usage share (`/numbers` and `/report` redirect here) | `apps/web/src/pages/StatsPage.tsx` |
 | `/download` | Terminal, Homebrew, unsigned menu-bar DMG with checksums and the "Open Anyway" steps | `apps/web/src/pages/Download.tsx` |
+| `/app/chat` | The chat app ("App" in the nav): full-height, rail of past conversations (this browser only), Markdown replies with the "served by · model · cost · latency" line, model and privacy pills in the composer. Works signed out on the free guest messages (counter in the composer, inline connect card when they run out or a frontier model is picked); a guest conversation carries on after sign-in | `apps/web/src/pages/Chat.tsx`, shared surface `components/ChatThread.tsx`, history `lib/chatHistory.ts` |
 | `/app/market` | Credit marketplace: book, buy, sell, listings, fills, prepaid balance and withdrawals | `apps/web/src/pages/Market.tsx` |
 | `/terms`, `/privacy`, `/risk` | Plain-English drafts, marked "draft, not legal advice"; marketplace clauses, usage share as "may", geo clause only when the list is non-empty | `apps/web/src/pages/Legal.tsx` |
 | `/leaderboard` | **Hidden.** Points / leaderboard / referral programme is built but disabled (`docs/POINTS.md`); the route is a 404 and the "Ranks" nav link, footer link, Points tile and Referral card are not rendered while `GET /stats → pointsEnabled` is false | `apps/web/src/pages/Leaderboard.tsx` |

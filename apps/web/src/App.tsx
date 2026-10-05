@@ -18,7 +18,7 @@ import { Privacy, Risk, Terms } from './pages/Legal';
 import { NodePage } from './pages/Node';
 import { NotFound } from './pages/NotFound';
 import { usePointsEnabled, useStats } from './lib/hooks';
-import { Numbers } from './pages/Numbers';
+import { StatsPage } from './pages/StatsPage';
 import { Stake } from './pages/Stake';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -54,10 +54,10 @@ function LeaderboardRoute() {
   return <NotFound />;
 }
 
-/** Old addresses (/stats, /app/stats, /report) live on at /numbers; the hash (#epochs, #treasury…) comes along. */
-function ToNumbers() {
+/** Old addresses (/numbers, /app/stats, /report) live on at /stats; the hash (#epochs, #treasury…) comes along. */
+function ToStats() {
   const { hash } = useLocation();
-  return <Navigate to={{ pathname: '/numbers', hash }} replace />;
+  return <Navigate to={{ pathname: '/stats', hash }} replace />;
 }
 
 function ScrollToTop() {
@@ -69,6 +69,8 @@ function ScrollToTop() {
 }
 
 export function App() {
+  // /app/chat is a full-height chat app: no site footer under the composer.
+  const chatPage = useLocation().pathname.startsWith('/app/chat');
   return (
     <>
       <ScrollToTop />
@@ -85,16 +87,16 @@ export function App() {
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/risk" element={<Risk />} />
-            <Route path="/numbers" element={<Numbers />} />
-            <Route path="/stats" element={<ToNumbers />} />
-            <Route path="/report" element={<ToNumbers />} />
-            <Route path="/app/stats" element={<ToNumbers />} />
+            <Route path="/stats" element={<StatsPage />} />
+            <Route path="/numbers" element={<ToStats />} />
+            <Route path="/report" element={<ToStats />} />
+            <Route path="/app/stats" element={<ToStats />} />
             <Route path="/leaderboard" element={<LeaderboardRoute />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/app/chat" element={<Chat />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="keys" element={<Keys />} />
-              <Route path="chat" element={<Chat />} />
               <Route path="node" element={<NodePage />} />
               <Route path="stake" element={<Stake />} />
               <Route path="market" element={<Market />} />
@@ -103,9 +105,11 @@ export function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
         </ErrorBoundary>
-        <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 40 }}>
-          <Footer />
-        </div>
+        {chatPage ? null : (
+          <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 40 }}>
+            <Footer />
+          </div>
+        )}
       </main>
       <ConnectModal />
     </>

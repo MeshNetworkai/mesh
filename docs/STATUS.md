@@ -8,7 +8,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 | Live | Where | Notes |
 | --- | --- | --- |
-| Hourly epochs, pro-rata, time-weighted, 1,000 MESH minimum | gateway `jobs/distribute.ts`, `/numbers` | engine 1; mock fee feed until the token exists |
+| Hourly epochs, pro-rata, time-weighted, 1,000 MESH minimum | gateway `jobs/distribute.ts`, `/stats` | engine 1; mock fee feed until the token exists |
 | OpenAI-compatible gateway: keys, chat, streaming, spend limits, per-key privacy tier | `/app/keys`, `/app/chat`, `/api` | `usage.cost`, `x-mesh-*` headers, failed requests never charged |
 | Frontier catalogue via ZDR upstream at list − configured discount (0 as shipped) | `GET /v1/models`, model picker | Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Llama, Qwen, Mistral; prices refreshed by script |
 | Mac network at $0.02/M to the user, $0.06/M to the node | `/app/node`, `/download` | link codes, Terminal / Homebrew / unsigned DMG, `mesh-node update`, `maxParallel`, queueing for busy nodes; Oliver's M3 Max served end to end on 3 Oct |
@@ -17,7 +17,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 | Credit marketplace: 0–70 % off, 2.5 % fee half to holders, escrow, partial fills, public book | `/app/market`, `/market/*` | prepaid balances topped up and withdrawals paid by the team during the beta (`POST /admin/prepaid`) |
 | Starter credits: $2 on first sign-in, first 500 wallets, 3 per IP per day | `starter.ts`, admin toggle | `docs/SWITCHING.md` |
 | Free homepage chat: 5 messages a day per visitor, network + fast models, treasury-paid | `/`, `POST /v1/guest/chat` | cost on `/report` |
-| Public numbers: live network, every epoch, weekly report, treasury, marketplace, usage share | `/numbers` (merges the old `/stats` and `/report` pages) | raw: `GET /stats`, `/epochs`, `/report`, `/market/stats` |
+| Public stats: live network, every epoch, weekly report, treasury, marketplace, usage share | `/stats` (merges the old `/numbers` and `/report` pages) | raw: `GET /stats`, `/epochs`, `/report`, `/market/stats` |
 | Homepage v2: two-engine diagram, four ways in, switch strip | `/` | `components/Engines.tsx` draws engine 2 dashed while it is off |
 | Docs with roadmap; legal drafts with marketplace clauses | `/docs`, `/terms`, `/privacy`, `/risk` | `src/content/roadmap.ts` ↔ `docs/ROADMAP.md` |
 | Release pipeline: GitHub org MeshNetworkai, v0.1.0 tagged, CI + release build green, homebrew-tap published | `.github/workflows` | menu-bar DMG unsigned (Open Anyway) |

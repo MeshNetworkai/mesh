@@ -76,6 +76,8 @@ export function ModelPicker({
   disabled,
   placeholder = 'Loading…',
   size = 'sm',
+  variant = 'input',
+  label,
 }: {
   id: string;
   models: CatalogueModel[] | null;
@@ -84,6 +86,10 @@ export function ModelPicker({
   disabled?: boolean;
   placeholder?: string;
   size?: 'sm' | 'md';
+  /** `pill`: a compact pill for the chat composer bar (name + a price hint); `input`: the full-width field. */
+  variant?: 'input' | 'pill';
+  /** Accessible name when there is no visible <label> (the pill variant). */
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<CSSProperties>({});
@@ -141,21 +147,34 @@ export function ModelPicker({
   }, [models]);
 
   const off = current ? pctOff(current) : null;
+  const pill = variant === 'pill';
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', minWidth: 0 }}>
       <button
         id={id}
         type="button"
-        className={`input ${size}`}
+        className={pill ? 'pill sm chat-pill' : `input ${size}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
+        aria-label={label}
         disabled={disabled || !models}
         onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: disabled || !models ? 'default' : 'pointer' }}
+        style={pill ? undefined : { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: disabled || !models ? 'default' : 'pointer' }}
       >
-        {current ? (
+        {pill ? (
+          current ? (
+            <>
+              <span className="dot" aria-hidden="true" style={{ background: current.privacy === 'network' ? 'var(--accent)' : 'var(--info)' }} />
+              <span className="chat-pill-name">{current.displayName}</span>
+              <span className="muted chat-pill-hint">{fmtPair(current.meshPrice)}</span>
+              <span className="chat-pill-caret" aria-hidden="true" />
+            </>
+          ) : (
+            <span className="muted">{models ? 'Pick a model' : placeholder}</span>
+          )
+        ) : current ? (
           <>
             <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
               <span style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{current.displayName}</span>

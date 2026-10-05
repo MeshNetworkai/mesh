@@ -5,7 +5,7 @@
   <url><loc>https://mesh-network.ai/docs</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://mesh-network.ai/download</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://mesh-network.ai/api</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://mesh-network.ai/numbers</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
+  <url><loc>https://mesh-network.ai/stats</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
   <url><loc>https://mesh-network.ai/app/market</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
   <url><loc>https://mesh-network.ai/risk</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
   <url><loc>https://mesh-network.ai/terms</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>

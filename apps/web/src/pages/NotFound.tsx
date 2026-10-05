@@ -28,8 +28,8 @@ export function NotFound() {
           <Link className="chip" to="/app">
             App
           </Link>
-          <Link className="chip" to="/numbers">
-            Numbers
+          <Link className="chip" to="/stats">
+            Stats
           </Link>
         </div>
         <Link className="btn primary" to="/">

@@ -21,12 +21,12 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
     ],
   },
   {
-    title: 'Numbers',
+    title: 'Stats',
     links: [
-      { label: 'Live network', to: '/numbers#live' },
-      { label: 'Epochs', to: '/numbers#epochs' },
-      { label: 'Weekly report', to: '/numbers#report' },
-      { label: 'Treasury and market', to: '/numbers#treasury' },
+      { label: 'Live network', to: '/stats#live' },
+      { label: 'Epochs', to: '/stats#epochs' },
+      { label: 'Weekly report', to: '/stats#report' },
+      { label: 'Treasury and market', to: '/stats#treasury' },
       { label: 'Roadmap', to: '/docs#roadmap' },
       { label: 'Leaderboard', to: '/leaderboard', points: true }, // hidden while the points programme is disabled
       { label: 'Health', href: `${PUBLIC_API_URL}/health` },

@@ -36,7 +36,7 @@ withdrawals by hand; USDC checkout follows the token launch.
 | `/` | Hero with the free guest chat, key figures, "How the money moves" (two-engine diagram), four ways in, why it's different, switch strip, privacy tiers, live numbers | `apps/web/src/pages/Landing.tsx`, `components/Engines.tsx` |
 | `/docs` | Credits (two engines, time-weighting, starter credits), using credits, the live model catalogue, marketplace, running a Mac, privacy tiers, verification, staking, numbers, FAQ, risk, roadmap | `apps/web/src/pages/Docs.tsx`, roadmap data in `src/content/roadmap.ts` |
 | `/api` | "Switch in a minute" plus the OpenAPI reference rendered from `apps/gateway/openapi.yaml` | `apps/web/src/pages/ApiDocs.tsx` |
-| `/numbers` | Live network, every epoch, weekly report, treasury, marketplace and usage share, public | `apps/web/src/pages/Numbers.tsx` |
+| `/stats` | Live network, every epoch, weekly report, treasury, marketplace and usage share, public | `apps/web/src/pages/StatsPage.tsx` |
 | `/download` | Terminal, Homebrew and unsigned menu-bar DMG, with checksums and the "Open Anyway" steps | `apps/web/src/pages/Download.tsx` |
 | `/app`, `/app/keys`, `/app/chat`, `/app/market`, `/app/node`, `/app/stake` | Signed-in: balance and ledger, keys, chat with model picker and privacy tier, credit market, run a node, staking (live once the contract is deployed) | `apps/web/src/pages/*.tsx` |
 | `/terms`, `/privacy`, `/risk` | Plain-English drafts incl. marketplace clauses; lawyer review before the token trades | `apps/web/src/pages/Legal.tsx` |
@@ -321,7 +321,7 @@ at the proxy in production, as before; the page is only as protected as the toke
 - **Live in the beta:** gateway, keys, chat, hourly epochs (mock fee feed until the token exists), Mac
   node network with link codes, Homebrew tap, unsigned menu-bar DMG, privacy tiers, spot-check
   verification, credit marketplace with prepaid balances, frontier catalogue via ZDR upstream, starter
-  credits, guest chat, public `/numbers`, admin console.
+  credits, guest chat, public `/stats`, admin console.
 - **Built, switched off by config:** usage share (`usageShare.enabled`), holding-age weighting
   (`distribution.holdingAge.enabled`), points / leaderboard / referrals (`points.enabled`), invite
   gating (`beta.inviteRequired`), upstream discount or markup (`requestPricing`).

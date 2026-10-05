@@ -237,7 +237,7 @@ export function Docs() {
         {usageOn
           ? 'It is on, so holders earn from usage as well as from trading.'
           : `It is switched off today, and at the current network price (${netPrice} per million against ${nodePay} paid to the node) there is no margin to share yet; it switches on with the pricing decision, not before. Until then, an hour with no trades and no sales is an hour with an empty pool.`}{' '}
-        Every epoch, including the empty ones, is on <Link to="/numbers">the numbers page</Link>.
+        Every epoch, including the empty ones, is on <Link to="/stats">the stats page</Link>.
       </>,
     ],
     [
@@ -394,7 +394,7 @@ export function Docs() {
               </li>
               <li>
                 <b>Exact.</b> The pool is split in integer micro-dollars with a deterministic remainder, so the credits issued always equal the fees collected. Check it on{' '}
-                <Link to="/numbers">the numbers page</Link>.
+                <Link to="/stats">the stats page</Link>.
               </li>
               <li>
                 <b>Staking</b> multiplies a node operator's rewards and queue position, not the holder pool (see <a href="#staking">Staking</a>). A holding-age weighting exists
@@ -688,15 +688,15 @@ export function Docs() {
         </div>
       </section>
 
-      <section id="numbers">
+      <section id="stats">
         <div className="sec-head">
-          <p className="eyebrow">The numbers page</p>
+          <p className="eyebrow">The stats page</p>
           <div className="stack">
             <h2>
               Everything on the record, <span className="muted">down to the dollar.</span>
             </h2>
             <p>
-              <Link to="/numbers">The numbers page</Link> is the public ledger: live network figures, every epoch with its fees, pool and eligible wallets (the empty ones
+              <Link to="/stats">The stats page</Link> is the public ledger: live network figures, every epoch with its fees, pool and eligible wallets (the empty ones
               too), the weekly report of fees in against credits out, the treasury ledger, marketplace fills and fees, and the usage share
               {usageOn ? '' : ' (reported as off)'}. It is computed from the same rows your dashboard uses. The raw data is public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
               <code>/epochs</code>, <code>/report</code> and <code>/market/stats</code>; counts and dollar totals, never wallets, keys or prompts.

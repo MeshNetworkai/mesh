@@ -1,24 +1,19 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { TOKENOMICS } from '../config';
-import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamGuestChat, type ChatMessage, type ChatResult } from '../lib/api';
-import { fmtLatency } from '../lib/format';
+import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamGuestChat, type ChatMessage } from '../lib/api';
 import type { CatalogueModel } from '../lib/types';
+import { Composer, MessageList, Suggestions, turnId, viaFromResult, type Turn } from './ChatThread';
 import { ModelPicker } from './ModelPicker';
-import { Notice, Spinner } from './ui';
-
-interface Turn {
-  role: 'user' | 'assistant';
-  content: string;
-  result?: ChatResult | null;
-}
+import { Notice } from './ui';
 
 const PROMPTS = ['Explain how Mesh pays for AI', 'Write a tweet about privacy', 'What runs on my Mac?'];
 const DEFAULT_GUEST_MODEL = 'llama-3.1-8b';
 
 /**
- * Free homepage chat (POST /v1/guest/chat, a few messages per day, no sign-in). Same bubbles, caret and
- * "served by" line as /app/chat (pages/Chat.tsx) so the hero and the app read as one product.
+ * Free homepage chat (POST /v1/guest/chat, a few messages per day, no sign-in). The compact card
+ * version of /app/chat: same message list, composer, pills and "served by" line (components/ChatThread.tsx),
+ * so the hero and the app read as one product. The app page picks the conversation up with more room.
  */
 export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -30,7 +25,6 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
   const [exhausted, setExhausted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
   // Guests pick from the network models and the cheaper tiers (GET /v1/models?guest=1; config guest.allowedTiers).
   const [models, setModels] = useState<CatalogueModel[] | null>(null);
   const [model, setModel] = useState(DEFAULT_GUEST_MODEL);
@@ -70,41 +64,26 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns]);
-
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
       if (!content || streaming || exhausted) return;
       setError(null);
       setInput('');
-      const history: ChatMessage[] = [...turns.map((t) => ({ role: t.role, content: t.content })), { role: 'user', content }];
-      setTurns((prev) => [...prev, { role: 'user', content }, { role: 'assistant', content: '', result: null }]);
+      const history: ChatMessage[] = [...turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content })), { role: 'user', content }];
+      const aiId = turnId();
+      setTurns((prev) => [...prev, { id: turnId(), role: 'user', content }, { id: aiId, role: 'assistant', content: '', streaming: true }]);
       setStreaming(true);
       const ac = new AbortController();
       abortRef.current = ac;
+      const patch = (fn: (t: Turn) => Turn) => setTurns((prev) => prev.map((t) => (t.id === aiId ? fn(t) : t)));
       try {
-        const result = await streamGuestChat({ messages: history, model, signal: ac.signal }, (delta) => {
-          setTurns((prev) => {
-            const next = prev.slice();
-            const last = next[next.length - 1];
-            if (last?.role === 'assistant') next[next.length - 1] = { ...last, content: last.content + delta };
-            return next;
-          });
-        });
-        setTurns((prev) => {
-          const next = prev.slice();
-          const last = next[next.length - 1];
-          if (last?.role === 'assistant') next[next.length - 1] = { ...last, result };
-          return next;
-        });
+        const result = await streamGuestChat({ messages: history, model, signal: ac.signal }, (delta) => patch((t) => ({ ...t, content: t.content + delta })));
+        patch((t) => ({ ...t, streaming: false, via: viaFromResult(result, true) }));
       } catch (err) {
+        // keep what streamed, drop an empty reply
+        setTurns((prev) => prev.map((t) => (t.id === aiId ? { ...t, streaming: false } : t)).filter((t) => !(t.id === aiId && !t.content)));
         if ((err as Error).name === 'AbortError') return;
-        // drop the empty assistant turn
-        setTurns((prev) => (prev[prev.length - 1]?.role === 'assistant' && !prev[prev.length - 1].content ? prev.slice(0, -1) : prev));
         if (err instanceof ApiError && (err.code === 'guest_quota_exhausted' || err.status === 429)) {
           setExhausted(true);
           setRemaining(0);
@@ -119,18 +98,28 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
     [turns, streaming, exhausted, model],
   );
 
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    void send(input);
-  };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void send(input);
-    }
-  };
   const stop = () => abortRef.current?.abort();
   const locked = exhausted || !enabled;
+
+  const empty = (
+    <div className="guestchat-empty">
+      <p className="display d-s">
+        Ask the network anything. <span className="muted">No key, no wallet.</span>
+      </p>
+      <Suggestions prompts={PROMPTS} onPick={(p) => void send(p)} disabled={streaming || locked} />
+    </div>
+  );
+
+  const after = (
+    <>
+      {exhausted ? (
+        <Notice kind="ok">
+          You have used your free messages. <Link to="/app/chat">Connect a wallet</Link> to keep going.
+        </Notice>
+      ) : null}
+      {error ? <Notice kind="bad">{error}</Notice> : null}
+    </>
+  );
 
   return (
     <div className="readout guestchat" id={id} aria-label="Try the network">
@@ -142,72 +131,26 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
         </span>
       </div>
 
-      <div className="chat-scroll" ref={logRef} role="log" aria-live="polite" aria-relevant="additions text" aria-busy={streaming}>
-        {turns.length === 0 ? (
-          <div className="guestchat-empty">
-            <p className="display d-s">
-              Ask the network anything. <span className="muted">No key, no wallet.</span>
-            </p>
-            <div className="chips" aria-label="Suggested prompts">
-              {PROMPTS.map((p) => (
-                <button key={p} type="button" className="chip" onClick={() => void send(p)} disabled={streaming || locked}>
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          turns.map((t, i) => {
-            const live = i === turns.length - 1 && t.role === 'assistant' && streaming;
-            return (
-              <div className={`msg ${t.role === 'user' ? 'user' : 'ai'}`} key={i}>
-                {t.content}
-                {live ? <span className="caret" aria-hidden="true" /> : null}
-                {t.role === 'assistant' && t.result ? (
-                  <span className="via">
-                    served by {t.result.servedBy} · {t.result.model} · {fmtLatency(t.result.latencyMs)}
-                  </span>
-                ) : null}
-              </div>
-            );
-          })
-        )}
-        {exhausted ? (
-          <Notice kind="ok">
-            You have used your free messages. <Link to="/app/chat">Connect a wallet</Link> to keep going.
-          </Notice>
-        ) : null}
-        {error ? <Notice kind="bad">{error}</Notice> : null}
-      </div>
+      <MessageList turns={turns} busy={streaming} empty={empty} after={after} className="chat-scroll" />
 
-      <div className="field" style={{ marginTop: 10 }}>
-        <label htmlFor={`${id}-model`}>Model</label>
-        <ModelPicker id={`${id}-model`} models={models} value={model} onChange={setModel} disabled={locked} />
-      </div>
-      <form className="composer" onSubmit={onSubmit}>
-        <label className="sr-only" htmlFor={`${id}-prompt`}>
-          Message
-        </label>
-        <textarea
+      <div className="guestchat-composer">
+        <Composer
           id={`${id}-prompt`}
-          className="input"
-          rows={2}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={exhausted ? 'Free messages used for today' : 'Ask the network… (Enter to send, Shift+Enter for newline)'}
+          onChange={setInput}
+          onSend={(t) => void send(t)}
+          onStop={stop}
+          busy={streaming}
           disabled={locked}
+          placeholder={exhausted ? 'Free messages used for today' : 'Ask the network…'}
+          tools={<ModelPicker id={`${id}-model`} variant="pill" label="Model" models={models} value={model} onChange={setModel} disabled={locked} />}
+          status={
+            <Link className="small muted openapp" to="/app/chat">
+              Open the app
+            </Link>
+          }
         />
-        {streaming ? (
-          <button type="button" className="btn secondary" onClick={stop}>
-            <Spinner /> Stop
-          </button>
-        ) : (
-          <button type="submit" className="btn primary" disabled={!input.trim() || locked}>
-            Send
-          </button>
-        )}
-      </form>
+      </div>
       <p className="small muted">
         {limit ?? 5} free messages a day, no sign-up. Network models run on a Mac in the {TOKENOMICS.name} network; the rest go upstream with
         zero-data-retention providers. Nothing is stored after the reply. Frontier models need a wallet.

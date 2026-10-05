@@ -278,7 +278,7 @@ export function Landing() {
                 {w.k.startsWith('vi') ? (
                   <>
                     {' '}
-                    <Link to="/numbers">See the numbers</Link>.
+                    <Link to="/stats">See the stats</Link>.
                   </>
                 ) : null}
               </p>
@@ -333,11 +333,11 @@ export function Landing() {
         </div>
       </section>
 
-      {/* 7 · live numbers */}
+      {/* 7 · live stats */}
       <section aria-labelledby="nums-h">
         <div className="sec-head">
           <p className="eyebrow" id="nums-h">
-            05 · Live numbers
+            05 · Live stats
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
@@ -355,10 +355,10 @@ export function Landing() {
         <p className="row between small muted">
           <span role={error && !stats ? 'status' : undefined}>
             {error && !stats
-              ? `Live numbers unavailable right now (${error}).`
+              ? `Live stats unavailable right now (${error}).`
               : `${fmtInt(stats?.epochsRun ?? null)} epochs run · ${fmtInt(stats?.holdersEligibleLastEpoch ?? null)} wallets credited last epoch`}
           </span>
-          <Link to="/numbers">All the numbers</Link>
+          <Link to="/stats">All the stats</Link>
         </p>
       </section>
 

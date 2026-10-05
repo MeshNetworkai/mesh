@@ -41,7 +41,7 @@ export function TopNav() {
         <BetaPill />
       </Link>
       <NavLink to="/app/chat" className={cls}>
-        Chat
+        App
       </NavLink>
       <NavLink to="/app/market" className={cls}>
         Market
@@ -49,8 +49,8 @@ export function TopNav() {
       <NavLink to="/app/node" className={cls}>
         Run a node
       </NavLink>
-      <NavLink to="/numbers" className={cls}>
-        Numbers
+      <NavLink to="/stats" className={cls}>
+        Stats
       </NavLink>
       {pointsEnabled ? (
         <NavLink to="/leaderboard" className={cls}>
