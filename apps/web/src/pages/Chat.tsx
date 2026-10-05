@@ -4,6 +4,7 @@ import { Composer, MessageList, Suggestions, turnId, viaFromResult, type Turn } 
 import { ModelPicker } from '../components/ModelPicker';
 import { Notice } from '../components/ui';
 import { STORAGE, TOKENOMICS } from '../config';
+import { asksAboutMesh, meshBrief } from '../content/brief';
 import * as api from '../lib/api';
 import { ApiError, type ChatMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -232,10 +233,9 @@ export function Chat() {
     const userTurn: Turn = { id: turnId(), role: 'user', content };
     const aiId = turnId();
     const aiTurn: Turn = { id: aiId, role: 'assistant', content: '', streaming: true };
-    const history: ChatMessage[] = [
-      ...turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content })),
-      { role: 'user', content },
-    ];
+    const prior = turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+    const firstUser = prior.find((t) => t.role === 'user')?.content ?? content;
+    const history: ChatMessage[] = [...(asksAboutMesh(firstUser) ? [{ role: 'system' as const, content: meshBrief() }] : []), ...prior, { role: 'user', content }];
     let convId = activeId;
     const now = Date.now();
     if (!convId || !convs.some((c) => c.id === convId)) {

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { TOKENOMICS } from '../config';
 import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamChat, streamGuestChat, type ChatMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { asksAboutMesh, meshBrief } from '../content/brief';
 import { ensureChatKey } from '../lib/chatkey';
 import { useMe } from '../lib/hooks';
 import { fmtCost } from '../lib/format';
@@ -79,7 +80,9 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
       if (!content || streaming || (exhausted && !signedIn)) return;
       setError(null);
       setInput('');
-      const history: ChatMessage[] = [...turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content })), { role: 'user', content }];
+      const prior = turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+      const firstUser = prior.find((t) => t.role === 'user')?.content ?? content;
+      const history: ChatMessage[] = [...(asksAboutMesh(firstUser) ? [{ role: 'system' as const, content: meshBrief() }] : []), ...prior, { role: 'user', content }];
       const aiId = turnId();
       setTurns((prev) => [...prev, { id: turnId(), role: 'user', content }, { id: aiId, role: 'assistant', content: '', streaming: true }]);
       setStreaming(true);
