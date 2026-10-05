@@ -266,6 +266,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [disconnectAsync]);
 
   const expire = useCallback(() => {
+    // Several polling hooks can hit the same 401 within a frame; say it once per signed-in session.
+    if (!sessionRef.current) return;
+    sessionRef.current = null;
     setSession(null);
     toast.info('Session expired. Sign in again.');
   }, [toast]);
