@@ -322,6 +322,22 @@ export function networkTagFor(policy: ModelPolicy, model: string): string | null
   return null;
 }
 
+/**
+ * Id to send the upstream for a client-facing model name. Short aliases ("llama-3.1-8b") are not valid
+ * OpenRouter ids; when the alias maps to a network tag, the sibling alias that looks like a full
+ * upstream id ("meta-llama/llama-3.1-8b-instruct", i.e. contains a "/") is used. Anything else is
+ * forwarded unchanged.
+ */
+export function upstreamModelFor(policy: ModelPolicy, model: string): string {
+  if (model.includes('/')) return model;
+  const tag = networkTagFor(policy, model);
+  if (!tag) return model;
+  for (const [name, t] of Object.entries(policy.networkModels)) {
+    if (t === tag && name.includes('/') && !name.startsWith('mesh/')) return name;
+  }
+  return model;
+}
+
 export function isNetworkModel(policy: ModelPolicy, model: string): boolean {
   return networkTagFor(policy, model) !== null;
 }

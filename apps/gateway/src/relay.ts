@@ -1,3 +1,4 @@
+import { upstreamModelFor } from '@mesh/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ServerResponse } from 'node:http';
 import type { AppContext } from './context.js';
@@ -380,7 +381,9 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
 
   let upstreamRes: Response;
   try {
-    upstreamRes = await ctx.upstream.chat(body, { zdr });
+    // Short aliases (llama-3.1-8b) are translated to the upstream's own id; the reply keeps the requested name.
+    const upstreamModel = upstreamModelFor(ctx.policy, requestedModel);
+    upstreamRes = await ctx.upstream.chat(upstreamModel === requestedModel ? body : { ...body, model: upstreamModel }, { zdr });
   } catch (err) {
     await upstreamThrow(ctx, req, reply, err);
     return false;
