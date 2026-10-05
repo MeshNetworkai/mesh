@@ -1394,6 +1394,81 @@ textarea.input {
   color: var(--fg);
   border-bottom-color: var(--fg);
 }
+/* Docs: live model catalogue (GET /v1/models) and the roadmap (content/roadmap.ts). */
+.tbl.models td code {
+  font-size: 12px;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+}
+.tbl.models tr.group td {
+  padding-top: 18px;
+  border-bottom: 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.roadmap {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.roadmap-phase {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 760px) {
+  .roadmap-phase {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.roadmap-head h3 {
+  margin: 0 0 8px;
+}
+.roadmap-head p {
+  margin: 0;
+  color: var(--fg-2);
+}
+ul.roadmap-items {
+  padding: 0;
+  gap: 12px;
+  list-style: none;
+}
+.roadmap-item {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.roadmap-status {
+  justify-self: start;
+}
+.roadmap-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 15px;
+}
+.roadmap-text b {
+  font-weight: 500;
+  color: var(--fg);
+}
+.roadmap-item.done .dot {
+  background: var(--accent);
+}
+.roadmap-item.now .dot {
+  background: var(--warn);
+}
+.roadmap-item.next .dot,
+.roadmap-item.later .dot,
+.roadmap-item.exploring .dot {
+  background: var(--faint);
+}
+.roadmap-item.done .roadmap-text b {
+  color: var(--fg-2);
+}
 .faq {
   border-top: 1px solid var(--line);
 }

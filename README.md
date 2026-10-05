@@ -1,11 +1,49 @@
 # Mesh ($MESH)
 
-Mesh is a token whose trading fees buy AI for the people who hold it.
-Every hour the gateway sweeps the trading fees, splits them holder/treasury, and credits
-eligible holders pro-rata with inference credits (USD-denominated, stored as micro-USD).
-Holders spend credits through an OpenAI-compatible API (`/v1/chat/completions`) that is served by a
-P2P network of Mac nodes running Ollama when one is online for the model, and by OpenRouter otherwise
-(transparent fallback). Nodes earn per token served.
+Mesh is a token whose trading fees buy AI inference for the people who hold it, spent through an
+OpenAI-compatible gateway, served by Macs and by frontier providers, and sold on a marketplace when
+unused. Open beta at https://mesh-network.ai; the token is deployed by the team on launch day, on the
+chain decided then (both Solana and EVM adapters are built and tested).
+
+**Two engines, one hourly pool.** Every hour the gateway builds one credit pool and splits it pro rata
+across wallets holding at least 1,000 $MESH, time-weighted over the hour (`config/tokenomics.json`).
+
+1. **Trading fees** (always on): a 1.5 % fee on every trade is swept each hour; 50 % becomes US-dollar
+   inference credits, 50 % goes to the treasury, which pays the Macs.
+2. **Usage share** (built, off): a share of the margin on paid requests and marketplace fees goes into
+   the same pool, so holders earn from usage as well as from trading. It switches on with the pricing
+   decision (`usageShare.enabled`); public copy says "built, switches on with the pricing decision",
+   never "live". `docs/PRICING.md` §3.
+
+**What credits buy.** One OpenAI-compatible key (`/v1/chat/completions`, `/v1/models`). Open models the
+network runs (Llama, Qwen) go to an idle, reputable Mac first at a flat $0.02 per million tokens, with
+upstream fallback; the Mac is paid $0.06 per million from the treasury. Frontier and fast models
+(Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Mistral and more) go to OpenRouter restricted to
+zero-data-retention providers at list minus the configured discount (0 as shipped). `GET /v1/models`
+carries both prices per model. Three privacy tiers per request or per key (`docs/PRIVACY.md`); a sample
+of node answers is re-run and compared (`docs/NODE_PROTOCOL.md` §10). The first wallet sign-in gets
+starter credits (`docs/SWITCHING.md`); the homepage chat answers a few messages a day with no wallet.
+
+**Credit marketplace** (`docs/MARKETPLACE.md`): holders list unused credit at 0–70 % off, buyers pay
+from a prepaid USD balance and receive the credits at face value, 2.5 % fee split half to the next
+hour's holder pool and half to the treasury. During the beta the team tops up prepaid balances and pays
+withdrawals by hand; USDC checkout follows the token launch.
+
+## Pages
+
+| Route | What it is | File |
+| --- | --- | --- |
+| `/` | Hero with the free guest chat, key figures, "How the money moves" (two-engine diagram), four ways in, why it's different, switch strip, privacy tiers, live numbers | `apps/web/src/pages/Landing.tsx`, `components/Engines.tsx` |
+| `/docs` | Credits (two engines, time-weighting, starter credits), using credits, the live model catalogue, marketplace, running a Mac, privacy tiers, verification, staking, numbers, FAQ, risk, roadmap | `apps/web/src/pages/Docs.tsx`, roadmap data in `src/content/roadmap.ts` |
+| `/api` | "Switch in a minute" plus the OpenAPI reference rendered from `apps/gateway/openapi.yaml` | `apps/web/src/pages/ApiDocs.tsx` |
+| `/numbers` | Live network, every epoch, weekly report, treasury, marketplace and usage share, public | `apps/web/src/pages/Numbers.tsx` |
+| `/download` | Terminal, Homebrew and unsigned menu-bar DMG, with checksums and the "Open Anyway" steps | `apps/web/src/pages/Download.tsx` |
+| `/app`, `/app/keys`, `/app/chat`, `/app/market`, `/app/node`, `/app/stake` | Signed-in: balance and ledger, keys, chat with model picker and privacy tier, credit market, run a node, staking (live once the contract is deployed) | `apps/web/src/pages/*.tsx` |
+| `/terms`, `/privacy`, `/risk` | Plain-English drafts incl. marketplace clauses; lawyer review before the token trades | `apps/web/src/pages/Legal.tsx` |
+| `/admin` | Operator console: epochs, starter credits, prepaid top-ups, withdrawals, quarantine, audit | `apps/web/src/pages/Admin.tsx` |
+
+Design rules (`docs/BRAND.md`): Onest and Inter only, sentence-case labels, no monospace labels, every
+number read from `config/tokenomics.json`. Roadmap: `docs/ROADMAP.md`. Status: `docs/STATUS.md`.
 
 ## Architecture
 
@@ -109,7 +147,12 @@ Mock holders: `mockwallet_alice` (60k), `mockwallet_bob` (30k), `mockwallet_caro
 | DELETE | `/keys/:id` | JWT | revoke |
 | GET | `/me` | JWT | wallet, balance, last 20 ledger rows, keys |
 | POST | `/v1/chat/completions` | API key | OpenAI-compatible, streaming; served by a Mesh node when one is idle for the model (final chunk carries `mesh: {route, nodeId, chip}`), else OpenRouter passthrough; debits credits; enforces model policy and key spend limit; `x-mesh-route: node:<id> \| openrouter`, `x-mesh-fallback` after a node failure |
-| GET | `/v1/models` | API key | upstream models filtered by `config/model-policy.json` plus the network model names, each with `mesh_network: bool` |
+| GET | `/v1/models` | optional API key | the catalogue: network models (`served: network\|both`, short aliases) plus the curated frontier/fast/open upstream list, each with `displayName`, `vendor`, `tier`, `served`, `listPrice`, `meshPrice`, `privacy`, `online`, `guestAllowed`; top-level `pricing` knobs; `?guest=1` narrows to the guest set (`docs/PRICING.md`) |
+| GET/POST | `/v1/guest/quota`, `/v1/guest/chat` | none | free homepage chat: `guest.messagesPerDay` per IP, network + `guest.allowedTiers` models, paid by the treasury |
+| GET | `/market/config`, `/market/book`, `/market/listings`, `/market/stats`, `/market/quote` | none | credit marketplace, public side: fee, depth by discount tier, open listings (no seller), totals, quotes |
+| POST/DELETE | `/market/listings`, `/market/listings/:id`, `/market/fills`; GET `/me/market`; POST `/me/market/withdraw` | JWT | list credit at a discount (escrowed), cancel, fill from the prepaid balance, your listings/fills/prepaid ledger, request a withdrawal (`docs/MARKETPLACE.md`) |
+| POST | `/admin/prepaid`, `/admin/market/withdrawals/:id/paid`; GET `/admin/market` | ADMIN_TOKEN | beta settlement: top up a prepaid balance after an off-chain payment (idempotent on `ref`), mark a withdrawal paid |
+| GET/POST | `/admin/starter`, `/admin/starter/toggle` | ADMIN_TOKEN | starter-credit programme status and runtime pause |
 | POST | `/admin/run-epoch` | ADMIN_TOKEN | `{epochStart?}` run/replay an epoch (idempotent); response lists each holder's `multiplier` and `holdingAgeApplied` |
 | POST | `/admin/fake-fees` | ADMIN_TOKEN | `{amountUsd}` dev harness, mock adapter only |
 | POST | `/admin/starter-credit` | ADMIN_TOKEN | `{wallet, amountUsd}` |
@@ -201,11 +244,19 @@ get `451 region_blocked`. Off in dev. CORS is open. Logs are pino JSON.
 - `minHoldTokens` 1000 — time-weighted balance needed to be eligible
 - `epochSeconds` 3600 — distribution cadence
 - `creditUsdPerFeeUsd` 1.0 — how many credit-USD each fee-USD mints
-- `requestPricing` — `passthrough` + `markupBps` applied to upstream cost; `networkPricePerMTokens` (0.02) flat USD per 1M total tokens when a Mesh node serves
+- `requestPricing` — `networkPricePerMTokens` (0.02) flat USD per 1M total tokens when a Mesh node serves; `upstreamDiscountBps` / `upstreamMarkupBps` (exactly one may be non-zero, both 0 as shipped) applied to OpenRouter list for upstream-served requests; `showSavings` (`docs/PRICING.md`)
 - `nodeRewards.usdPerMTokens` 0.06 — accrued to the node wallet per 1M total tokens of completed jobs (above the user price by design; treasury share covers the gap)
-- `stakeTiers` — defined and typed; multipliers are **not applied yet** (see below)
+- `usageShare` — engine 2: `enabled` (false as shipped), `holderBps` 3000 / `treasuryBps` 7000 of the margin on paid requests, `sources` {network, upstream, marketplaceFee}
+- `marketplace` — `enabled`, `feeBps` 250, `feeToHoldersBps` 5000, `minListingUsd` 1, `maxDiscountBps` 7000, `listingTtlHours` 168 (`docs/MARKETPLACE.md`)
+- `starterCredits` — `enabled`, `amountUsd` 2, `maxWallets` 500, `requireMinHold` (`docs/SWITCHING.md`)
+- `privacy` — `default` tier, `fallback`, `trustedWallets`, `trustedMinStakeTier` gold, `tiers` (`docs/PRIVACY.md`)
+- `verification` — `enabled`, `sampleRate` 0.05, `minJobsBeforeTrust` 20, `mismatchPenalty`, `quarantineAfterMismatches` 2
+- `guest` — free homepage chat: `enabled`, `messagesPerDay` 5, `maxTokens`, `allowedTiers`
+- `beta` — `enabled`, `label`, `inviteRequired` (false: open beta), `batchSize`
+- `points` — built, `enabled: false` (`docs/POINTS.md`)
+- `stakeTiers` — multipliers apply to node rewards and routing priority; gold + the operator pledge makes a node trusted
 - `distribution.holdingAge` — `{enabled: false, maxDays: 30, minMultiplier: 1.0, maxMultiplier: 2.0}`. When enabled, a holder's pro-rata weight is `timeWeightedBalance × m(age)`, `m` rising linearly from `minMultiplier` (age 0) to `maxMultiplier` (age ≥ `maxDays`). Age comes from the adapter's optional `holdSinceTs` (MockAdapter simulates it; a transfer out resets it) or, when the adapter cannot report it, from the gateway's `holder_age` cache (first epoch seen ≥ `minHoldTokens`; a lower balance than last epoch resets it, dropping below the threshold forgets it). Eligibility is still on the raw balance. Disabled = identical to plain pro-rata
-- `geoBlock` — ISO country codes refused on `/v1` and `/auth` in production (451)
+- `geoBlock` — ISO country codes refused on `/v1` and `/auth` in production (451); empty as shipped (no geo-block), and the web hides the clause when empty
 - `routing` — `preferNetwork` (route to nodes), `firstTokenTimeoutMs` 8000, `stallTimeoutMs` 6000, `jobTimeoutMs` 120000, `defaultMaxTokens` 1024, `minSuccessRate` 0.8, `reputationMinJobs` 5
 - `meta` — `website`, `description`, `contractAddress`, `totalSupply` surfaced on `/stats`
 
@@ -263,22 +314,18 @@ a starter-credits batch textarea (`wallet,amount` per line → `POST /admin/star
 revocation by id (`DELETE /admin/keys/:id`), recent errors and the admin-actions audit. Hide `/admin/*`
 at the proxy in production, as before; the page is only as protected as the token.
 
-## What is stubbed
+## What is live, switched off, or waiting for the token
 
-- `SolanaAdapter` / `EvmAdapter`: `getHolderBalances`, `collectFees`, `transferTokens` throw
-  `NotWiredError`. Signature verification is real (ed25519/bs58; EIP-191 recovery).
-- Node network: the gateway side (jobs, relay, rewards, reputation) is complete and tested with a fake
-  node; live relays are in-process (one gateway instance). Node wallets are self-declared at
-  registration (no signature yet). Rewards accrue in USD in `node_rewards`; on-chain payout is not wired.
-- `apps/web`: fully wired to the gateway (stats, epochs, nodes, keys, usage, chat); `VITE_MOCK=1` swaps in fake data for screenshots. Staking UI is a placeholder.
-- `stakeTiers` multipliers are validated config but not applied. Holding-age weighting is implemented and tested but `enabled: false` by default.
-- `treasury_ledger` kinds `buyback` / `ops` / `other` have no endpoint yet (insert via `addTreasuryEntry` or SQL).
-- Rate limiting and the `/stats` cache are in-process (one gateway instance).
-- `/admin/dev-login` exists for local development only; hide `/admin/*` at the proxy in production.
+`docs/STATUS.md` is the detailed version. In one screen:
 
-## What is next
-
-1. Wire `SolanaAdapter` (Helius/RPC holder snapshots, fee vault sweep, SPL transfer) and `EvmAdapter` (viem clients, Transfer-log balance history).
-2. Apply stake-tier multipliers in the distribution job (holding-age weighting is in; flip `distribution.holdingAge.enabled`).
-3. Node network: signed node registration, reward payouts from the treasury share (`node_rewards.kind='payout'`), per-node concurrency slots, shared job store for multi-instance.
-4. Session-cookie auth for the web app; shared rate-limit/cache store for multi-instance.
+- **Live in the beta:** gateway, keys, chat, hourly epochs (mock fee feed until the token exists), Mac
+  node network with link codes, Homebrew tap, unsigned menu-bar DMG, privacy tiers, spot-check
+  verification, credit marketplace with prepaid balances, frontier catalogue via ZDR upstream, starter
+  credits, guest chat, public `/numbers`, admin console.
+- **Built, switched off by config:** usage share (`usageShare.enabled`), holding-age weighting
+  (`distribution.holdingAge.enabled`), points / leaderboard / referrals (`points.enabled`), invite
+  gating (`beta.inviteRequired`), upstream discount or markup (`requestPricing`).
+- **Waiting for the token launch:** chain decision and `config/deploy.<network>.json` (the team deploys;
+  `docs/DEV_HANDOFF.md`), live chain adapters, staking contract address, on-chain node payouts, USDC
+  checkout for the marketplace, buyback floor. Roadmap: `docs/ROADMAP.md`.
+- **Single instance:** rate limits, relays, stats cache and alert state are per process (`docs/ARCHITECTURE.md` §8–9).

@@ -83,6 +83,12 @@ const fontFiles = [
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const minHold = Number(tokenomics.minHoldTokens).toLocaleString('en-US');
+const feePct = `${tokenomics.tradeFeeBps / 100}%`;
+const holderPct = `${tokenomics.holderShareBps / 100}%`;
+const netPrice = `$${Number(tokenomics.requestPricing?.networkPricePerMTokens ?? 0.02)}`;
+const nodePay = `$${Number(tokenomics.nodeRewards?.usdPerMTokens ?? 0.06)}`;
+const marketFee = `${Number(((tokenomics.marketplace?.feeBps ?? 250) / 100).toFixed(2))}%`;
+const betaLabel = tokenomics.beta?.enabled === false ? '' : ` · ${tokenomics.beta?.label ?? 'Beta'}`;
 const dots = (x, y, r, gap) =>
   [0, 1, 2, 3, 4].map((i) => `<circle cx="${x + i * (2 * r + gap)}" cy="${y}" r="${r}" fill="${i === 2 ? C.accent : C.fg}"/>`).join('');
 
@@ -102,44 +108,44 @@ function ogSvg() {
 
   <!-- logo -->
   <g transform="translate(72 64)">${dots(6, 0, 5, 3)}<text x="76" y="7" font-family="Onest Medium" font-size="22" letter-spacing="-0.4" fill="${C.fg}">${esc(tokenomics.name)}</text></g>
-  <text x="${W - 72}" y="70" text-anchor="end" font-family="Inter Medium" font-size="14" fill="${C.muted}">$${esc(tokenomics.ticker)} · ${esc(cap(tokenomics.chain))}</text>
+  <text x="${W - 72}" y="70" text-anchor="end" font-family="Inter Medium" font-size="14" fill="${C.muted}">$${esc(tokenomics.ticker)}${esc(betaLabel)}</text>
 
-  <!-- headline -->
-  <g font-family="Onest Light" font-size="96" letter-spacing="-3.4" fill="${C.fg}">
-    <text x="68" y="286">Trading pays for</text>
-    <text x="68" y="386">private AI.</text>
+  <!-- headline: the landing hero (pages/Landing.tsx) -->
+  <g font-family="Onest Light" font-size="80" letter-spacing="-2.8" fill="${C.fg}">
+    <text x="68" y="230">Trades fund it.</text>
+    <text x="68" y="314">Macs serve it.</text>
+    <text x="68" y="398" fill="${C.accent}">Holders use it.</text>
   </g>
-  <text x="72" y="438" font-family="Inter Medium" font-size="14" fill="${C.muted}">Hold · Earn · Ask · Own it</text>
-  <text x="72" y="486" font-family="Inter" font-size="22" fill="${C.fg2}">Hold ${esc(minHold)} $${esc(tokenomics.ticker)} and AI credits arrive every hour,</text>
-  <text x="72" y="518" font-family="Inter" font-size="22" fill="${C.fg2}">paid for by trading fees. One API key for any model.</text>
+  <text x="72" y="444" font-family="Inter Medium" font-size="14" fill="${C.muted}">Use it · Sell it · Run it · Hold it</text>
+  <text x="72" y="486" font-family="Inter" font-size="21" fill="${C.fg2}">Hold ${esc(minHold)} $${esc(tokenomics.ticker)} and AI credits land every hour from the ${esc(feePct)} trading fee.</text>
+  <text x="72" y="518" font-family="Inter" font-size="21" fill="${C.fg2}">Open models on Macs at ${esc(netPrice)}/M tokens, frontier models at list, unused credits sold on.</text>
 
-  <!-- readout card -->
+  <!-- key figures card: the landing's "Key figures" tiles, every number from config -->
   <g transform="translate(820 150)">
     <rect x="0.5" y="0.5" width="307" height="300" rx="24" fill="${C.bg}" stroke="${C.line}"/>
-    <text x="24" y="40" font-family="Inter Medium" font-size="13" fill="${C.muted}">Next distribution</text>
+    <text x="24" y="40" font-family="Inter Medium" font-size="13" fill="${C.muted}">Two engines, one hourly pool</text>
     <circle cx="258" cy="36" r="4" fill="${C.accent}"/>
     <text x="270" y="40" font-family="Inter" font-size="12" fill="${C.fg}">Live</text>
     <line x1="0.5" y1="60" x2="307.5" y2="60" stroke="${C.line}"/>
-    <text x="24" y="128" font-family="Onest Light" font-size="56" letter-spacing="-2.2" fill="${C.fg}">00:<tspan fill="${C.accent}">23</tspan>:41</text>
-    <rect x="24" y="148" width="259" height="4" rx="2" fill="#eef1f5"/>
-    <rect x="24" y="148" width="160" height="4" rx="2" fill="${C.accent}"/>
-    <line x1="0.5" y1="176" x2="307.5" y2="176" stroke="${C.line}"/>
+    <text x="24" y="118" font-family="Onest Light" font-size="56" letter-spacing="-2.2" fill="${C.fg}">${esc(holderPct)}</text>
+    <text x="24" y="146" font-family="Inter" font-size="13" fill="${C.fg2}">of every ${esc(feePct)} trade fee, as credits for holders</text>
+    <line x1="0.5" y1="170" x2="307.5" y2="170" stroke="${C.line}"/>
     <g font-family="Inter" font-size="13" fill="${C.fg2}">
-      <text x="24" y="208">Fees this epoch</text>
-      <text x="24" y="238">To holders</text>
-      <text x="24" y="268">Eligible wallets</text>
+      <text x="24" y="204">Network price</text>
+      <text x="24" y="234">Node pay</text>
+      <text x="24" y="264">Marketplace fee</text>
     </g>
     <g font-family="Inter Medium" font-size="13" fill="${C.fg}" text-anchor="end" font-variant-numeric="tabular-nums">
-      <text x="283" y="208">$412.80</text>
-      <text x="283" y="238">$206.40</text>
-      <text x="283" y="268">1,284</text>
+      <text x="283" y="204">${esc(netPrice)} / M tokens</text>
+      <text x="283" y="234">${esc(nodePay)} / M tokens</text>
+      <text x="283" y="264">${esc(marketFee)}, half to holders</text>
     </g>
   </g>
 
   <!-- footer line -->
   <line x1="72" y1="566" x2="${W - 72}" y2="566" stroke="${C.line}"/>
   <text x="72" y="594" font-family="Inter" font-size="13" fill="${C.muted}">Credits are a share of fees, not a promise.</text>
-  <text x="${W - 72}" y="594" text-anchor="end" font-family="Inter" font-size="13" fill="${C.muted}">app.example.com</text>
+  <text x="${W - 72}" y="594" text-anchor="end" font-family="Inter" font-size="13" fill="${C.muted}">mesh-network.ai</text>
 </svg>`;
 }
 

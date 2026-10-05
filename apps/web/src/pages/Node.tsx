@@ -367,13 +367,15 @@ export function NodePage() {
             HTTPS (no inbound ports, nothing stored) and streams the reply back.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
-            Earnings are shown as $ credits today, settled from the treasury share of trading fees; they move to {TOKENOMICS.ticker} once the
-            token layer ships. Apple Silicon with 16 GB+ is the target; Linux works with Ollama installed.
+            You earn {fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens served, tracked per job and paid from the treasury share of trading
+            fees. Earnings are a US-dollar counter today and are paid out in {TOKENOMICS.ticker} once the token is live. Apple Silicon with 16 GB+ is the
+            target; Linux works with Ollama installed. A Mac with headroom can take several jobs at once (<code className="mono">maxParallel</code> in the
+            agent config).
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             What you see here, in <code className="mono">mesh-node status</code> and in the menu bar app is counts and earnings only. Jobs arrive
-            without any detail about who sent them, and the agent never writes a prompt or reply to disk. Stake gold and sign the operator pledge
-            below to serve <b>trusted</b> requests.
+            without any detail about who sent them, and the agent never writes a prompt or reply to disk. Stake {TOKENOMICS.privacy.trustedMinStakeTier} and sign the operator pledge
+            below to serve <b>trusted</b> requests; your own Macs are trusted for your own requests without either.
           </p>
         </div>
         <ol className="nodesteps" aria-label="What the installer does">

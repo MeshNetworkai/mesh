@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Notice, Skeleton, Terminal } from '../components/ui';
-import { PUBLIC_API_URL } from '../config';
+import { PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { fmtCost } from '../lib/format';
 import { useAsync, useCopy } from '../lib/hooks';
 import { installOneLiner } from './Node';
 
@@ -104,7 +105,7 @@ export function DownloadPage() {
           on your Mac.
         </h1>
         <p className="lede" style={{ textAlign: 'center' }}>
-          Three ways to install the same agent. <span className="dim">Pick the one you trust most; they all end with the Mac linked to your wallet and serving.</span>
+          Three ways to install the same agent. <span className="dim">Pick the one you trust most; they all end with the Mac linked to your wallet and earning {fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens it serves.</span>
         </p>
         <div className="dl-meta" role="status" aria-live="polite" aria-label="Current release">
           <span className="pill sm">

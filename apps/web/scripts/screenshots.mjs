@@ -35,6 +35,7 @@ const PAGES = [
   { path: '/app/market', name: 'market', full: true },
   { path: '/numbers', name: 'numbers', full: true },
   { path: '/download', name: 'download', full: true },
+  { path: '/docs', name: 'docs', full: true },
   // /leaderboard: points programme is built but disabled (404 while off), so it is not captured.
   { path: '/admin', name: 'admin', full: true },
   { path: '/api', name: 'api', full: true },

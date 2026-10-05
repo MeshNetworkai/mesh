@@ -315,8 +315,9 @@ export function Stake() {
         <span className="small muted">{tiers.data ? `${tiers.data.chain} · tiers from tokenomics` : ''}</span>
       </div>
       <p className="muted" style={{ maxWidth: 640 }}>
-        Lock {TICKER} to multiply what your nodes earn and move them to the front of the queue. Tiers are read from the staking contract once per epoch; the
-        contract holds your tokens and nothing else — rewards are paid by the gateway.
+        Lock {TICKER} to multiply what your nodes earn and move them to the front of the queue; the top tier plus the signed operator pledge makes a node trusted for
+        other people's default-tier requests. Tiers are read from the staking contract once per epoch; the contract holds your tokens and nothing else — rewards are paid
+        by the gateway. Staking does not change the holder pool.
       </p>
 
       {mine.error && !mine.data ? <Notice kind="bad">Could not load your position: {mine.error}</Notice> : null}
@@ -339,8 +340,8 @@ export function Stake() {
 
       {!live ? (
         <Empty title="Staking opens with the token launch">
-          The MeshStaking contract is written and tested; it goes live with the {TICKER} deployment. Your tier shows here the moment the contract address lands in the
-          deploy config.
+          The staking contract is written and tested; it goes live when the team deploys {TICKER} on launch day, on the chain decided then. Your tier shows here the moment
+          the contract address lands in the deploy config.
         </Empty>
       ) : MOCK ? (
         <MockStakeForm />

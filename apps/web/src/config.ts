@@ -32,7 +32,48 @@ export const TOKENOMICS = {
     amountUsd: Number(tokenomics.starterCredits?.amountUsd ?? 0),
     maxWallets: Number(tokenomics.starterCredits?.maxWallets ?? 0),
   },
+  /** Credit marketplace (docs/MARKETPLACE.md). The live values are also on GET /market/config. */
+  marketplace: {
+    enabled: tokenomics.marketplace?.enabled !== false,
+    feeBps: Number(tokenomics.marketplace?.feeBps ?? 250),
+    feeToHoldersBps: Number(tokenomics.marketplace?.feeToHoldersBps ?? 5000),
+    maxDiscountBps: Number(tokenomics.marketplace?.maxDiscountBps ?? 7000),
+    minListingUsd: Number(tokenomics.marketplace?.minListingUsd ?? 1),
+    listingTtlHours: Number(tokenomics.marketplace?.listingTtlHours ?? 168),
+  },
+  /** Engine 2 (docs/PRICING.md §3): the holder share of the margin on paid usage. Built; `enabled` is the switch. GET /stats confirms the live state. */
+  usageShare: {
+    enabled: tokenomics.usageShare?.enabled === true,
+    holderBps: Number(tokenomics.usageShare?.holderBps ?? 3000),
+    treasuryBps: Number(tokenomics.usageShare?.treasuryBps ?? 7000),
+  },
+  /** Spot-check verification of node answers (docs/NODE_PROTOCOL.md §10). */
+  verification: {
+    enabled: tokenomics.verification?.enabled !== false,
+    sampleRate: Number(tokenomics.verification?.sampleRate ?? 0.05),
+    minJobsBeforeTrust: Number(tokenomics.verification?.minJobsBeforeTrust ?? 20),
+    quarantineAfterMismatches: Number(tokenomics.verification?.quarantineAfterMismatches ?? 2),
+  },
+  /** Privacy tiers (docs/PRIVACY.md): the default tier and the stake tier that, with the pledge, makes an operator trusted. */
+  privacy: {
+    defaultTier: String(tokenomics.privacy?.default ?? 'trusted'),
+    trustedMinStakeTier: String(tokenomics.privacy?.trustedMinStakeTier ?? 'gold'),
+  },
+  /** Free homepage chat for visitors without a wallet, paid by the treasury. */
+  guest: {
+    enabled: tokenomics.guest?.enabled !== false,
+    messagesPerDay: Number(tokenomics.guest?.messagesPerDay ?? 5),
+  },
+  /** Public beta state as configured; GET /stats → beta is the live value. */
+  beta: {
+    enabled: tokenomics.beta?.enabled !== false,
+    label: String(tokenomics.beta?.label ?? 'Beta'),
+    inviteRequired: tokenomics.beta?.inviteRequired === true,
+  },
 };
+
+/** "2.5%" from bps, trimmed ("2.5%", "30%", "1.25%"). */
+export const pctFromBps = (bps: number): string => `${Number((bps / 100).toFixed(2))}%`;
 
 export const MOCK = import.meta.env.VITE_MOCK === '1' || import.meta.env.VITE_MOCK === 'true';
 

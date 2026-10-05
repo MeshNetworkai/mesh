@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkline } from '../components/Sparkline';
 import { Empty, Notice, Skeleton, Spinner, Tile } from '../components/ui';
-import { STORAGE, TOKENOMICS } from '../config';
+import { STORAGE, TOKENOMICS, pctFromBps } from '../config';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtCost, fmtInt, fmtSignedUsd, fmtTime, fmtUsd, fmtDate } from '../lib/format';
@@ -306,7 +306,7 @@ export function Dashboard() {
         <div className="stack" style={{ gap: 2 }}>
           <span className="eyebrow">Credit market</span>
           <span className="small" style={{ color: 'var(--fg-2)' }}>
-            Sell credits you will not use at a discount, or buy them below face value. Mesh keeps 2.5% of the price, half of it back to holders.
+            Sell credits you will not use at a discount, or buy them below face value. Mesh keeps {pctFromBps(TOKENOMICS.marketplace.feeBps)} of the price, half of it back to holders.
           </span>
         </div>
         <Link className="btn secondary" to="/app/market">

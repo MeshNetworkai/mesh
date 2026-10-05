@@ -2,12 +2,17 @@ openapi: 3.1.0
 info:
   title: Mesh gateway
   version: 0.1.0
-  summary: Trading fees become hourly AI inference credits, served through an OpenAI-compatible gateway.
+  summary: Trading fees become hourly AI inference credits, spent through an OpenAI-compatible gateway, served by Macs and frontier providers, and sold on a marketplace when unused.
   description: |
     Mesh is a token whose trading fees buy AI inference for the people holding it. A 1.5 % fee on every
     $MESH trade is swept once an hour; half goes to the network treasury and half is split, pro rata, across
-    every wallet holding at least 1,000 tokens as credits denominated in US dollars. Holders spend those
-    credits through this gateway with their own API keys.
+    every wallet holding at least 1,000 tokens (time-weighted over the hour) as credits denominated in US
+    dollars. A second engine, a share of the margin on paid requests and marketplace fees, pays into the same
+    hourly pool; it is built and switches on with the pricing decision (`GET /stats → usageShareEnabled`).
+    Holders spend credits through this gateway with their own API keys: open models on Macs in the network at
+    a flat price per million tokens, frontier models through zero-data-retention providers at list minus the
+    configured discount (`GET /v1/models` carries both prices). Credits nobody will use are sold on the credit
+    marketplace (`/market/*`, docs/MARKETPLACE.md); the first wallet sign-in receives starter credits.
 
     Three kinds of credentials appear below:
 
@@ -587,26 +592,49 @@ paths:
   /v1/models:
     get:
       tags: [Inference]
-      summary: Models your key can use
-      description: 'The upstream catalogue filtered by the model policy, plus network models served by Macs in the Mesh network (`mesh_network: true`).'
+      summary: The model catalogue, with the Mesh price next to list
+      description: |
+        The curated catalogue (docs/PRICING.md §1), not only what Mesh nodes run: the open models Macs in the
+        network serve (`served: network | both`, also reachable by a short alias such as `llama-3.1-8b`) plus the
+        frontier, fast and open models reached through the upstream with zero-data-retention providers
+        (`served: upstream`). OpenAI shape (`object: list`, `data[].id / object / created / owned_by`) with
+        per-model `displayName`, `vendor`, `tier`, `served`, `listPrice`, `meshPrice`, `privacy`, `online` and
+        `guestAllowed`, and a top-level `pricing` block with the knobs from config. Works without a key (the web
+        picker and the guest chat read it); a bearer that is present must be a valid key. `mesh_network` is kept
+        for pre-catalogue clients.
       operationId: listModels
-      security: [{ apiKey: [] }]
+      security: [{ apiKey: [] }, {}]
+      parameters:
+        - in: query
+          name: guest
+          required: false
+          schema: { type: string, enum: ['1'] }
+          description: Narrow the list to what a homepage guest may pick (network models plus `config.guest.allowedTiers`).
       responses:
         '200':
-          description: OpenAI-shaped list.
+          description: OpenAI-shaped list, network models first, then frontier, fast and open.
           content:
             application/json:
               schema:
                 type: object
-                required: [object, data]
+                required: [object, data, pricing]
                 properties:
                   object: { type: string, const: list }
                   data: { type: array, items: { $ref: '#/components/schemas/Model' } }
+                  pricing:
+                    type: object
+                    required: [networkPricePerMTokens, upstreamDiscountBps, upstreamMarkupBps, guestTiers]
+                    properties:
+                      networkPricePerMTokens: { type: number, description: Flat USD per 1M total tokens when a Mesh node serves the request. }
+                      upstreamDiscountBps: { type: integer, description: Upstream models bill list × (1 − this / 10000). Exclusive with the markup. }
+                      upstreamMarkupBps: { type: integer, description: Upstream models bill list × (1 + this / 10000). Exclusive with the discount. }
+                      guestTiers: { type: array, items: { type: string, enum: [frontier, fast, open] }, description: Tiers a guest may use besides the network models. }
               example:
                 object: list
                 data:
-                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: 'meta-llama/llama-3.1-8b-instruct (Mesh network)', mesh_network: true }
-                  - { id: anthropic/claude-3.5-sonnet, object: model, created: 1718841600, owned_by: anthropic, mesh_network: false }
+                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: Llama 3.1 8B, displayName: Llama 3.1 8B, vendor: Meta, tier: open, served: both, listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 }, meshPrice: { promptUsdPerM: 0.02, completionUsdPerM: 0.02 }, privacy: network, online: 3, guestAllowed: true, mesh_network: true }
+                  - { id: anthropic/claude-sonnet-4.5, object: model, created: 0, owned_by: anthropic, name: Claude Sonnet 4.5, displayName: Claude Sonnet 4.5, vendor: Anthropic, tier: frontier, served: upstream, listPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, meshPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, privacy: upstream_zdr, online: 0, guestAllowed: false, mesh_network: false }
+                pricing: { networkPricePerMTokens: 0.02, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: [open, fast] }
         '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
         '429': { $ref: '#/components/responses/OpenAIRateLimited' }
         '502': { $ref: '#/components/responses/OpenAIUpstream' }
@@ -618,9 +646,9 @@ paths:
         Same request and response shape as OpenAI. Set `stream: true` for server-sent events.
 
         * Privacy tier (docs/PRIVACY.md): `X-Mesh-Privacy: trusted | network | upstream_zdr`, or `mesh.privacy` in the body,
-          else the key's default, else the gateway default (`trusted`). `trusted` = only nodes whose operator staked and
-          signed the pledge (or allowlisted); if none is online the request goes to the upstream with zero-data-retention
-          providers only, never to another node. `network` = any eligible node. `upstream_zdr` = skip the network.
+          else the key's default, else the gateway default (`trusted`). `trusted` = your own Macs, allowlisted operators, and
+          operators with the required stake who signed the pledge; if none is online the request goes to the upstream with
+          zero-data-retention providers only, never to another node. `network` = any eligible node. `upstream_zdr` = skip the network.
           The machine that runs the model sees the prompt in plaintext whichever tier you pick. Unknown value → `400 invalid_privacy_tier`.
         * When an idle Mesh node of the right tier advertises the model, it serves the request and you pay the flat network price
           ($0.02 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
@@ -628,7 +656,8 @@ paths:
           (6 s by default) and served by the first node that frees up (`mesh.routeReason: queued_then_node`). If none does,
           the request goes upstream with `x-mesh-fallback: queue_timeout`; when the queue is already `maxQueueDepthPerNode`
           deep per node it goes upstream at once with `x-mesh-fallback: queue_full`.
-        * Otherwise the request goes to the upstream provider at its list price and `x-mesh-route` names the upstream.
+        * Otherwise the request goes to the upstream provider at list minus the configured discount (`GET /v1/models → pricing`;
+          exactly list as shipped) and `x-mesh-route` names the upstream.
           If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
         * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
           (`your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
@@ -1896,16 +1925,31 @@ components:
               model: { type: string }
               requests: { type: integer }
               spendUsd: { type: number }
+    PricePerM:
+      type: object
+      required: [promptUsdPerM, completionUsdPerM]
+      properties:
+        promptUsdPerM: { type: number, description: USD per 1M prompt tokens. }
+        completionUsdPerM: { type: number, description: USD per 1M completion tokens. }
     Model:
       type: object
-      required: [id, object, mesh_network]
+      required: [id, object, served, listPrice, meshPrice, privacy, mesh_network]
       properties:
-        id: { type: string }
+        id: { type: string, description: OpenRouter-style id (`vendor/model`) or a short network alias. }
         object: { type: string, const: model }
         created: { type: integer }
-        owned_by: { type: string }
-        name: { type: string }
-        mesh_network: { type: boolean, description: true when Macs in the Mesh network can serve it at the network price. }
+        owned_by: { type: string, description: '`mesh` for network models, else the vendor.' }
+        name: { type: string, description: Human name; the same string as `displayName`. }
+        displayName: { type: string }
+        vendor: { type: string }
+        tier: { type: [string, 'null'], enum: [frontier, fast, open, null], description: '`frontier` strongest closed models, `fast` cheaper closed models, `open` open weights.' }
+        served: { type: string, enum: [network, upstream, both], description: Where the request can land; `both` is Mesh nodes first with upstream fallback. }
+        listPrice: { $ref: '#/components/schemas/PricePerM', description: OpenRouter list price. }
+        meshPrice: { $ref: '#/components/schemas/PricePerM', description: What Mesh bills; the flat network price on a node, else list ± the configured discount or markup. }
+        privacy: { type: string, enum: [network, upstream_zdr], description: Where the prompt is processed. }
+        online: { type: integer, description: Nodes advertising this model right now (0 for upstream-only models). }
+        guestAllowed: { type: boolean, description: A homepage guest may pick it. }
+        mesh_network: { type: boolean, description: Back-compat; true when Macs in the Mesh network can serve it at the network price. }
       additionalProperties: true
     ChatMessage:
       type: object

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Notice } from '../components/ui';
-import { PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { PUBLIC_API_URL, TOKENOMICS, pctFromBps } from '../config';
 import { fmtCost, fmtInt } from '../lib/format';
 
 /**
@@ -12,7 +12,9 @@ import { fmtCost, fmtInt } from '../lib/format';
 const REGION_NAMES: Record<string, string> = { AE: 'the United Arab Emirates', US: 'the United States', GB: 'the United Kingdom' };
 const regions = TOKENOMICS.geoBlock.map((c) => REGION_NAMES[c] ?? c);
 const regionList = regions.length <= 1 ? regions.join('') : `${regions.slice(0, -1).join(', ')} and ${regions[regions.length - 1]}`;
-const UPDATED = '2026-10-03';
+const UPDATED = '2026-10-05';
+const marketFee = pctFromBps(TOKENOMICS.marketplace.feeBps);
+const epochWord = TOKENOMICS.epochSeconds === 3600 ? 'hour' : `${Math.round(TOKENOMICS.epochSeconds / 60)} minutes`;
 
 function Draft() {
   return (
@@ -66,7 +68,7 @@ function LegalPage({ eyebrow, title, lede, children }: { eyebrow: string; title:
         </p>
         <LegalNav />
         <p className="small muted">
-          Draft · updated {UPDATED} · {TOKENOMICS.name} · ${TOKENOMICS.ticker} on {TOKENOMICS.chain}
+          Draft · updated {UPDATED} · {TOKENOMICS.name} · ${TOKENOMICS.ticker} · open beta
         </p>
       </section>
       <section>
@@ -99,13 +101,13 @@ export function Terms() {
           <div className="stack">
             <Clause n="1" title="Who we are and what this is">
               <p>
-                {TOKENOMICS.name} is an OpenAI-compatible inference gateway and a network of Macs that serve requests through it. It is run by a
-                single operator (“we”, “us”). You use it by connecting a wallet, creating API keys and sending requests, or by running the node
-                agent on a Mac you control.
+                {TOKENOMICS.name} is an OpenAI-compatible inference gateway, a network of Macs that serve requests through it, and a marketplace
+                where unused inference credits are sold. It is run by a single operator (“we”, “us”). You use it by connecting a wallet, creating API
+                keys and sending requests, by buying or selling credits on the marketplace, or by running the node agent on a Mac you control.
               </p>
             </Clause>
             <Clause n="2" title="Who may use it">
-              <p>You must be at least 18, able to enter a contract where you live, and not in a restricted region.</p>
+              <p>You must be at least 18 and able to enter a contract where you live{TOKENOMICS.geoBlock.length ? ', and not in a restricted region' : ''}.</p>
               {GEO}
             </Clause>
             <Clause n="3" title="Your wallet is your account">
@@ -129,21 +131,53 @@ export function Terms() {
                 {TOKENOMICS.holderShareBps / 100}% of what was collected is split, pro rata, across wallets holding at least{' '}
                 {fmtInt(TOKENOMICS.minHoldTokens)} ${TOKENOMICS.ticker} through that hour, as US-dollar-denominated inference credits.
               </p>
+              <p>
+                A second source may pay into the same pool: when the usage-revenue share is switched on, a configured share of the margin we make on
+                paid requests and marketplace fees is added to the next distribution. It is built and may be switched on, off or re-tuned by us; the
+                gateway reports its state publicly and the docs say when it changes. Half of every marketplace fee is paid into the pool whenever a
+                sale happens.
+              </p>
               <ul>
-                <li>No amount of credits is promised, projected or guaranteed. An hour with no trades distributes nothing.</li>
+                <li>No amount of credits is promised, projected or guaranteed. An {epochWord} with no trades and no sales distributes nothing.</li>
                 <li>Credits are not money, not a deposit, not a security and not a claim on us or on future fees.</li>
-                <li>Credits are not transferable, not redeemable for cash or tokens, and have no value outside the gateway.</li>
-                <li>Credits can only be spent on inference through the gateway, at the prices shown in the docs and in each reply.</li>
-                <li>We may change the fee split, the eligibility threshold or the epoch length. Changes are published in the docs before they apply.</li>
+                <li>
+                  Credits are a licence to use the gateway. They are not redeemable for cash or tokens and cannot be withdrawn; the only way they move
+                  between wallets is a sale on the marketplace (clause 6). They have no value outside the gateway.
+                </li>
+                <li>Credits can only be spent on inference through the gateway, at the prices shown in the catalogue and in each reply.</li>
+                <li>We may change the fee split, the eligibility threshold, the epoch length or the usage share. Changes are published in the docs before they apply.</li>
               </ul>
             </Clause>
             <Clause n="5" title="Pricing and billing">
               <p>
                 Requests served by a Mesh node are billed at the flat network price, {fmtCost(TOKENOMICS.networkPricePerMTokens)} per million total
-                tokens. Requests served by the upstream provider are billed at that provider’s list price with no markup today. The cost of each
-                request is shown in the reply and deducted from your balance. Failed requests are never charged. Spend limits you set on a key
-                are enforced per key.
+                tokens. Requests served by the upstream provider are billed at that provider’s list price less the discount, or plus the markup,
+                published in the catalogue (<code>GET /v1/models</code>); both are zero today, so you pay exactly list. The cost of each request is
+                shown in the reply and deducted from your balance. Failed requests are never charged. Spend limits you set on a key are enforced per
+                key. The first sign-in of a wallet may receive a small starter grant while that programme runs; it is a gift under the same terms as
+                every other credit and may be paused at any time.
               </p>
+            </Clause>
+            <Clause n="6" title="The credit marketplace">
+              <p>
+                Holders may list credits for sale at a discount and anyone with an account may buy them. Mesh keeps {marketFee} of the price on every
+                sale, paid by the seller; half of that fee goes to the next distribution and half to the treasury. The fee is not refunded, including
+                when a buyer later disputes a purchase or the service changes.
+              </p>
+              <ul>
+                <li>Listed credit is held in escrow and cannot be spent until the listing fills, is cancelled or expires. Fills are final.</li>
+                <li>
+                  Buyers pay, and sellers are paid, in a prepaid US-dollar balance kept by the gateway. During the beta that balance is topped up by us
+                  after an off-chain payment you arrange with us, and withdrawals are processed by us by hand: the amount leaves your balance when you
+                  request it and is sent to your wallet in a stablecoin when we mark it paid. We aim to process withdrawals promptly but do not promise
+                  a time. On-chain checkout will replace this and we will say so in the docs.
+                </li>
+                <li>
+                  The prepaid balance is a record of what you have paid in or earned from sales, held so that you can buy credits or withdraw it. It is
+                  not a deposit account, earns nothing, and is subject to the same limited liability as the rest of the service.
+                </li>
+                <li>We may reject or cancel listings and fills that abuse the market, and may change the fee, the discount range or the listing lifetime with notice in the docs.</li>
+              </ul>
             </Clause>
           </div>
         </div>
@@ -153,21 +187,23 @@ export function Terms() {
         <div className="sec-head">
           <p className="eyebrow">Node operators</p>
           <div className="stack">
-            <Clause n="6" title="Your Mac, your electricity, your choice">
+            <Clause n="7" title="Your Mac, your electricity, your choice">
               <p>
                 Running a node means installing the <code>mesh-node</code> agent on a Mac you own or are allowed to use, with Ollama. You pay for
                 the hardware, the power and the bandwidth. You can pause or uninstall at any time; nothing we do depends on you staying online.
               </p>
             </Clause>
-            <Clause n="7" title="No guarantee of jobs or earnings">
+            <Clause n="8" title="No guarantee of jobs or earnings">
               <p>
                 Jobs are routed to online, idle nodes that advertise the requested model and meet the reputation threshold. We do not guarantee
                 that your node receives any job, any number of jobs, or any amount of rewards. Rewards accrue as a US-dollar balance per completed
-                job at the published rate and are visible on your Node page. Paying accrued rewards out on-chain is not live yet; until it is,
-                the balance is a counter, not a payment, and we may change the rate or the mechanism with notice in the docs.
+                job at the published rate and are visible on your Node page. Paying accrued rewards out on-chain is not live yet; it starts after the
+                token is deployed by the team, on the chain decided then. Until it is, the balance is a counter, not a payment, and we may change the
+                rate or the mechanism with notice in the docs. A sample of node answers is re-run elsewhere and compared; a job whose answer does not
+                hold up earns no reward.
               </p>
             </Clause>
-            <Clause n="8" title="What you agree to as an operator">
+            <Clause n="9" title="What you agree to as an operator">
               <ul>
                 <li>Run the agent as shipped, with prompt and reply logging off, and do not keep, inspect or share the content of jobs.</li>
                 <li>Do not fake hardware, uptime, models or results. Nodes that fail or cheat are excluded by reputation and may be removed.</li>
@@ -183,37 +219,40 @@ export function Terms() {
         <div className="sec-head">
           <p className="eyebrow">Use and limits</p>
           <div className="stack">
-            <Clause n="9" title="Acceptable use">
+            <Clause n="10" title="Acceptable use">
               <p>
-                Do not use the service to break the law, to harm people, to attack the gateway or nodes, or to bypass rate limits, spend limits or
-                geo-blocking. Requests to third-party providers are also subject to those providers’ terms. We may block models, keys or wallets
+                Do not use the service to break the law, to harm people, to attack the gateway or nodes, to manipulate the marketplace, or to bypass
+                rate limits, spend limits{TOKENOMICS.geoBlock.length ? ' or geo-blocking' : ' or the starter-grant limits'}. Requests to third-party providers are also subject to those providers’ terms. We may block models, keys or wallets
                 that we believe are being abused.
               </p>
             </Clause>
-            <Clause n="10" title="The service may change or stop">
+            <Clause n="11" title="The service may change or stop">
               <p>
                 This is early software run by one operator on one server. It may be interrupted, rate-limited, changed or discontinued. The docs
                 say what is live and what is not. We will say when something important changes, but we cannot promise notice for everything.
               </p>
             </Clause>
-            <Clause n="11" title="No warranty, limited liability">
+            <Clause n="12" title="No warranty, limited liability">
               <p>
                 The service is provided as is, without warranty of any kind. To the extent the law allows, we are not liable for lost credits,
                 lost tokens, lost profits, or any indirect or consequential loss arising from the service, the token, a node, or a third-party
                 provider. Nothing here limits liability that cannot be limited by law.
               </p>
             </Clause>
-            <Clause n="12" title="Beta">
+            <Clause n="13" title="Beta">
               <p>
-                Mesh is in public beta. Access may be limited to invited wallets and opened in batches from a waitlist; an invite code admits
-                one wallet and is not transferable once used. During the beta we may reset, rate-limit or pause parts of the service, change
-                prices and reward rates, and remove nodes whose work fails our spot checks (a sample of node answers is re-run elsewhere and
-                compared; a node whose answers do not hold up loses the reward for that job and, if it repeats, is quarantined). Credits and
-                node rewards earned in the beta are real inside the gateway but carry the same "not a promise" terms as everything else here.
-                We will say in the docs when the beta ends.
+                Mesh is in open public beta: any wallet may connect.{' '}
+                {TOKENOMICS.beta.inviteRequired
+                  ? 'Access is currently limited to invited wallets and opened in batches from a waitlist; an invite code admits one wallet and is not transferable once used. '
+                  : 'We may limit sign-ups or pace them from a waitlist if the network needs it. '}
+                The token is not deployed yet: until the team deploys it on launch day, the fee feed is a test harness and the credits it mints are
+                beta credits. During the beta we may reset, rate-limit or pause parts of the service, change prices, fees and reward rates, and remove
+                nodes whose work fails our spot checks (a node whose answers do not hold up loses the reward for that job and, if it repeats, is
+                quarantined). Credits, marketplace balances and node rewards earned in the beta are real inside the gateway but carry the same "not a
+                promise" terms as everything else here. We will say in the docs when the beta ends.
               </p>
             </Clause>
-            <Clause n="13" title="Changes to these terms">
+            <Clause n="14" title="Changes to these terms">
               <p>
                 We may update these terms. The date at the top changes when we do. Continuing to use the service after a change means you accept
                 it. Related pages: <Link to="/privacy">Privacy</Link>, <Link to="/risk">Risk</Link>, <Link to="/docs">Docs</Link>.
@@ -268,8 +307,9 @@ export function Privacy() {
           <div className="stack">
             <Clause n="3" title="Wallets and sessions">
               <p>
-                We store your wallet address, the chain it is on, when it last signed in, its credit ledger and its API keys (a prefix and a hash;
-                the secret is shown once and not kept). A session is a signed token that lives in your browser for 7 days. We do not collect an
+                We store your wallet address, the chain it is on, when it last signed in, its credit ledger, its marketplace listings, fills, prepaid
+                balance and withdrawal requests, and its API keys (a prefix and a hash; the secret is shown once and not kept). The first sign-in also
+                records a hash of your network address for a day, to limit starter grants. A session is a signed token that lives in your browser for 7 days. We do not collect an
                 email, a name or a password.
               </p>
             </Clause>
@@ -282,8 +322,7 @@ export function Privacy() {
             <Clause n="5" title="Server logs and IP addresses">
               <p>
                 The web server and the gateway keep short-lived operational logs with IP address, path, status and timing so we can rate-limit,
-                detect abuse and debug. Authorization headers are redacted before they reach a log. Country is derived from the IP to enforce the
-                regional restriction; the IP itself is not stored with your account.
+                detect abuse and debug. Authorization headers are redacted before they reach a log. {TOKENOMICS.geoBlock.length ? 'Country is derived from the IP to enforce the regional restriction; the IP itself is not stored with your account.' : 'No regional restriction is enforced today, and the IP itself is not stored with your account.'}
               </p>
             </Clause>
             <Clause n="6" title="Third parties">
@@ -312,8 +351,9 @@ export function Privacy() {
             </Clause>
             <Clause n="8" title="Public by design">
               <p>
-                Epoch history, network totals and the treasury report are public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
-                <code>/epochs</code> and <code>/report</code>. They contain counts and dollar totals, never wallets, keys or prompts.
+                Epoch history, network totals, the treasury report and the marketplace book are public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
+                <code>/epochs</code>, <code>/report</code> and <code>/market/*</code>, and on the numbers page. They contain counts and dollar totals,
+                never wallets, keys or prompts; open listings are shown without the seller's address.
               </p>
             </Clause>
             <Clause n="9" title="Changes">
@@ -338,9 +378,10 @@ export function Risk() {
           <div className="stack">
             <Clause n="1" title="Credits are not a yield, income or return">
               <p>
-                {TOKENOMICS.name} credits are a share of trading fees already collected, converted to US-dollar-denominated inference credits.
-                They are not a return, a yield or income, and no amount is promised or guaranteed. An hour with little or no trading distributes
-                little or nothing. The stats page shows every epoch, including the empty ones.
+                {TOKENOMICS.name} credits are a share of trading fees already collected, converted to US-dollar-denominated inference credits, plus,
+                when it is switched on, a share of the margin on paid usage. They are not a return, a yield or income, and no amount is promised or
+                guaranteed. An {epochWord} with little or no trading distributes little or nothing from fees; the usage share is off today and may be
+                switched on, off or re-tuned. The numbers page shows every epoch, including the empty ones.
               </p>
             </Clause>
             <Clause n="2" title="The token can lose all its value">
@@ -351,36 +392,45 @@ export function Risk() {
             </Clause>
             <Clause n="3" title="Credits have no cash value">
               <p>
-                Credits are denominated in US dollars inside the gateway only. They are not redeemable for cash or tokens, cannot be transferred
-                or sold, and depend on the gateway continuing to operate. If the service stops, credits stop with it.
+                Credits are denominated in US dollars inside the gateway only. They are a licence to use the gateway, not money: they cannot be
+                withdrawn and move between wallets only through the marketplace, where a buyer may or may not exist at the discount you want. They
+                depend on the gateway continuing to operate; if the service stops, credits stop with it.
               </p>
             </Clause>
-            <Clause n="4" title="One operator, one server">
+            <Clause n="4" title="Marketplace balances and withdrawals">
+              <p>
+                Prepaid balances on the marketplace are a record held by the gateway, not a bank deposit. During the beta they are topped up and paid out
+                by the team by hand, so a withdrawal depends on the operator acting; it is not instant and not guaranteed. The {marketFee} fee on a sale is
+                not refunded. Listed credit is locked in escrow until the listing closes.
+              </p>
+            </Clause>
+            <Clause n="5" title="One operator, one server">
               <p>
                 The service is run by a single operator on a single server with a single database. It may be interrupted, changed or
-                discontinued. Sessions live in the browser. The chain adapter and on-chain node payouts are not live; the docs list what is.
+                discontinued. Sessions live in the browser. The token is not deployed yet, the chain is not final, and on-chain node payouts are not
+                live; the docs and the roadmap list what is.
               </p>
             </Clause>
-            <Clause n="5" title="Node rewards are a counter, not a paycheck">
+            <Clause n="6" title="Node rewards are a counter, not a paycheck">
               <p>
                 Node rewards accrue as a balance and are not yet paid on-chain. There is no guarantee your Mac receives jobs, and the rate may
                 change. Treat the balance as something you can watch, not something you can spend, until payout ships.
               </p>
             </Clause>
-            <Clause n="6" title="Third-party providers and open models">
+            <Clause n="7" title="Third-party providers and open models">
               <p>
                 Requests may be served by third-party providers under their own terms, or by open models on Macs run by other people. Outputs can
                 be wrong, incomplete or inappropriate. Do not rely on them for medical, legal, financial or safety decisions without checking.
               </p>
             </Clause>
-            <Clause n="7" title="Regional restriction">{GEO}</Clause>
-            <Clause n="8" title="Smart contract, chain and wallet risk">
+            {GEO ? <Clause n="8" title="Regional restriction">{GEO}</Clause> : null}
+            <Clause n="9" title="Smart contract, chain and wallet risk">
               <p>
-                Tokens live on {TOKENOMICS.chain}. Chains halt, contracts have bugs, wallets get phished. We do not control the chain, your wallet,
+                The token will be deployed by the team on launch day on a chain decided then. Chains halt, contracts have bugs, wallets get phished. We do not control the chain, your wallet,
                 or any exchange where the token trades. A signature you make with your wallet is yours; check what you sign.
               </p>
             </Clause>
-            <Clause n="9" title="Not advice">
+            <Clause n="10" title="Not advice">
               <p>
                 Nothing on this site is investment, legal or tax advice. Read the <Link to="/terms">Terms</Link>, the{' '}
                 <Link to="/privacy">Privacy</Link> page and the current status of what is live and what is not in the <Link to="/docs">Docs</Link>{' '}

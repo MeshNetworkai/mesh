@@ -27,6 +27,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
       { label: 'Epochs', to: '/numbers#epochs' },
       { label: 'Weekly report', to: '/numbers#report' },
       { label: 'Treasury and market', to: '/numbers#treasury' },
+      { label: 'Roadmap', to: '/docs#roadmap' },
       { label: 'Leaderboard', to: '/leaderboard', points: true }, // hidden while the points programme is disabled
       { label: 'Health', href: `${PUBLIC_API_URL}/health` },
     ],
@@ -35,6 +36,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
     title: 'Build',
     links: [
       { label: 'Docs', to: '/docs' },
+      { label: 'Switch in a minute', to: '/api#switch' },
       { label: 'API reference', to: '/api' },
       { label: 'openapi.json', href: `${PUBLIC_API_URL}/openapi.json` },
     ],
@@ -67,7 +69,7 @@ export function Footer() {
             </span>
             {TOKENOMICS.name}
           </Link>
-          <p>Trading fees become AI credits every hour. Answered by Macs, sold on when unused, every dollar on the record.</p>
+          <p>Two engines, one hourly pool: trading fees today, a share of paid usage when it is switched on. Answered by Macs, frontier models at list, credits sold on when unused, every dollar on the record.</p>
           <div className="row" style={{ gap: 12 }}>
             {SOCIAL.map((s) => (
               <a key={s.label} href={s.href} rel="noreferrer noopener" target="_blank">
@@ -95,7 +97,7 @@ export function Footer() {
       </div>
       <div className="site-base">
         <span>
-          {TOKENOMICS.name} · ${TOKENOMICS.ticker} on {TOKENOMICS.chain} · credits are a share of fees, not a promise
+          {TOKENOMICS.name} · ${TOKENOMICS.ticker} · open beta · credits are a share of fees, not a promise
         </span>
         <span>
           {TOKENOMICS.geoBlock.length ? <>Not available to residents of {TOKENOMICS.geoBlock.join(', ')} ·{' '}</> : null}

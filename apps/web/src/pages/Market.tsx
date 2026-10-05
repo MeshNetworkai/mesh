@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { Empty, Notice, Skeleton, Spinner, Tile } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { fmtAgo, fmtDate, fmtUsd, shortAddr } from '../lib/format';
@@ -15,7 +16,7 @@ import { errorMessage, useToast } from '../lib/toast';
 
 const statusWord: Record<string, string> = { open: 'Open', filled: 'Sold out', cancelled: 'Cancelled', expired: 'Expired', pending: 'Pending', paid: 'Paid' };
 const prepaidWord: Record<string, string> = { topup: 'Top-up', market_buy: 'Bought credits', market_sale: 'Sold credits', withdrawal: 'Withdrawal', withdrawal_refund: 'Withdrawal returned', adjustment: 'Adjustment' };
-const BETA_TOPUP = 'Prepaid balance is added by the team during the beta; USDC checkout is coming.';
+const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDC payment and pays withdrawals out by hand; USDC checkout replaces this after the token launch.';
 
 /** Thin horizontal depth bar; `share` is 0..1 of the deepest tier. */
 function DepthBar({ share, on }: { share: number; on: boolean }) {
@@ -567,7 +568,8 @@ export function Market() {
       )}
 
       <p className="hint" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-        How it works, the fee split and the ledger entries behind every trade: docs/MARKETPLACE.md in the repo. Escrowed credit cannot be spent until the listing closes; a listing expires after{' '}
+        How to sell, how to buy, the fee split and a worked example: <Link to="/docs#market">Docs → Marketplace</Link>; the ledger entries behind every trade are in docs/MARKETPLACE.md in the repo. Credits are a licence to
+        use the gateway, not money: they only move between wallets here, and the fee is not refunded. Escrowed credit cannot be spent until the listing closes; a listing expires after{' '}
         {Math.round((cfg?.listingTtlHours ?? 168) / 24)} days and the remainder returns to the seller.
       </p>
     </>

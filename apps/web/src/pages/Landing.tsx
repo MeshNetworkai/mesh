@@ -5,7 +5,7 @@ import { GuestChat } from '../components/GuestChat';
 import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
 import { Notice, Spinner, Terminal, Tile } from '../components/ui';
-import { PUBLIC_API_URL, STORAGE, TOKENOMICS } from '../config';
+import { PUBLIC_API_URL, STORAGE, TOKENOMICS, pctFromBps } from '../config';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtCompact, fmtCost, fmtInt, fmtTime, fmtUsd } from '../lib/format';
@@ -24,7 +24,8 @@ const nodePay = fmtCost(T.nodeRewardUsdPerMTokens);
 const epochMin = Math.round(T.epochSeconds / 60);
 const epochWord = T.epochSeconds === 3600 ? 'hour' : `${epochMin} minutes`;
 /** Marketplace fee (docs/MARKETPLACE.md, config `marketplace.feeBps`); the live value is also on GET /market/config. */
-const MARKET_FEE_PCT = '2.5%';
+const MARKET_FEE_PCT = pctFromBps(T.marketplace.feeBps);
+const MAX_DISCOUNT_PCT = pctFromBps(T.marketplace.maxDiscountBps);
 
 /**
  * Beta CTA: wallet or e-mail → POST /waitlist. Shown instead of "Connect wallet" while
@@ -114,7 +115,7 @@ const WHY = (usageOn: boolean) => [
   {
     k: 'iii · Market',
     t: 'Sell what you do not use',
-    c: `List unused credit at any discount up to 70%; buyers pay below face value and spend it on any model. The fee is ${MARKET_FEE_PCT}, half of it back to holders in the next ${epochWord}.`,
+    c: `List unused credit at any discount up to ${MAX_DISCOUNT_PCT}; buyers pay below face value and spend it on any model. The fee is ${MARKET_FEE_PCT}, half of it back to holders in the next ${epochWord}.`,
   },
   {
     k: 'iv · Models',
@@ -184,7 +185,7 @@ export function Landing() {
       <section className="hero home-hero" aria-labelledby="hero-h1">
         <div className="home-hero-copy">
           <p className="eyebrow">
-            {T.name} · ${T.ticker} · {T.chain.charAt(0).toUpperCase() + T.chain.slice(1)}
+            {T.name} · ${T.ticker}
             <BetaPill />
           </p>
           <h1 className="display home-h1" id="hero-h1">

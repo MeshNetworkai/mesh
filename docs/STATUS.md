@@ -1,8 +1,34 @@
-# Mesh — status after Session 8 (2026-10-03)
+# Mesh — status (2026-10-05, open beta)
 
-One page: what is in the repo after sessions 1–8, how it is tested, what is switched off, and what only Oliver can do. Detail lives in the linked docs; this page is the index.
+One page: what is live right now, what is in the repo, how it is tested, what is switched off, and what only Oliver can do. Detail lives in the linked docs; this page is the index. The roadmap is `docs/ROADMAP.md`.
 
-## What is in the repo, by session
+## What is live now
+
+Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gateway), auto-deployed from `main`. Open beta: `beta.inviteRequired: false`, anyone can connect a wallet. The token is **not** deployed; the team deploys it on launch day on the chain decided then (`docs/DEV_HANDOFF.md`), so fees come from the mock adapter's test feed and the credits it mints are beta credits.
+
+| Live | Where | Notes |
+| --- | --- | --- |
+| Hourly epochs, pro-rata, time-weighted, 1,000 MESH minimum | gateway `jobs/distribute.ts`, `/numbers` | engine 1; mock fee feed until the token exists |
+| OpenAI-compatible gateway: keys, chat, streaming, spend limits, per-key privacy tier | `/app/keys`, `/app/chat`, `/api` | `usage.cost`, `x-mesh-*` headers, failed requests never charged |
+| Frontier catalogue via ZDR upstream at list − configured discount (0 as shipped) | `GET /v1/models`, model picker | Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Llama, Qwen, Mistral; prices refreshed by script |
+| Mac network at $0.02/M to the user, $0.06/M to the node | `/app/node`, `/download` | link codes, Terminal / Homebrew / unsigned DMG, `mesh-node update`, `maxParallel`, queueing for busy nodes; Oliver's M3 Max served end to end on 3 Oct |
+| Privacy tiers (trusted / network / upstream_zdr) and the operator pledge | every `/v1` request | `docs/PRIVACY.md` |
+| Spot-check verification, 5 % of network jobs, quarantine after 2 mismatches | `verification.ts`, admin clear | `docs/NODE_PROTOCOL.md` §10 |
+| Credit marketplace: 0–70 % off, 2.5 % fee half to holders, escrow, partial fills, public book | `/app/market`, `/market/*` | prepaid balances topped up and withdrawals paid by the team during the beta (`POST /admin/prepaid`) |
+| Starter credits: $2 on first sign-in, first 500 wallets, 3 per IP per day | `starter.ts`, admin toggle | `docs/SWITCHING.md` |
+| Free homepage chat: 5 messages a day per visitor, network + fast models, treasury-paid | `/`, `POST /v1/guest/chat` | cost on `/report` |
+| Public numbers: live network, every epoch, weekly report, treasury, marketplace, usage share | `/numbers` (merges the old `/stats` and `/report` pages) | raw: `GET /stats`, `/epochs`, `/report`, `/market/stats` |
+| Homepage v2: two-engine diagram, four ways in, switch strip | `/` | `components/Engines.tsx` draws engine 2 dashed while it is off |
+| Docs with roadmap; legal drafts with marketplace clauses | `/docs`, `/terms`, `/privacy`, `/risk` | `src/content/roadmap.ts` ↔ `docs/ROADMAP.md` |
+| Release pipeline: GitHub org MeshNetworkai, v0.1.0 tagged, CI + release build green, homebrew-tap published | `.github/workflows` | menu-bar DMG unsigned (Open Anyway) |
+
+**Built and switched off** (one config flag each): usage share / engine 2 (`usageShare.enabled`, needs the pricing decision: suggested $0.08/M network price, 30 % of margin to holders), holding-age weighting, points / leaderboard / referrals, invite gating, upstream discount or markup. Public copy describes the usage share as "built, switches on with the pricing decision".
+
+**Waiting for the token**: chain decision and deployment by the team, first live sweep, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDC checkout for the marketplace, buyback floor + NAV chart.
+
+**Open before public launch** (`docs/CHECKLIST.md` → Production readiness): web app bug hunt, Cloudflare in front, status page + node explorer, Telegram alert bot token, backup restore drill, legal review, Oliver's Mac linked to the live gateway, DMG opened once on a Mac, onboarding pack, starter-credit plan.
+
+## What is in the repo, by session (history)
 
 | Session | What landed | Where to read |
 | --- | --- | --- |
@@ -48,11 +74,11 @@ One page: what is in the repo after sessions 1–8, how it is tested, what is sw
 
 ## What needs Oliver
 
-1. **Pick the chain** (`docs/CHAIN_DECISION.md`): Solana Token-2022 or EVM (Base / Robinhood Chain). Set `config/tokenomics.json → chain`.
+1. **Pick the chain on launch day** (`docs/CHAIN_DECISION.md`): Solana Token-2022 or EVM (Base / Robinhood Chain). Set `config/tokenomics.json → chain`; the team deploys (`docs/DEV_HANDOFF.md`). Public copy does not name a chain until then.
 2. **Deploy the token, fee vault and staking** with `scripts/chain/*` and commit `config/deploy.<network>.json` (addresses only, no keys). Fill `meta.contractAddress`, `meta.totalSupply`.
 3. **Seed liquidity** (Raydium/Meteora or Uniswap v3) and, on EVM, `setFeeExempt(pool, true)`.
 4. **Secrets and hosts** on the VPS: `JWT_SECRET`, `ADMIN_TOKEN`, `KEY_PEPPER`, `OPENROUTER_API_KEY`, RPC / Helius key, signer keypair, `AUTH_DOMAIN`, `CORS_ORIGINS`, `ADMIN_IP_ALLOWLIST`, `TRUSTED_PROXY_CIDRS`; replace the placeholder hosts and social URLs. Follow `docs/RUNBOOK.md` §0–§7 and its pre-flight checks.
-5. **Decisions**: session TTL (7 d today), node payout cadence, whether holding-age weighting is on at launch, `geoBlock` list (AE, US, GB today), and whether the points programme ever comes back (it is a one-line flag).
+5. **Decisions**: session TTL (7 d today), node payout cadence, whether holding-age weighting is on at launch, `geoBlock` list (empty today: no geo-block; the web hides the clause when empty), and whether the points programme ever comes back (it is a one-line flag).
 6. **Hardware**: a Mac with Xcode to compile the menu-bar app locally (CI does it on `macos-latest` too); a few friends' Macs for the first node batch (`docs/LAUNCH_COPY.md` §4). Notarisation only when the developer account exists.
 8. **First release**: create `github.com/MeshNetworkai/homebrew-tap` (empty) and the `HOMEBREW_TAP_TOKEN` secret, push `v0.1.0`, deploy `latest.json` to the web host (`docs/DISTRIBUTION.md` §2), try the DMG on a clean Mac through Open Anyway.
 7. **Legal review** of `/terms`, `/privacy`, `/risk` before the token is tradeable.

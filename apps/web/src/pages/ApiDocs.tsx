@@ -794,8 +794,31 @@ export function ApiDocs() {
                 </div>
               ))}
             </div>
+            <div className="stack sm">
+              <span className="eyebrow">Beyond chat completions</span>
+              <ul>
+                <li>
+                  <b>Catalogue.</b> <a href="#listModels"><code>GET /v1/models</code></a> works without a key and carries, per model, <code>served</code> (network, upstream or
+                  both), <code>listPrice</code>, <code>meshPrice</code>, <code>privacy</code> and <code>online</code>, plus a <code>pricing</code> block with the network price
+                  and the upstream discount or markup.
+                </li>
+                <li>
+                  <b>Guest chat.</b> <a href="#createGuestChat"><code>POST /v1/guest/chat</code></a> and <a href="#getGuestQuota"><code>GET /v1/guest/quota</code></a> are the free
+                  homepage chat: a few messages a day per visitor, no wallet, network and fast models only, paid by the treasury.
+                </li>
+                <li>
+                  <b>Credit marketplace.</b> The <a href="#tag-market">Market</a> group: a public book, listings and quotes without a key; list, fill, cancel and withdraw with a
+                  session. Buyers pay from a prepaid balance that the team tops up during the beta; the fee split and the ledger entries behind every trade are in{' '}
+                  <code>docs/MARKETPLACE.md</code> and on <Link to="/docs#market">Docs → Marketplace</Link>.
+                </li>
+                <li>
+                  <b>Privacy.</b> <code>X-Mesh-Privacy: trusted | network | upstream_zdr</code> on any <code>/v1</code> request, or a default per key via{' '}
+                  <code>PATCH /keys/:id</code>. Every reply answers with <code>x-mesh-privacy</code> and <code>x-mesh-served-by</code>.
+                </li>
+              </ul>
+            </div>
             <p className="small muted">
-              Looking for a walkthrough instead? The <Link to="/docs">Docs</Link> page covers credits, keys and running a node in prose, with
+              Looking for a walkthrough instead? The <Link to="/docs">Docs</Link> page covers credits, the marketplace, keys and running a node in prose, with
               Python and JavaScript snippets.
             </p>
           </div>

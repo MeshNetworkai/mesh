@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { TOKENOMICS } from '../config';
+import { TOKENOMICS, pctFromBps } from '../config';
 import { fmtCost, fmtInt } from '../lib/format';
 
 /**
@@ -19,7 +19,7 @@ const treasuryPct = `${T.treasuryShareBps / 100}%`;
 const netPrice = fmtCost(T.networkPricePerMTokens);
 const nodePay = fmtCost(T.nodeRewardUsdPerMTokens);
 const minHold = `${fmtInt(T.minHoldTokens)} ${T.ticker}`;
-const MARKET_FEE = '2.5%';
+const MARKET_FEE = pctFromBps(T.marketplace.feeBps);
 
 type BoxId = 'trading' | 'fee' | 'pool' | 'treasury' | 'requests' | 'market' | 'margin' | 'macs';
 interface Box {
@@ -176,7 +176,7 @@ function Diagram({ layout, on, copy, className }: { layout: Layout; on: boolean;
   );
 }
 
-export function Engines({ usageShareOn, upstreamDiscountBps = T.upstreamDiscountBps, holderBps = 3000 }: { usageShareOn: boolean; upstreamDiscountBps?: number; holderBps?: number }) {
+export function Engines({ usageShareOn, upstreamDiscountBps = T.upstreamDiscountBps, holderBps = T.usageShare.holderBps }: { usageShareOn: boolean; upstreamDiscountBps?: number; holderBps?: number }) {
   const copy = engineCopy({ usageShareOn, upstreamDiscountBps, holderBps });
   return (
     <div className="engines" data-usage-share={usageShareOn ? 'on' : 'off'}>
