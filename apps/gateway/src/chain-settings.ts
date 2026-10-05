@@ -196,12 +196,12 @@ export interface ResolvedAdapter {
  * (and /health) keeps working until the founder pastes the addresses.
  */
 export function resolveAdapter(db: Db, config: TokenomicsConfig, env: Env): ResolvedAdapter {
-  if (env.MESH_ADAPTER === 'mock') return { adapter: new MockAdapter({ chain: config.chain }), status: 'mock', waitingFor: null };
+  if (env.MESH_ADAPTER === 'mock') return { adapter: new MockAdapter({ chain: config.chain, acceptMockSignatures: env.NODE_ENV !== 'production' }), status: 'mock', waitingFor: null };
   if (config.chain === 'evm') {
     const eff = effectiveChain(db, config, process.env);
     if (!eff.ready || !eff.effective) {
       const missing = ['token', 'feeVault'].filter((k) => !(eff.effective as Record<string, unknown> | null)?.[k]);
-      return { adapter: new MockAdapter({ chain: 'evm' }), status: 'mock (waiting for token)', waitingFor: `set ${missing.join(' + ')} in Admin → Token (or config/deploy.${eff.network}.json)` };
+      return { adapter: new MockAdapter({ chain: 'evm', acceptMockSignatures: env.NODE_ENV !== 'production' }), status: 'mock (waiting for token)', waitingFor: `set ${missing.join(' + ')} in Admin → Token (or config/deploy.${eff.network}.json)` };
     }
     const adapter = createAdapter(config, { deploy: eff.effective, network: eff.network });
     return { adapter, status: eff.effective.feeSource === 'pons' ? 'evm (pons)' : 'evm', waitingFor: null };

@@ -13,6 +13,11 @@ export interface MockAdapterOptions {
   now?: () => number;
   /** Staking positions; defaults to DEFAULT_MOCK_STAKES unless `holders` is given (then empty). */
   stakes?: Record<string, { staked: number; lockEndsAt?: number; lockDays?: number }>;
+  /**
+   * Accept `MockAdapter.sign` test signatures in `verifyWalletSignature`. Default true (tests, demos).
+   * The gateway passes false in production so the mock treasury never lets anyone sign in as any wallet.
+   */
+  acceptMockSignatures?: boolean;
 }
 
 /** Deterministic default holder set used by dev + tests. */
@@ -49,6 +54,7 @@ export class MockAdapter implements ChainAdapter {
   private holdSince: Map<string, number>;
   private stakes: Map<string, StakeInfo>;
   private readonly reportHoldSince: boolean;
+  private readonly acceptMockSignatures: boolean;
   private readonly clock: () => number;
   private pendingFeesUsd = 0;
   private txCounter = 0;
@@ -58,6 +64,7 @@ export class MockAdapter implements ChainAdapter {
     this.chain = opts.chain ?? 'solana';
     this.clock = opts.now ?? (() => Math.floor(Date.now() / 1000));
     this.reportHoldSince = opts.reportHoldSince ?? true;
+    this.acceptMockSignatures = opts.acceptMockSignatures ?? true;
     this.holders = new Map(Object.entries(opts.holders ?? DEFAULT_MOCK_HOLDERS));
     const t = this.clock();
     const defaults = opts.holders ? {} : Object.fromEntries(Object.entries(DEFAULT_MOCK_HOLD_AGE_DAYS).map(([w, d]) => [w, t - d * 86_400]));
@@ -156,7 +163,7 @@ export class MockAdapter implements ChainAdapter {
    * verifier is picked by wallet shape: 0x-prefixed → EVM (EIP-191), otherwise Solana (ed25519 over the bytes).
    */
   verifyWalletSignature(wallet: string, message: string, signature: string): boolean {
-    if (signature === MockAdapter.sign(wallet, message)) return true;
+    if (this.acceptMockSignatures && signature === MockAdapter.sign(wallet, message)) return true;
     try {
       const real = /^0x/i.test(wallet.trim()) ? new EvmAdapter() : new SolanaAdapter();
       return real.verifyWalletSignature(wallet, message, signature);
