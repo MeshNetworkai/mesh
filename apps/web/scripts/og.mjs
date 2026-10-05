@@ -1,6 +1,6 @@
 // Generates the social images from the design system: public/og.png (1200x630) and
 // public/apple-touch-icon.png (180x180). No browser needed: an SVG is rasterised with @resvg/resvg-js
-// using the same Onest / Inter / JetBrains Mono files (the @fontsource subsets name their families per
+// using the same Onest / Inter files (the @fontsource subsets name their families per
 // weight, hence "Onest Light" / "Onest Medium" below) the site ships via @fontsource (WOFF -> TTF here,
 // since the rasteriser reads sfnt fonts only).
 // Usage: pnpm --filter web og
@@ -76,10 +76,12 @@ const fontFiles = [
   fontFile('@fontsource/onest', 'onest-latin-300-normal.woff'),
   fontFile('@fontsource/onest', 'onest-latin-500-normal.woff'),
   fontFile('@fontsource/inter', 'inter-latin-400-normal.woff'),
-  fontFile('@fontsource/jetbrains-mono', 'jetbrains-mono-latin-400-normal.woff'),
+  fontFile('@fontsource/inter', 'inter-latin-500-normal.woff'),
 ];
+// Labels are Inter 500, sentence case, no tracking (never a letter-spaced monospace face). Numbers use tabular figures.
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const minHold = Number(tokenomics.minHoldTokens).toLocaleString('en-US');
 const dots = (x, y, r, gap) =>
   [0, 1, 2, 3, 4].map((i) => `<circle cx="${x + i * (2 * r + gap)}" cy="${y}" r="${r}" fill="${i === 2 ? C.accent : C.fg}"/>`).join('');
@@ -100,21 +102,21 @@ function ogSvg() {
 
   <!-- logo -->
   <g transform="translate(72 64)">${dots(6, 0, 5, 3)}<text x="76" y="7" font-family="Onest Medium" font-size="22" letter-spacing="-0.4" fill="${C.fg}">${esc(tokenomics.name)}</text></g>
-  <text x="${W - 72}" y="70" text-anchor="end" font-family="JetBrains Mono" font-size="13" letter-spacing="2.8" fill="${C.muted}">$${esc(tokenomics.ticker)} · ${esc(String(tokenomics.chain).toUpperCase())}</text>
+  <text x="${W - 72}" y="70" text-anchor="end" font-family="Inter Medium" font-size="14" fill="${C.muted}">$${esc(tokenomics.ticker)} · ${esc(cap(tokenomics.chain))}</text>
 
   <!-- headline -->
   <g font-family="Onest Light" font-size="96" letter-spacing="-3.4" fill="${C.fg}">
     <text x="68" y="286">Trading pays for</text>
     <text x="68" y="386">private AI.</text>
   </g>
-  <text x="72" y="438" font-family="JetBrains Mono" font-size="13" letter-spacing="4" fill="${C.muted}">HOLD · EARN · ASK · OWN IT</text>
+  <text x="72" y="438" font-family="Inter Medium" font-size="14" fill="${C.muted}">Hold · Earn · Ask · Own it</text>
   <text x="72" y="486" font-family="Inter" font-size="22" fill="${C.fg2}">Hold ${esc(minHold)} $${esc(tokenomics.ticker)} and AI credits arrive every hour,</text>
   <text x="72" y="518" font-family="Inter" font-size="22" fill="${C.fg2}">paid for by trading fees. One API key for any model.</text>
 
   <!-- readout card -->
   <g transform="translate(820 150)">
     <rect x="0.5" y="0.5" width="307" height="300" rx="24" fill="${C.bg}" stroke="${C.line}"/>
-    <text x="24" y="40" font-family="JetBrains Mono" font-size="11" letter-spacing="2.4" fill="${C.muted}">NEXT DISTRIBUTION</text>
+    <text x="24" y="40" font-family="Inter Medium" font-size="13" fill="${C.muted}">Next distribution</text>
     <circle cx="258" cy="36" r="4" fill="${C.accent}"/>
     <text x="270" y="40" font-family="Inter" font-size="12" fill="${C.fg}">Live</text>
     <line x1="0.5" y1="60" x2="307.5" y2="60" stroke="${C.line}"/>
@@ -127,7 +129,7 @@ function ogSvg() {
       <text x="24" y="238">To holders</text>
       <text x="24" y="268">Eligible wallets</text>
     </g>
-    <g font-family="JetBrains Mono" font-size="12.5" fill="${C.fg}" text-anchor="end">
+    <g font-family="Inter Medium" font-size="13" fill="${C.fg}" text-anchor="end" font-variant-numeric="tabular-nums">
       <text x="283" y="208">$412.80</text>
       <text x="283" y="238">$206.40</text>
       <text x="283" y="268">1,284</text>
@@ -137,7 +139,7 @@ function ogSvg() {
   <!-- footer line -->
   <line x1="72" y1="566" x2="${W - 72}" y2="566" stroke="${C.line}"/>
   <text x="72" y="594" font-family="Inter" font-size="13" fill="${C.muted}">Credits are a share of fees, not a promise.</text>
-  <text x="${W - 72}" y="594" text-anchor="end" font-family="JetBrains Mono" font-size="12" letter-spacing="1" fill="${C.muted}">app.example.com</text>
+  <text x="${W - 72}" y="594" text-anchor="end" font-family="Inter" font-size="13" fill="${C.muted}">app.example.com</text>
 </svg>`;
 }
 

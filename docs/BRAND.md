@@ -99,7 +99,7 @@ data handling (no prompt storage; billing rows, heartbeats 48 h, nonces 5 min, l
 | Favicon | `apps/web/public/favicon.svg` | Same five dots as a quincunx (2-1-2) so it reads at 16 px; centre dot accent; dark-mode colours via `prefers-color-scheme` |
 | Touch icon | `apps/web/public/apple-touch-icon.png` (180×180) | Ink square, five light dots, centre accent |
 | OG / Twitter image | `apps/web/public/og.png` (1200×630) | Hero A left, readout card right, footer line "Credits are a share of fees, not a promise." |
-| OG generator | `apps/web/scripts/og.mjs` → `pnpm --filter web og` | SVG rasterised with `@resvg/resvg-js`; uses the shipped Onest/Inter/JetBrains Mono files (WOFF → TTF in-script) |
+| OG generator | `apps/web/scripts/og.mjs` → `pnpm --filter web og` | SVG rasterised with `@resvg/resvg-js`; uses the shipped Onest/Inter files (WOFF → TTF in-script) |
 | Web manifest | `apps/web/public/site.webmanifest` | |
 | robots / sitemap | `apps/web/public/robots.txt`, `sitemap.xml` | `/app` and `/admin` disallowed; replace host |
 | Meta tags | `apps/web/index.html` | title, description, canonical, OG, Twitter `summary_large_image`, theme-color light/dark |
@@ -108,5 +108,7 @@ data handling (no prompt storage; billing rows, heartbeats 48 h, nonces 5 min, l
 
 Colours for anything outside the app (slides, social cards): bg `#FFFFFF`, fg `#0B1220`, fg-2 `#4B5563`,
 muted `#7B8798`, line `#E6E9EE`, accent `#1F9D66` (dark mode `#4FD394`), ink `#050912`. Green appears only
-where value moves toward the reader. Type: Onest 300 for display, Inter 400 for reading, JetBrains Mono for
-anything a machine wrote.
+where value moves toward the reader. Type: Onest 300 for display, Inter 400 for reading, Inter 500 at 13 px in
+sentence case with normal tracking for labels (never uppercase, never letter-spaced, never a monospace face —
+that reads as machine-generated). Figures use Inter with tabular numerals. The only monospace is the system one
+(`ui-monospace`), and only for things a machine wrote: keys, wallets, commands, code.

@@ -175,7 +175,7 @@ export function Keys() {
         </div>
         <div className="field" style={{ flex: '0 1 180px' }}>
           <label htmlFor="newlimit">Spend limit · USD · optional</label>
-          <input id="newlimit" className="input mono" inputMode="decimal" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} placeholder="none" />
+          <input id="newlimit" className="input num" inputMode="decimal" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} placeholder="none" />
         </div>
         <div className="field" style={{ flex: '0 1 220px' }}>
           <label htmlFor="newprivacy">Default privacy</label>
@@ -245,12 +245,12 @@ export function Keys() {
                       ) : null}
                     </td>
                     <td className="mono">{k.masked}</td>
-                    <td className="mono">{fmtDate(k.created_at)}</td>
+                    <td className="date">{fmtDate(k.created_at)}</td>
                     <td style={{ fontSize: 13 }}>{privacyCell(k)}</td>
-                    <td className="mono" style={{ fontSize: 13 }}>
+                    <td className="num" style={{ textAlign: 'left' }}>
                       <KeyUsageCell id={k.id} bump={usageBump} />
                     </td>
-                    <td className="num mono" style={{ fontSize: 13 }}>
+                    <td className="num">
                       {limitCell(k)}
                     </td>
                     <td className="actions">
@@ -347,7 +347,7 @@ function EditModal({ k, onClose, onSave }: { k: ApiKey; onClose: () => void; onS
         </div>
         <div className="field">
           <label htmlFor="elimit">Spend limit · USD · lifetime · blank for none</label>
-          <input id="elimit" className="input mono" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="0.50" />
+          <input id="elimit" className="input num" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="0.50" />
         </div>
         <div className="field">
           <label htmlFor="eprivacy">Default privacy · when a request does not pick a tier</label>

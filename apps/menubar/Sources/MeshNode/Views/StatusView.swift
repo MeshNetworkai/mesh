@@ -242,14 +242,13 @@ struct Eyebrow: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased())
+        Text(text)
             .font(TypeScale.eyebrow)
-            .tracking(1.4)
             .foregroundStyle(Color.meshMuted)
     }
 }
 
-/// Label left, mono value right. `wraps` lets long model lists break onto more lines.
+/// Label left, value right (medium weight, monospaced digits). `wraps` lets long model lists break onto more lines.
 struct StatRow: View {
     let label: String
     let value: String

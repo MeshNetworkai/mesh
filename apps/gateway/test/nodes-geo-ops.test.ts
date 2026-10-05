@@ -101,9 +101,9 @@ describe('geo-block', () => {
   });
 
   it('returns 451 for /v1 and /auth from blocked countries when enforced; /stats stays open', async () => {
-    const { app } = await testServer({ env: { GEO_BLOCK_ENFORCE: true } });
+    // The shipped config blocks nobody (geoBlock: []); the middleware is exercised with its own list.
+    const { app } = await testServer({ env: { GEO_BLOCK_ENFORCE: true }, config: { ...testConfig, geoBlock: ['US', 'GB', 'AE'] } });
     apps.push(app);
-    expect(testConfig.geoBlock).toContain('US');
     const v1 = await app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { 'cf-ipcountry': 'US' }, payload: {} });
     expect(v1.statusCode).toBe(451);
     expect(v1.json().error).toMatchObject({ code: 'region_blocked', type: 'permission_error' });
@@ -120,7 +120,7 @@ describe('geo-block', () => {
     expect(noHeader.statusCode).toBe(200);
     const stats = await app.inject({ method: 'GET', url: '/stats', headers: { 'cf-ipcountry': 'US' } });
     expect(stats.statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/health' })).json().geoBlock).toEqual(testConfig.geoBlock);
+    expect((await app.inject({ method: 'GET', url: '/health' })).json().geoBlock).toEqual(['US', 'GB', 'AE']);
   });
 
   it('is skipped in dev (not enforced)', async () => {

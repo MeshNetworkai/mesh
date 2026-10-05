@@ -115,7 +115,7 @@ export function PairedColumns({
           <tbody>
             {categories.map((c, i) => (
               <tr key={c}>
-                <td className="mono">{c}</td>
+                <td className="date">{c}</td>
                 <td className="num">{format(series[0].values[i])}</td>
                 <td className="num">{format(series[1].values[i])}</td>
               </tr>
@@ -212,7 +212,7 @@ export function ShareColumns({
           <tbody>
             {categories.map((c, i) => (
               <tr key={c}>
-                <td className="mono">{c}</td>
+                <td className="date">{c}</td>
                 <td className="num">{a.values[i].toLocaleString('en-US')}</td>
                 <td className="num">{b.values[i].toLocaleString('en-US')}</td>
                 <td className="num">{fmtPct(pct(i))}</td>

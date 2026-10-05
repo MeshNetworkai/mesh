@@ -181,32 +181,32 @@ const LOOP = [
 
 const WHY = [
   {
-    k: 'i · funding',
+    k: 'i · Funding',
     t: 'Credits are a share of real fees',
     c: `Not an emission schedule. ${holderPct} of every ${feePct} fee is converted into AI credits each ${epochWord}; when trading is quiet, so are the credits.`,
   },
   {
-    k: 'ii · privacy',
+    k: 'ii · Privacy',
     t: 'Nodes never see who asked',
     c: 'Requests are served by independent Macs that receive only the model and the messages. Choose a tier per request: trusted, network, or a zero-data-retention upstream.',
   },
   {
-    k: 'iii · price',
+    k: 'iii · Price',
     t: 'A flat price per million tokens',
     c: `${netPrice} per million tokens whenever a node serves you, instead of list pricing. Every reply says what it cost and who served it.`,
   },
   {
-    k: 'iv · hardware',
+    k: 'iv · Hardware',
     t: 'Runs on machines people already own',
     c: 'The node app is one command on an Apple Silicon Mac. No racks, no procurement, no capital expenditure to recoup.',
   },
   {
-    k: 'v · audit',
+    k: 'v · Audit',
     t: 'Everything is auditable',
     c: 'Epochs, the weekly report and the treasury ledger are public. Anyone can check that the credits issued match the fees collected.',
   },
   {
-    k: 'vi · compatibility',
+    k: 'vi · Compatibility',
     t: 'Works wherever an OpenAI key works',
     c: 'Point an existing client at the gateway and change nothing else. The same key, the same models, a different bill.',
   },
@@ -258,7 +258,7 @@ export function Landing() {
         <div className="eco-hero-grid">
           <div className="eco-hero-copy">
             <p className="eyebrow">
-              {T.name} · ${T.ticker} · {T.chain}
+              {T.name} · ${T.ticker} · {T.chain.charAt(0).toUpperCase() + T.chain.slice(1)}
               <BetaPill />
             </p>
             <h1 className="display eco-h1" id="hero-h1">

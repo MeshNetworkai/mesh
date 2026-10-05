@@ -13,7 +13,7 @@ export function NextEpochPill({ epochSeconds }: { epochSeconds?: number }) {
   return (
     <span className="pill">
       <span className="dot dot-live" aria-hidden="true" />
-      Next epoch in <span className="mono num">{text}</span>
+      Next epoch in <span className="num">{text}</span>
     </span>
   );
 }

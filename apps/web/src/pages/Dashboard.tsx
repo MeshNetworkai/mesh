@@ -354,7 +354,7 @@ export function Dashboard() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td className="mono" title={new Date(r.created_at * 1000).toISOString()}>
+                    <td className="date" title={new Date(r.created_at * 1000).toISOString()}>
                       {fmtTime(r.created_at)}
                     </td>
                     <td>{kindLabel(r.kind)}</td>

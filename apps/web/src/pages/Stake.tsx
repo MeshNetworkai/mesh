@@ -70,11 +70,11 @@ function TiersTable({ tiers, current, loading }: { tiers: StakeTierView[] | null
                     ) : null}
                   </span>
                 </td>
-                <td className="num mono">
+                <td className="num">
                   {t.minStake === 0 ? '—' : `${fmtInt(t.minStake)} ${TICKER}`}
                 </td>
-                <td className="num mono">{fmtLock(t.lockDays)}</td>
-                <td className="num mono">{fmtMult(t.multiplier)}</td>
+                <td className="num">{fmtLock(t.lockDays)}</td>
+                <td className="num">{fmtMult(t.multiplier)}</td>
                 <td className="small muted">{i === 0 ? 'standard' : i === (tiers?.length ?? 0) - 1 ? 'front of the queue' : 'ahead of unstaked nodes'}</td>
               </tr>
             );
@@ -227,7 +227,7 @@ function StakeForm({ tiers, mine, onChanged }: { tiers: StakeTierView[]; mine: M
         {wrongChain ? <Notice kind="warn">Switch your wallet to {target.chain.name} to stake.</Notice> : null}
         <div className="field">
           <label htmlFor="stake-amount">Amount · {TICKER}</label>
-          <input id="stake-amount" className="input mono" inputMode="decimal" placeholder="10000" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} />
+          <input id="stake-amount" className="input num" inputMode="decimal" placeholder="10000" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} />
           {balance.data !== undefined ? <span className="small muted">Balance {fmtInt(Math.floor(fromWei(balance.data, target.decimals)))} {TICKER}</span> : null}
         </div>
         <div className="field">
@@ -258,7 +258,7 @@ function StakeForm({ tiers, mine, onChanged }: { tiers: StakeTierView[]; mine: M
         </span>
         <div className="field">
           <label htmlFor="unstake-amount">Amount · {TICKER} · blank for all</label>
-          <input id="unstake-amount" className="input mono" inputMode="decimal" placeholder="all" value={unstakeAmount} onChange={(e) => setUnstakeAmount(e.target.value)} disabled={busy || locked} />
+          <input id="unstake-amount" className="input num" inputMode="decimal" placeholder="all" value={unstakeAmount} onChange={(e) => setUnstakeAmount(e.target.value)} disabled={busy || locked} />
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn secondary" type="submit" disabled={busy || !isConnected || wrongChain || locked || stakedWei === 0n} aria-busy={step === 'unstake'} title={locked ? `Locked until ${fmtDate(lockEnd)}` : undefined}>

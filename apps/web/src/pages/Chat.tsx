@@ -175,7 +175,7 @@ export function Chat() {
         ) : null}
         <div className="field">
           <label htmlFor="model">Model</label>
-          <select id="model" className="input sm mono" value={model} onChange={(e) => setModel(e.target.value)} disabled={!models}>
+          <select id="model" className="input sm" value={model} onChange={(e) => setModel(e.target.value)} disabled={!models}>
             {!models ? <option>{apiKey ? (modelsErr ? 'Could not load models' : 'Loading…') : 'Select a key first'}</option> : null}
             {(models ?? []).map((m) => (
               <option key={m.id} value={m.id}>

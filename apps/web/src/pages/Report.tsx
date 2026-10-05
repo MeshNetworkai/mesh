@@ -139,13 +139,13 @@ export function ReportPage() {
               <tbody>
                 {[...weeks].reverse().map((w) => (
                   <tr key={w.isoWeek} style={w.epochs === 0 ? { opacity: 0.55 } : undefined}>
-                    <td className="mono">
-                      <button className="linkbtn mono" style={{ fontSize: 13, color: 'inherit' }} onClick={() => setOpen(open === w.isoWeek ? null : w.isoWeek)} aria-expanded={open === w.isoWeek}>
+                    <td className="date">
+                      <button className="linkbtn" style={{ fontSize: 14, color: 'inherit' }} onClick={() => setOpen(open === w.isoWeek ? null : w.isoWeek)} aria-expanded={open === w.isoWeek}>
                         {w.isoWeek}
                         {w.current ? <span className="pill sm" style={{ marginLeft: 8 }}>now</span> : null}
                       </button>
                     </td>
-                    <td className="mono">{fmtDate(w.start)}</td>
+                    <td className="date">{fmtDate(w.start)}</td>
                     <td className="num">{fmtInt(w.epochs)}</td>
                     <td className="num">{fmtUsd(w.feesInUsd)}</td>
                     <td className="num pos">{fmtUsd(w.creditsOutUsd)}</td>
@@ -206,7 +206,7 @@ export function ReportPage() {
                     <tbody>
                       {week.data.days.map((d) => (
                         <tr key={d.day} style={d.epochs === 0 ? { opacity: 0.55 } : undefined}>
-                          <td className="mono">{d.day}</td>
+                          <td className="date">{d.day}</td>
                           <td className="num">{fmtInt(d.epochs)}</td>
                           <td className="num">{fmtUsd(d.feesInUsd)}</td>
                           <td className="num pos">{fmtUsd(d.creditsOutUsd)}</td>

@@ -96,7 +96,7 @@ export function Footer() {
           {TOKENOMICS.name} · ${TOKENOMICS.ticker} on {TOKENOMICS.chain} · credits are a share of fees, not a promise
         </span>
         <span>
-          Not available to residents of {TOKENOMICS.geoBlock.join(', ')} ·{' '}
+          {TOKENOMICS.geoBlock.length ? <>Not available to residents of {TOKENOMICS.geoBlock.join(', ')} ·{' '}</> : null}
           <button className="linkbtn" onClick={() => setTheme(next)} aria-label={`Theme: ${theme}. Switch to ${next}`}>
             Theme: {theme}
           </button>

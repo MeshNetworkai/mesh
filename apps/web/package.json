@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
-    "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/onest": "^5.3.1",
     "@mesh/design-tokens": "workspace:*",
     "@solana/wallet-adapter-base": "^0.9.28",

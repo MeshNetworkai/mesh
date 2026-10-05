@@ -57,16 +57,20 @@ extension Color {
     static let meshBad = Color(nsColor: Theme.bad)
 }
 
-/// Type scale: system font (SF) standing in for Onest/Inter/JetBrains Mono, same restraint.
+/// Type scale: system font (SF) standing in for Onest/Inter, same restraint. No monospace label face anywhere:
+/// labels are sentence case at medium weight with normal tracking; figures use monospaced digits, not a mono face.
+/// Monospace is reserved for what a machine wrote (the link code, commands, ids, logs).
 enum TypeScale {
-    /// Mono eyebrow: 10pt, wide tracking, uppercase (the design system's 11px eyebrow, menu-sized).
-    static let eyebrow = Font.system(size: 10, weight: .medium, design: .monospaced)
+    /// Label: 11pt medium, sentence case, normal tracking (the design system's 13px label, menu-sized).
+    static let eyebrow = Font.system(size: 11, weight: .medium)
     static let headline = Font.system(size: 15, weight: .medium)
     static let body = Font.system(size: 12)
     static let small = Font.system(size: 11)
-    static let value = Font.system(size: 12, weight: .medium, design: .monospaced)
+    /// Values: pair with .monospacedDigit() so columns of figures align.
+    static let value = Font.system(size: 12, weight: .medium)
     static let big = Font.system(size: 26, weight: .light)
     static let code = Font.system(size: 11, design: .monospaced)
+    /// The link code: the one place a large monospace face is right.
     static let codeInput = Font.system(size: 22, weight: .regular, design: .monospaced)
 }
 #endif

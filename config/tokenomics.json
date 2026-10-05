@@ -43,11 +43,7 @@
       "maxMultiplier": 2.0
     }
   },
-  "geoBlock": [
-    "AE",
-    "US",
-    "GB"
-  ],
+  "geoBlock": [],
   "routing": {
     "preferNetwork": true,
     "firstTokenTimeoutMs": 8000,

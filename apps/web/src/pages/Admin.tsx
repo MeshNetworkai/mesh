@@ -194,7 +194,7 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
             <span className="eyebrow">Fake fees · mock only</span>
             <p className="hint">Pushes USD fees into the MockAdapter so the next epoch has something to split.</p>
             <div className="keybox">
-              <input className="input mono sm" type="number" min="0.01" step="0.01" value={feeAmount} onChange={(e) => setFeeAmount(e.target.value)} aria-label="Fake fees in USD" />
+              <input className="input num sm" type="number" min="0.01" step="0.01" value={feeAmount} onChange={(e) => setFeeAmount(e.target.value)} aria-label="Fake fees in USD" />
               <button
                 className="btn secondary sm"
                 disabled={fees.busy || !(Number(feeAmount) > 0)}
@@ -238,7 +238,7 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
           <span className="eyebrow">Revoke an API key</span>
           <p className="hint">By numeric key id (any wallet). The key stops working immediately; the owner sees it as revoked.</p>
           <div className="keybox">
-            <input className="input mono sm" type="number" min="1" step="1" placeholder="key id" value={keyId} onChange={(e) => setKeyId(e.target.value)} aria-label="API key id" />
+            <input className="input num sm" type="number" min="1" step="1" placeholder="key id" value={keyId} onChange={(e) => setKeyId(e.target.value)} aria-label="API key id" />
             <button className="btn danger sm" disabled={revoke.busy || !(Number(keyId) > 0)} onClick={() => runRevoke(() => api.adminRevokeKey(token, Number(keyId)), () => ov.reload())}>
               {revoke.busy ? <Spinner /> : null} Revoke
             </button>
@@ -404,7 +404,7 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
                           {v.verdict}
                         </span>
                       </td>
-                      <td className="num mono">{v.score === null ? '—' : v.score.toFixed(2)}</td>
+                      <td className="num">{v.score === null ? '—' : v.score.toFixed(2)}</td>
                       <td className="mono">{v.primaryNode}</td>
                       <td className="mono">{v.checkNode}</td>
                       <td className="mono wrap" style={{ fontSize: 12 }}>
@@ -522,7 +522,7 @@ function BetaPanels({ token, o, onUnauthorized, onChanged }: { token: string; o:
             without a code. Watch the runbook signals between batches.
           </p>
           <div className="keybox">
-            <input className="input mono sm" type="number" min="1" max="5000" step="1" value={admitN} onChange={(e) => setAdmitN(e.target.value)} aria-label="How many to admit" />
+            <input className="input num sm" type="number" min="1" max="5000" step="1" value={admitN} onChange={(e) => setAdmitN(e.target.value)} aria-label="How many to admit" />
             <button
               className="btn primary sm"
               disabled={admit.busy || !(Number(admitN) > 0) || beta.waiting === 0}
@@ -580,9 +580,9 @@ function BetaPanels({ token, o, onUnauthorized, onChanged }: { token: string; o:
           <span className="eyebrow">Invite codes · mint</span>
           <p className="hint">For friends, partners and support cases. Codes are shown once; a wallet that uses one stays admitted for good.</p>
           <div className="keybox">
-            <input className="input mono sm" type="number" min="1" max="1000" step="1" value={count} onChange={(e) => setCount(e.target.value)} aria-label="Number of codes" />
+            <input className="input num sm" type="number" min="1" max="1000" step="1" value={count} onChange={(e) => setCount(e.target.value)} aria-label="Number of codes" />
             <span className="small muted">×</span>
-            <input className="input mono sm" type="number" min="1" max="10000" step="1" value={uses} onChange={(e) => setUses(e.target.value)} aria-label="Uses per code" />
+            <input className="input num sm" type="number" min="1" max="10000" step="1" value={uses} onChange={(e) => setUses(e.target.value)} aria-label="Uses per code" />
             <button
               className="btn secondary sm"
               disabled={invites.busy || !(Number(count) > 0) || !(Number(uses) > 0)}
@@ -687,7 +687,7 @@ function EpochTable({ o }: { o: AdminOverview }) {
         <tbody>
           {o.epochs.slice(0, 12).map((e) => (
             <tr key={e.epochStart} style={e.status === 'empty' ? { opacity: 0.6 } : undefined}>
-              <td className="mono">{fmtDateTime(e.epochStart)}</td>
+              <td className="date">{fmtDateTime(e.epochStart)}</td>
               <td>
                 <span className={`pill sm ${e.status === 'complete' ? '' : 'off'}`}>
                   <span className={`dot ${e.status === 'complete' ? 'dot-live' : ''}`} />

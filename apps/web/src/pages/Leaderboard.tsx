@@ -52,7 +52,7 @@ function RankRows({ board, data, meWallet }: { board: Board; data: LeaderboardDa
         <tbody>
           {data.rows.map((r) => (
             <tr key={r.rank} className={mine(r) ? 'me' : undefined} aria-current={mine(r) ? 'true' : undefined}>
-              <td className="num mono">{r.rank}</td>
+              <td className="num">{r.rank}</td>
               <td className="mono" title={mine(r) && meWallet ? meWallet : undefined}>
                 {r.wallet}
                 {mine(r) ? <span className="pill sm you">you</span> : null}

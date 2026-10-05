@@ -82,7 +82,7 @@ function LegalPage({ eyebrow, title, lede, children }: { eyebrow: string; title:
   );
 }
 
-const GEO = (
+const GEO = TOKENOMICS.geoBlock.length === 0 ? null : (
   <p>
     The service is not offered to, and may not be used by, anyone who lives in or is connecting from {regionList} (country codes{' '}
     {TOKENOMICS.geoBlock.join(', ')}). The gateway refuses sign-in and inference requests from those regions when geo-blocking is enforced,

@@ -112,7 +112,7 @@ export function StatsPage() {
               <tbody>
                 {epochs.data.map((e) => (
                   <tr key={e.epochStart} style={e.status === 'empty' ? { opacity: 0.6 } : undefined}>
-                    <td className="mono">{fmtDateTime(e.epochStart)}</td>
+                    <td className="date">{fmtDateTime(e.epochStart)}</td>
                     <td>
                       <span className={`pill sm ${e.status === 'complete' ? '' : 'off'}`}>
                         <span className={`dot ${e.status === 'complete' ? 'dot-live' : ''}`} />
@@ -177,7 +177,7 @@ export function StatsPage() {
                   ) : (
                     modelEntries.slice(0, 12).map(([m, n]) => (
                       <tr key={m}>
-                        <td className="mono">{m}</td>
+                        <td>{m}</td>
                         <td className="num">{fmtInt(n)}</td>
                       </tr>
                     ))
@@ -188,7 +188,7 @@ export function StatsPage() {
             {chipEntries.length ? (
               <div className="row">
                 {chipEntries.slice(0, 8).map(([chip, n]) => (
-                  <span key={chip} className="pill mono sm">
+                  <span key={chip} className="pill sm num">
                     {chip} · {n}
                   </span>
                 ))}

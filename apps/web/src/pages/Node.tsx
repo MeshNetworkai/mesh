@@ -118,7 +118,7 @@ function LinkMac() {
           <div className="linkcode-side">
             <span className={`pill sm${left <= 60 ? ' warn' : ''}`}>
               <span className="dot dot-live" aria-hidden="true" />
-              expires in <span className="mono">{fmtCountdown(left)}</span>
+              expires in <span className="num">{fmtCountdown(left)}</span>
             </span>
             <button className="btn sm ghost" onClick={() => copy(code)} aria-label="Copy link code">
               {copied ? 'Copied' : 'Copy code'}
@@ -274,7 +274,7 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
           {status}
         </span>
         <span className="small muted">
-          last seen <span className="mono">{fmtAgo(lastSeen)}</span>
+          last seen <span className="num">{fmtAgo(lastSeen)}</span>
         </span>
       </div>
       <div className="nodecard-id">
@@ -287,7 +287,7 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
       <div className="row" aria-label="Models">
         {models.length ? (
           models.map((m) => (
-            <span key={m} className="pill sm mono">
+            <span key={m} className="pill sm">
               {m}
             </span>
           ))
@@ -319,7 +319,7 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
         {st?.verification && st.verification.enabled !== false ? (
           <div title="Spot checks: a sample of your jobs is re-run elsewhere and compared. ok / suspect / mismatch">
             <dt>Spot checks</dt>
-            <dd className="mono">
+            <dd>
               {st.verification.checked === 0 ? (
                 <span className="muted">none yet</span>
               ) : (

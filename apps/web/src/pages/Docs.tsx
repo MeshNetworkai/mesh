@@ -365,7 +365,7 @@ export function Docs() {
             <p>
               Credits exist only when people trade {TOKENOMICS.ticker}. An hour with no trades is an hour with no distribution. Credits have no cash
               value, cannot be withdrawn or transferred, and the per-request price follows the upstream provider. The token can lose value. Nothing here
-              is investment advice, and Mesh is not available to residents of {TOKENOMICS.geoBlock.join(', ')}.
+              is investment advice{TOKENOMICS.geoBlock.length ? <>, and Mesh is not available to residents of {TOKENOMICS.geoBlock.join(', ')}</> : null}.
             </p>
             <h3>Where it is still rough</h3>
             <p>
