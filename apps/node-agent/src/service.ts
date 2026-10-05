@@ -79,10 +79,24 @@ export function installService(script: string): { plist: string } {
   // Unload a previous copy first so edits take effect (idempotent re-install).
   if (existsSync(plistPath)) launchctl(['bootout', `${domain()}/${LAUNCHD_LABEL}`]);
   writeFileSync(plistPath, renderPlist({ node: process.execPath, script, home: paths.home() }), { mode: 0o644 });
+  // A service that was ever booted out or disabled in this login session stays disabled until it is
+  // enabled again; bootstrap then fails with "Input/output error" and nothing runs. Enable first.
+  launchctl(['enable', `${domain()}/${LAUNCHD_LABEL}`]);
   let res = launchctl(['bootstrap', domain(), plistPath]);
-  if (!res.ok) res = launchctl(['load', '-w', plistPath]);
-  if (!res.ok) throw new Error(`launchctl could not load ${plistPath}: ${res.out}`);
+  if (!res.ok && !/already loaded|service already/i.test(res.out)) {
+    // Legacy path for older macOS; do not trust its exit code — we verify with `print` below.
+    res = launchctl(['load', '-w', plistPath]);
+  }
   launchctl(['kickstart', '-k', `${domain()}/${LAUNCHD_LABEL}`]);
+  // Verify, instead of assuming: the service must be known to launchd in the user's GUI domain.
+  const check = launchctl(['print', `${domain()}/${LAUNCHD_LABEL}`]);
+  if (!check.ok) {
+    throw new Error(
+      `launchd did not accept the service (${res.out || check.out || 'no details'}).\n` +
+        `  Try:  launchctl enable ${domain()}/${LAUNCHD_LABEL} && launchctl bootstrap ${domain()} ${plistPath}\n` +
+        `  Or run the node in a terminal for now:  mesh-node start`,
+    );
+  }
   return { plist: plistPath };
 }
 
@@ -96,10 +110,11 @@ export function uninstallService(): { plist: string; existed: boolean } {
   return { plist: plistPath, existed };
 }
 
-export function serviceStatus(): 'running' | 'loaded' | 'not installed' {
+export function serviceStatus(): 'running' | 'loaded' | 'not loaded' | 'not installed' {
   if (platform() !== 'darwin') return 'not installed';
   if (!existsSync(launchAgentPlist())) return 'not installed';
   const res = launchctl(['print', `${domain()}/${LAUNCHD_LABEL}`]);
-  if (!res.ok) return 'loaded';
+  // The plist exists but launchd does not know the service: an earlier install failed half-way.
+  if (!res.ok) return 'not loaded';
   return /state = running/.test(res.out) ? 'running' : 'loaded';
 }

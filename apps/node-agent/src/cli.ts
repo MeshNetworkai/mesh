@@ -275,6 +275,7 @@ async function cmdStatus(flags: Args['flags']) {
   } else if (status === 'offline') {
     if (service === 'running') out.warn('the node process is running but the gateway has not heard from it recently; check `mesh-node logs`');
     else if (service === 'loaded') out.warn('the background service is installed but not running; it restarts on its own, or run `mesh-node service install` again');
+    else if (service === 'not loaded') out.warn('the background service file exists but launchd is not running it: run `mesh-node service install` again (or `mesh-node start` to serve from this terminal)');
     else out.warn('the node is not running; start it with `mesh-node start` or `mesh-node service install`');
   } else if (paused) out.line(`   paused: no new jobs until \`mesh-node resume\``);
   out.line();
