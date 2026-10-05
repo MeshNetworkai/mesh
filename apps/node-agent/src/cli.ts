@@ -25,7 +25,7 @@ Usage
   mesh-node service install       run in the background via launchd (macOS), start at login
   mesh-node service uninstall     stop and remove the launchd agent
   mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating)
-  mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
+  mesh-node logs [-n 200] [-f]    last lines of ~/.mesh/logs/node.log (-f to follow)
   mesh-node update [--check]      install the latest release (sha256-verified) and restart the service;
                                   --check only reports; --rollback puts the previous version back.
                                   'start' checks daily and logs when one exists.
@@ -57,6 +57,8 @@ export function parseArgs(argv: string[]): Args {
       else flags[k] = true;
     } else if (a === '-n' && i + 1 < argv.length) {
       flags.n = argv[++i];
+    } else if (a === '-f') {
+      flags.f = true;
     } else if (a === '-h') {
       flags.help = true;
     } else if (a === '-v') {
@@ -355,7 +357,9 @@ function cmdLogs(flags: Args['flags']) {
     return;
   }
   const n = str(flags.n) ?? '100';
-  const args = flags.follow === false || flags['no-follow'] ? ['-n', n, file] : ['-n', n, '-f', file];
+  // Print and exit by default (people paste `logs` into a chain of commands); `-f` / `--follow` streams.
+  const follow = flags.f === true || flags.follow === true;
+  const args = follow ? ['-n', n, '-f', file] : ['-n', n, file];
   const child = spawn('tail', args, { stdio: 'inherit' });
   child.on('exit', (code) => process.exit(code ?? 0));
 }
