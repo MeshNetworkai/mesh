@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useConnect, useDisconnect, useSignMessage } from 'wagmi';
+import { ConnectorAlreadyConnectedError, useAccount, useConnect, useDisconnect, useSignMessage, type Connector } from 'wagmi';
 import { DEFAULT_CHAIN, MOCK, STORAGE, type Chain } from '../config';
 import * as api from './api';
 import { mockSession } from './mock';
 import { errorMessage, useToast } from './toast';
 import type { Session } from './types';
-import { getSolanaAdapters, solanaSign } from './wallets';
+import { evmWalletOptions, getSolanaAdapters, solanaReady, solanaSign } from './wallets';
 
 /**
  * Session persistence. The JWT itself lives in the gateway's HttpOnly `mesh_session` cookie, which
@@ -110,6 +110,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { connectAsync, connectors } = useConnect();
   const { signMessageAsync } = useSignMessage();
   const { disconnectAsync } = useDisconnect();
+  const account = useAccount();
+  const accountRef = useRef(account);
+  accountRef.current = account;
+  const connectorsRef = useRef(connectors);
+  connectorsRef.current = connectors;
+
+  /**
+   * Connects `connector` and returns its accounts. wagmi throws when the connector is already connected
+   * (reconnect-on-mount, or a wallet that connected itself), which for us is simply "use what it has".
+   * No `chainId` is passed on purpose: signing in must work whatever network the wallet is on.
+   */
+  const connectEvm = useCallback(
+    async (connector: Connector): Promise<readonly `0x${string}`[]> => {
+      try {
+        const { accounts } = await connectAsync({ connector });
+        return accounts;
+      } catch (err) {
+        if (err instanceof ConnectorAlreadyConnectedError) return connector.getAccounts();
+        throw err;
+      }
+    },
+    [connectAsync],
+  );
 
   useEffect(() => saveHint(session), [session]);
 
@@ -208,12 +231,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!connector) return fail(new Error('Wallet not detected'));
       try {
         setStatus('connecting');
-        const { accounts } = await connectAsync({ connector });
+        const accounts = await connectEvm(connector);
         const wallet = accounts[0];
-        if (!wallet) throw new Error('No account returned');
+        if (!wallet) throw new Error('The wallet returned no account. Unlock it and try again.');
         setStatus('signing');
         const { message } = await api.getNonce(wallet);
-        const signature = await signMessageAsync({ message, account: wallet });
+        // personal_sign (EIP-191) through this connector: works on any network, no switch, no gas.
+        const signature = await signMessageAsync({ message, account: wallet, connector });
         setStatus('verifying');
         const res = await api.verifySignature(wallet, signature, 'evm', message, inviteRef.current);
         finish(cookieSession(res.wallet, res.chain));
@@ -221,7 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fail(err);
       }
     },
-    [connectAsync, connectors, fail, finish, signMessageAsync],
+    [connectEvm, connectors, fail, finish, signMessageAsync],
   );
 
   const signInMock = useCallback(async () => {
@@ -257,7 +281,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Prefer the adapter already connected as this wallet; otherwise connect the first available one.
         let adapter = adapters.find((a) => a.connected && a.publicKey?.toBase58() === s.wallet) ?? null;
         if (!adapter) {
-          for (const a of adapters) {
+          // Installed adapters only: a Loadable one would navigate the page to the wallet's website.
+          for (const a of adapters.filter(solanaReady)) {
             if (!a.connected) await a.connect().catch(() => undefined);
             if (a.connected && a.publicKey?.toBase58() === s.wallet) {
               adapter = a;
@@ -269,10 +294,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { signature } = await solanaSign(adapter, async () => message);
         return { signature, chain: 'solana' };
       }
-      const signature = await signMessageAsync({ message, account: s.wallet as `0x${string}` });
+      const wallet = s.wallet as `0x${string}`;
+      // Reload or wallet lock may have dropped the wagmi connection: find the detected wallet that holds this
+      // account (eth_accounts is silent) and reconnect it; otherwise ask the first detected wallet to connect.
+      let connector: Connector | undefined = accountRef.current.isConnected ? accountRef.current.connector : undefined;
+      if (!connector) {
+        const options = evmWalletOptions(connectorsRef.current);
+        if (!options.length) throw new Error('No EVM wallet detected in this browser. Open the wallet you signed in with.');
+        for (const o of options) {
+          const accounts = await o.connector.getAccounts().catch(() => [] as readonly `0x${string}`[]);
+          if (accounts.some((a) => a.toLowerCase() === wallet.toLowerCase())) {
+            connector = o.connector;
+            break;
+          }
+        }
+        connector ??= options[0]!.connector;
+        const accounts = await connectEvm(connector);
+        if (!accounts.some((a) => a.toLowerCase() === wallet.toLowerCase()))
+          throw new Error(`Switch the wallet to the account you signed in with (${wallet.slice(0, 6)}…${wallet.slice(-4)}) and try again`);
+      }
+      const signature = await signMessageAsync({ message, account: wallet, connector });
       return { signature, chain: 'evm' };
     },
-    [signMessageAsync],
+    [connectEvm, signMessageAsync],
   );
 
   const value = useMemo<AuthApi>(

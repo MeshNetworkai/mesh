@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, Modal, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
 import { MOCK, PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { brewSteps } from './Download';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtAgo, fmtCompact, fmtCost, fmtDate, fmtInt, shortAddr } from '../lib/format';
@@ -11,8 +12,8 @@ import type { LinkCode, NodePledge, NodeView, PledgeText } from '../lib/types';
 
 /**
  * The exact one-liner. The script is served by this web origin; the bundle comes from the gateway.
- * With a link code (from "Link a Mac") the Mac never needs a wallet key: `--link <code>`. The
- * `--wallet` form is legacy and only works on gateways that allow unsigned registration.
+ * With a link code (from "Link a Mac") the Mac never needs any API key or wallet secret: `--link <code>`
+ * is all it gets. The `--wallet` form is legacy and only works on gateways that allow unsigned registration.
  */
 export function installOneLiner(wallet: string | null, link: string | null = null): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://mesh.example';
@@ -21,11 +22,53 @@ export function installOneLiner(wallet: string | null, link: string | null = nul
 }
 
 const STEPS: Array<[string, string]> = [
-  ['Link', 'Click "Link a Mac": your wallet signs once, here in the browser, and you get a one-time code (15 min).'],
+  ['Link', 'Click "Link a Mac": your wallet signs once, here in the browser, and you get a one-time link code (15 min).'],
   ['Ollama', 'The installer adds Ollama with Homebrew if it is missing, makes sure it runs, and pulls llama3.1:8b (14B on 32 GB+).'],
-  ['Register', 'mesh-node setup --link <code> registers the Mac to your wallet. No key ever touches the machine.'],
+  ['Register', 'mesh-node setup --link <code> registers the Mac to your wallet. No API key or wallet secret ever touches the machine.'],
   ['Service', 'Starts the node in the background and at login (launchd). mesh-node status shows counts and earnings only.'],
 ];
+
+/**
+ * The three things an operator does, in order. `current` is 1 before sign-in, 2 once signed in and
+ * waiting for "Link a Mac", 3 while a link code is live. Exported so the e2e test asserts the same copy.
+ */
+export const FLOW_STEPS: Array<{ title: string; body: string }> = [
+  { title: 'Connect your wallet', body: 'The one that gets paid. Signing in is a free message signature, no transaction.' },
+  {
+    title: 'Click “Link a Mac”',
+    body: 'You sign once; we show a one-time link code. No API key needed: the Mac never holds a key, only this code, and it works once.',
+  },
+  { title: 'Run the install command on the Mac', body: 'Paste the one-liner below in Terminal. It carries the gateway URL and your link code already filled in.' },
+];
+
+export type FlowStep = 1 | 2 | 3;
+
+export function flowStep(signedIn: boolean, hasCode: boolean): FlowStep {
+  if (!signedIn) return 1;
+  return hasCode ? 3 : 2;
+}
+
+function FlowPanel({ current }: { current: FlowStep }) {
+  return (
+    <ol className="flowsteps" aria-label="How to link a Mac">
+      {FLOW_STEPS.map((st, i) => {
+        const n = (i + 1) as FlowStep;
+        const state = n < current ? 'done' : n === current ? 'current' : 'todo';
+        return (
+          <li key={st.title} className={state} aria-current={n === current ? 'step' : undefined}>
+            <span className="n" aria-hidden="true">
+              {state === 'done' ? '✓' : n}
+            </span>
+            <span className="t">
+              <b>{st.title}</b>
+              <span className="muted">{st.body}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 /** One-line status for the pledge card. */
 export function pledgeSummary(p: NodePledge | undefined): { tone: 'ok' | 'warn' | 'off'; text: string } {
@@ -62,7 +105,7 @@ function useCountdown(link: LinkCode | null): number {
  * "Link a Mac": challenge → wallet signs in the browser → POST /nodes/link → one-time code + the
  * install one-liner carrying `--link <code>`. The Mac only ever sees the code.
  */
-function LinkMac() {
+function LinkMac({ onCode }: { onCode: (code: string | null) => void }) {
   const { session, token, openModal, signMessage } = useAuth();
   const [link, setLink] = useState<LinkCode | null>(null);
   const [busy, setBusy] = useState<'idle' | 'challenge' | 'signing' | 'linking'>('idle');
@@ -90,6 +133,7 @@ function LinkMac() {
   }, [session, token, openModal, signMessage]);
 
   const code = link && !expired ? link.code : null;
+  useEffect(() => onCode(code), [code, onCode]);
   const oneLiner = installOneLiner(null, code);
   const busyLabel = busy === 'challenge' ? 'Preparing…' : busy === 'signing' ? 'Sign in your wallet…' : busy === 'linking' ? 'Creating code…' : null;
 
@@ -97,7 +141,7 @@ function LinkMac() {
     <div className="stack sm">
       <div className="row between" style={{ alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
         <span className="field">
-          <span className="lbl">Install · one line · paste in Terminal</span>
+          <span className="lbl">{code ? 'Step 3 · run this on the Mac' : session ? 'Step 2 · get your link code' : 'Step 1 · connect the wallet that gets paid'}</span>
         </span>
         <button className={`btn ${code ? 'secondary' : 'primary'}`} onClick={start} disabled={busy !== 'idle'} aria-busy={busy !== 'idle'}>
           {busy !== 'idle' ? <Spinner /> : null}
@@ -108,7 +152,7 @@ function LinkMac() {
       {code && link ? (
         <div className="linkcode" role="status" aria-live="polite">
           <div className="linkcode-main">
-            <span className="small muted">One-time link code · paid to {shortAddr(link.wallet, 5, 4)}</span>
+            <span className="small muted">Your one-time link code · node pays {shortAddr(link.wallet, 5, 4)}</span>
             <span className="linkcode-code mono" aria-label={`Link code ${code.split('').join(' ')}`}>
               {code.slice(0, 4)}
               <span className="sep">-</span>
@@ -120,7 +164,7 @@ function LinkMac() {
               <span className="dot dot-live" aria-hidden="true" />
               expires in <span className="num">{fmtCountdown(left)}</span>
             </span>
-            <button className="btn sm ghost" onClick={() => copy(code)} aria-label="Copy link code">
+            <button className="btn sm primary" onClick={() => copy(code)} aria-label="Copy link code">
               {copied ? 'Copied' : 'Copy code'}
             </button>
           </div>
@@ -132,20 +176,31 @@ function LinkMac() {
       <Terminal label="Install the node agent" code={oneLiner} wrap />
       {code ? (
         <p className="small muted" style={{ margin: 0 }}>
-          Already installed? Run <code className="mono">mesh-node setup --link {code}</code> instead. The code works once and is bound to your wallet;
-          the Mac never holds a key.{MOCK ? ' Mock mode: the code is not registered anywhere.' : ''}
+          Already installed? Run <code className="mono">mesh-node setup --link {code} --gateway {PUBLIC_API_URL}</code> instead. The link code works once
+          and is bound to your wallet; the Mac never holds an API key or a wallet secret.{MOCK ? ' Mock mode: the code is not registered anywhere.' : ''}
         </p>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>
-          {session ? 'Click “Link a Mac” to sign once with your wallet and fill in the code.' : 'Connect a wallet, then “Link a Mac” fills in the code.'} Your
-          wallet signs here in the browser; the Mac only needs the code.
+          {session
+            ? 'Click “Link a Mac” to sign once with your wallet; the link code then fills in above and in the command.'
+            : 'Connect a wallet first; “Link a Mac” then fills the link code into the command.'}{' '}
+          There is no API key to fetch: your wallet signs here in the browser and the Mac only needs the link code.
         </p>
       )}
       <p className="small muted" style={{ margin: 0 }}>
+        Prefer Homebrew? Expand below. Prefer a menu-bar app? <Link to="/download">Download for Mac</Link> (same agent, plus the checksums and the macOS
+        “Open Anyway” steps). Either way the only thing you type on the Mac is the link code.
+      </p>
+      <details className="alt-install">
+        <summary className="small">Homebrew alternative</summary>
+        <div style={{ paddingTop: 10 }}>
+          <Terminal label="Homebrew install" code={brewSteps(code ?? '<code>')} />
+        </div>
+      </details>
+      <p className="small muted" style={{ margin: 0 }}>
         Afterwards: <code className="mono">mesh-node status</code>, <code className="mono">mesh-node pause</code> /{' '}
         <code className="mono">resume</code>, <code className="mono">mesh-node logs</code>, <code className="mono">mesh-node update</code>,{' '}
-        <code className="mono">mesh-node service uninstall</code>. Prefer Homebrew or a menu-bar app? See <Link to="/download">Download for Mac</Link>{' '}
-        (same agent, plus the checksums and the macOS “Open Anyway” steps).
+        <code className="mono">mesh-node service uninstall</code>.
       </p>
     </div>
   );
@@ -344,6 +399,9 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
 
 export function NodePage() {
   const { session, openModal } = useAuth();
+  const [code, setCode] = useState<string | null>(null);
+  const onCode = useCallback((c: string | null) => setCode(c), []);
+  const current = flowStep(Boolean(session), code !== null);
   const mine = useMyNodes(15_000);
   const net = useNodes(60_000);
   const nodes = mine.data ?? [];
@@ -359,6 +417,10 @@ export function NodePage() {
           {MOCK ? ' · mock data' : ''}
         </span>
       </div>
+
+      <FlowPanel current={current} />
+
+      <LinkMac onCode={onCode} />
 
       <div className="grid g2 nodeintro">
         <div className="stack">
@@ -389,8 +451,6 @@ export function NodePage() {
           ))}
         </ol>
       </div>
-
-      <LinkMac />
 
       <div className="row between">
         <span className="display d-s">Your nodes</span>

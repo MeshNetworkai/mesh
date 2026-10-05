@@ -108,8 +108,18 @@ test.describe('landing', () => {
 
     // Sign-in modal opens; no invite field (only ever shown after a 403 invite_required, which open beta never sends).
     await page.getByRole('button', { name: 'Connect wallet' }).first().click();
-    await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('Connect a wallet');
+    await expect(dialog).toContainText('Sign a message to prove you own the wallet. No transaction, no gas.');
     await expect(page.getByLabel('Invite code')).toHaveCount(0);
+    // Launching on Robinhood Chain: no Solana/EVM toggle, no hard-coded wallet names. Headless Chromium has
+    // no wallet extension, so the list says so and offers plain links only (nothing navigates by itself).
+    await expect(dialog.getByRole('tablist', { name: 'Chain' })).toHaveCount(0);
+    await expect(dialog.getByLabel('Wallets')).toContainText('No wallet detected');
+    await expect(dialog.getByRole('link', { name: 'Phantom' })).toHaveAttribute('target', '_blank');
+    await expect(dialog.getByRole('link', { name: 'MetaMask' })).toHaveAttribute('href', /metamask\.io/);
+    await expect(dialog.locator('.wallet-btn')).toHaveCount(0);
+    await expect(page).toHaveURL(/127\.0\.0\.1/);
   });
 });
 
@@ -223,7 +233,7 @@ test.describe('chat without a wallet', () => {
     await expect(card).toContainText("You have used today's 5 free messages.");
     await expect(prompt).toBeDisabled();
     await card.getByRole('button', { name: 'Connect wallet' }).click();
-    await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
+    await expect(page.getByRole('dialog')).toContainText('Connect a wallet');
   });
 
   test('a pasted key alone lets a visitor chat on its credits: no wallet, no free counter, the rail says which key', async ({ page }) => {
@@ -332,14 +342,26 @@ test.describe('signed-in app', () => {
     expect(key.startsWith('mesh_sk_')).toBe(true);
   });
 
-  test('node page renders (public) with the install one-liner and the operator view when signed in', async ({ page }) => {
+  test('node page: 3-step flow (connect → link code → install), no "key" to fetch; signed in moves to step 2 and lists nodes', async ({ page }) => {
     await page.goto('/app/node');
     await expect(page.locator('span.display', { hasText: 'Run a node' })).toBeVisible();
+    const flow = page.getByLabel('How to link a Mac');
+    await expect(flow.getByRole('listitem')).toHaveCount(3);
+    await expect(flow.getByRole('listitem').nth(0)).toHaveAttribute('aria-current', 'step');
+    await expect(flow).toContainText('Connect your wallet');
+    await expect(flow).toContainText('Click “Link a Mac”');
+    await expect(flow).toContainText('No API key needed');
+    await expect(flow).toContainText('Run the install command on the Mac');
     await expect(page.getByLabel('What the installer does')).toBeVisible();
-    await expect(page.locator('body')).toContainText('install-node.sh');
+    // The one-liner carries the gateway URL and the --link placeholder before any code exists.
+    const term = page.locator('pre.term', { hasText: 'install-node.sh' });
+    await expect(term).toContainText(`--link <code> --gateway ${GATEWAY_URL}`);
+    await expect(page.getByRole('button', { name: 'Connect wallet to link a Mac' })).toBeVisible();
 
     await signIn(page);
     await page.goto('/app/node');
+    await expect(flow.getByRole('listitem').nth(1)).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByRole('button', { name: 'Link a Mac' })).toBeVisible();
     await expect(page.getByText('Your nodes')).toBeVisible();
   });
 

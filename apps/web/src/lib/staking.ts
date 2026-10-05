@@ -16,6 +16,18 @@ interface EvmDeployJson {
   simulated?: boolean;
 }
 
+/**
+ * Robinhood Chain mainnet (Arbitrum Orbit L2, docs/CHAIN_DECISION.md): where $MESH lives. Defined here so
+ * wagmi knows it even before config/deploy.robinhood.json carries the token address.
+ */
+export const ROBINHOOD_CHAIN: Chain = defineChain({
+  id: 4663,
+  name: 'Robinhood Chain',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.mainnet.chain.robinhood.com'] } },
+  blockExplorers: { default: { name: 'Blockscout', url: 'https://robinhoodchain.blockscout.com' } },
+});
+
 const ZERO = /^0x0{40}$/;
 const isAddr = (v: unknown): v is Address => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v) && !ZERO.test(v);
 
@@ -45,7 +57,7 @@ export function stakingTarget(): StakingTarget | null {
   if (DEFAULT_CHAIN !== 'evm') return null;
   const d = evmDeploy();
   if (!d || !isAddr(d.staking) || !isAddr(d.token)) return null;
-  const known = [mainnet, base].find((c) => c.id === d.chainId);
+  const known = [ROBINHOOD_CHAIN, mainnet, base].find((c) => c.id === d.chainId);
   const chain =
     known ??
     defineChain({
