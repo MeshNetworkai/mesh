@@ -5,7 +5,7 @@ import { verifierFor, type Chain } from '@mesh/chain-adapter';
 import { bearer, pledgeMessage, registerMessage, safeEqual, verifySession } from '../auth.js';
 import { inviteRequired, isAdmitted } from '../beta.js';
 import { nodeVerificationStats } from '../verification.js';
-import { requireSession, sessionOf, type AppContext } from '../context.js';
+import { requireSession, resolveSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { jwtSecrets } from '../env.js';
 import { SMALL_BODY, fixedWindowLimiter } from './auth.js';
@@ -316,7 +316,8 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
   const ipLimiter = fixedWindowLimiter(ipLimit, 3_600_000);
   const tooMany = (reply: FastifyReply, resetMs: number, what: string) => {
     reply.header('retry-after', String(Math.ceil(resetMs / 1000)));
-    reply.code(429).send({ error: 'rate_limited', message: `Too many node registrations ${what}; retry later.`, statusCode: 429 });
+    const mins = Math.max(1, Math.ceil(resetMs / 60_000));
+    reply.code(429).send({ error: 'rate_limited', message: `Too many node registration attempts ${what}; try again in about ${mins} min.`, statusCode: 429 });
     return reply;
   };
   /** preHandler: the per-IP backstop. */
@@ -344,7 +345,12 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/nodes/register/challenge', { preHandler: regLimit, bodyLimit: SMALL_BODY }, async (req, reply) => {
     const parsed = ChallengeBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
-    if (strictHit(req, reply, null)) return reply;
+    // A signed-in browser asking for a challenge for its own wallet has already proved ownership, so the
+    // strict bucket is keyed on the wallet (retrying "Link a Mac" a dozen times must not lock out the
+    // whole NAT); anonymous callers (the CLI's signed flow) stay on the IP key.
+    const session = await resolveSession(ctx, req);
+    const proven = session && session.wallet.toLowerCase() === parsed.data.wallet.toLowerCase() ? session.wallet : null;
+    if (strictHit(req, reply, proven)) return reply;
     const issued = ctx.nonces.issue(parsed.data.wallet, registerDomain(domain));
     const message = registerMessage({ domain, uri, wallet: issued.wallet, nonce: issued.nonce, issuedAt: issued.issuedAt, expiresAt: issued.expiresAt, nodeId: parsed.data.nodeId ?? null });
     return {
