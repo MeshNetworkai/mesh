@@ -32,7 +32,7 @@ node                                        gateway                             
 browser; the Mac only ever sees a short one-time code.
 
 ```json
-{ "linkCode": "K7QM2XDA", "chip": "M3 Max", "ramGb": 64, "models": ["llama3.1:8b", "qwen2.5:7b"], "agentVersion": "0.3.0", "nodeId": "optional-stable-id" }
+{ "linkCode": "K7QM2XDA", "chip": "M3 Max", "ramGb": 64, "models": ["llama3.1:8b", "qwen2.5:7b"], "agentVersion": "0.3.0", "maxParallel": 2, "nodeId": "optional-stable-id" }
 ```
 
 **B. Signed (direct).** The caller signs the challenge itself (web app, a script with a key, or an
@@ -42,7 +42,7 @@ operator pasting a signature):
 { "wallet": "7xKq…", "nonce": "…", "signature": "…", "chain": "solana", "chip": "M3 Max", "ramGb": 64, "models": ["llama3.1:8b"], "agentVersion": "0.3.0" }
 ```
 
-→ `200 { "nodeId": "node_3f9a…", "nodeToken": "mesh_nt_…", "wallet": "7xKq…", "walletVerified": true, "linked": true, "heartbeatEverySec": 20, "offlineAfterSec": 90, "pollMaxWaitMs": 25000 }`
+→ `200 { "nodeId": "node_3f9a…", "nodeToken": "mesh_nt_…", "wallet": "7xKq…", "walletVerified": true, "linked": true, "maxParallel": 2, "heartbeatEverySec": 20, "offlineAfterSec": 90, "pollMaxWaitMs": 25000 }`
 
 - `nodeToken` is shown **once**; the gateway stores only its sha256. Keep it on disk (`~/.mesh/config.json`).
   It is the bearer for every `/nodes/:id/*` call: `Authorization: Bearer mesh_nt_…`.
@@ -51,6 +51,12 @@ operator pasting a signature):
 - `models` are **Ollama tags** exactly as `ollama list` prints them (`llama3.1:8b`). The gateway maps
   client-facing names to tags via `config/model-policy.json → networkModels`
   (`{"llama-3.1-8b": "llama3.1:8b", …}`); a node is only offered jobs for tags it advertises.
+- `maxParallel` (optional, default 1) is how many jobs the node can run **at once** — the agent sets it
+  from `mesh-node config set maxParallel N` and mirrors it into `OLLAMA_NUM_PARALLEL` for the
+  `ollama serve` it launches. The gateway caps it at `config.routing.maxParallelPerNode` (4) and echoes
+  the accepted value back as `maxParallel`; it routes at most that many concurrent jobs to the node and
+  lets it park that many long-polls (§3). Each extra slot needs RAM for another copy of the model's
+  context, so the default stays 1.
 - `nodeId` is optional. Omit it and the gateway generates one. Pass your stored id to re-register
   after a reinstall; re-registering an existing id **requires its current token** (else `409 node_exists`)
   and rotates the token. A `409` does not consume a link code.
@@ -126,15 +132,23 @@ never holds a key, so pledging happens in the web app, Node page → "Sign the o
 `POST /nodes/:id/heartbeat` (node token), every **20 s**:
 
 ```json
-{ "models": ["llama3.1:8b"], "busy": false, "loadAvg": 1.7 }
+{ "models": ["llama3.1:8b"], "busy": false, "loadAvg": 1.7, "maxParallel": 2 }
 ```
 
-→ `200 { "ok": true, "heartbeatEverySec": 20, "offlineAfterSec": 90, "queuedJobs": 0 }`
+→ `200 { "ok": true, "heartbeatEverySec": 20, "offlineAfterSec": 90, "queuedJobs": 0, "maxParallel": 2 }`
 
 - A node with no heartbeat (or job pull) for 90 s is **offline** and is not routed to.
 - `models` replaces the advertised tag list (send it every time; it is cheap). `ramGb`/`chip` may be
-  included to update hardware info. `busy: true` keeps the node out of routing (e.g. the Mac is in
-  use); the gateway also sets `busy` itself while a job is running on the node.
+  included to update hardware info; `maxParallel` updates the slot count (capped as in §1, the accepted
+  value is echoed back).
+- **`busy` is a pin, not a count.** The gateway tracks the jobs running on each node itself (claim →
+  done/fail), so a heartbeat never has to say "I am on a job". `busy: true` means *route nothing here
+  until I say otherwise* — the node is paused, shutting down, or full by its own account — and stays in
+  force until a later heartbeat sends `busy: false`, which only lifts the pin and never resets the
+  running count. Omitting `busy` leaves the pin as it was. Because the pin persists, a node that pins
+  itself when it fills up should heartbeat `busy: false` as soon as a slot frees instead of waiting for
+  the next 20 s tick (the reference agent does; otherwise it idles for up to one interval after every
+  job). A node with `maxParallel > 1` must **not** pin busy while it still has a free slot.
 - Each heartbeat is written to the `heartbeats` table (pruned to 48 h) and drives `uptimePct24h`.
 
 ## 3. Pulling jobs
@@ -170,11 +184,14 @@ never holds a key, so pledging happens in the web app, Node page → "Sign the o
   only claimable by, nodes that are trusted (allowlisted wallet, or gold stake + signed pledge, §1c).
   The job payload itself is identical across tiers; the node is not told which tier it is serving.
 - A pull also counts as liveness (updates `last_seen`), but keep heartbeating so `busy`/`models` stay fresh.
-- One long-poll per node at a time: a new pull replaces the previous waiter.
+- Up to `maxParallel` long-polls per node may be parked at once; an older surplus one is answered `204`
+  immediately. The gateway never hands a node more running jobs than its `maxParallel`, so a node may
+  either run one poll loop that only polls while it has a free slot (the reference agent) or one
+  poller per slot (the load-test nodes).
 - Nodes whose reputation is below the threshold (see §6) get `204` even when jobs are queued.
 
-Run one job at a time. Start streaming **immediately**: the gateway's first-chunk timer is
-`routing.firstTokenTimeoutMs` (8 s) from job creation, which includes your pull latency.
+Run at most `maxParallel` jobs at a time (default 1). Start streaming **immediately**: the gateway's
+first-chunk timer is `routing.firstTokenTimeoutMs` (8 s) from job creation, which includes your pull latency.
 
 ## 4. Streaming the result
 
@@ -197,15 +214,33 @@ Finish with exactly one of:
 ```json
 { "promptTokens": 41, "completionTokens": 128, "finishReason": "stop" }
 ```
-(`prompt_eval_count` / `eval_count` from Ollama's final message; `finishReason` `stop` | `length`.)
+→ `200 { "ok": true, "usage": { "promptTokens": 41, "completionTokens": 128, "finishReason": "stop" } }`
+
+- **Token counts**: send `prompt_eval_count` / `eval_count` from Ollama's final message; `finishReason`
+  is `stop` | `length`. They are what the client is billed and you are paid for, so the gateway
+  **clamps** them to what the job could have produced: `completionTokens ≤ maxTokens` and
+  `promptTokens ≤ 4 × payload bytes + 1024` (tokenisers vary; CJK/emoji can be several tokens per
+  character). The accepted values come back in `usage`. Each field is an integer 0..10 000 000 (missing
+  → 0). If Ollama omitted a count (some versions skip `prompt_eval_count` for a fully cached prompt)
+  the reference agent estimates `ceil(chars / 4)` rather than sending 0, so the clamp is a backstop,
+  not the normal path.
+- **`409 empty_output`**: a `done` for a job on which **no chunk was ever delivered** is not a reply.
+  The gateway marks the job failed (`error = empty_output`, node fault), pays nothing, and answers
+  `409 {error: "empty_output"}`. Do not follow up with `/fail` (it would get `409 job_not_running`);
+  log it and move on. If your model produced an empty reply, POST `/fail` yourself with a reason
+  instead of `done`.
 
 `POST /nodes/:id/jobs/:jobId/fail`
 ```json
 { "error": "ollama: model not found" }
 ```
+`error` is 1–500 characters; control characters are stripped (it ends up in a response header). Never
+put prompt or reply text in it.
 
-Both answer `200 {ok:true}` or `409 job_not_running`. After `done` the gateway bills the user, credits
-your wallet, and emits the final SSE chunk to the client.
+Both answer `200 {ok:true}` or `409 job_not_running` (`done` also `409 empty_output`). After `done`
+the gateway bills the user, credits your wallet, and emits the final SSE chunk to the client. A `409`
+on `chunk`, `done` or `fail` means the gateway has already closed the job: stop, and do not report
+anything further for it.
 
 ## 5. What the client sees
 
@@ -264,11 +299,12 @@ failures to `scored`; a quarantined node is excluded regardless of its rate.
 ## 8. Stats
 
 - `GET /nodes/:id` — node token **or** a wallet session (JWT) owning the node:
-  `{status: idle|busy|offline, online, quarantined, uptimePct24h, jobs24h, jobsDone24h, jobsFailed24h, tokens24h, earnedUsd24h, earnedUsdTotal, reputation: {jobs, successRate, avgFirstTokenMs, mismatches, eligible, window, minSuccessRate}, verification: {…, §10}, models, chip, ramGb, loadAvg, agentVersion, lastSeen, createdAt}`.
+  `{status: idle|busy|offline, online, busy, runningJobs, maxParallel, quarantined, uptimePct24h, jobs24h, jobsDone24h, jobsFailed24h, tokens24h, earnedUsd24h, earnedUsdTotal, reputation: {jobs, successRate, avgFirstTokenMs, mismatches, eligible, window, minSuccessRate}, verification: {…, §10}, models, chip, ramGb, loadAvg, agentVersion, lastSeen, createdAt}`.
   `uptimePct24h` = minute-buckets with ≥1 heartbeat ÷ minutes in the window (24 h, capped at the node's age).
 - `GET /me/nodes` (session) — the wallet's nodes with the same view, plus `earnedUsdTotal`.
-- `GET /nodes` (public) — `online/total/busy/idle`, `chips`, `models`, `jobs24h`, `servedByNetwork24h`,
-  `tokens24h`, `servedByNetworkPercent`. No wallets or tokens.
+- `GET /nodes` (public) — `online/total/busy/idle`, `slots` (Σ `maxParallel` over online nodes),
+  `runningJobs`, `queuedJobs`, `chips`, `models`, `jobs24h`, `servedByNetwork24h`, `tokens24h`,
+  `servedByNetworkPercent`. A node counts as `busy` only when every slot is taken (or it pinned itself). No wallets or tokens.
 - Verification counters per node: §10.
 - `GET /stats` (public) — `servedByNetworkPercent` (24 h, real), `servedByNetwork24h`, `jobs24h`,
   `networkTokens24h`, `networkPricePerMTokens`, `nodeRewardUsdPerMTokens`.
@@ -335,23 +371,31 @@ it is new, at 15 %).
 ## 11. Agent loop (reference)
 
 ```
-token = load() or register()
-every 20s: heartbeat({models: ollama list, busy: running != null, loadAvg})
+token = load() or register({..., maxParallel: P})
+every 20s: heartbeat({models, busy: paused || stopping || running >= P, loadAvg, maxParallel: P})
+           (also right away when a slot frees after the last heartbeat pinned busy, and on pause/resume)
 loop:
+  if running >= P: wait for a slot
   r = GET /nodes/:id/jobs/next?wait=25000
   if 204: continue
-  job = r.body; seq = 0
-  for part in ollama.chat(model=job.model, messages=job.messages, options=map(job.params, job.maxTokens), stream=true):
-     if now > job.deadlineMs: break
-     res = POST chunk {seq, delta: part.message.content}; seq++
-     if res.status == 409: abort generation; break
-  POST done {promptTokens: part.prompt_eval_count, completionTokens: part.eval_count, finishReason}
-  (on exception: POST fail {error})
+  job = r.body; spawn:
+    seq = 0; chunks = 0
+    for part in ollama.chat(model=job.model, messages=job.messages, options=map(job.params, job.maxTokens), stream=true):
+       if now > job.deadlineMs: break
+       res = POST chunk {seq, delta: part.message.content}; seq++; chunks++
+       if res.status == 409: abort generation; stop (do not POST fail)
+    if chunks == 0: POST fail {error: "model produced no output"}
+    else POST done {promptTokens: part.prompt_eval_count ?? ceil(promptChars/4), completionTokens: part.eval_count ?? ceil(replyChars/4), finishReason}
+         (409 empty_output / job_not_running -> log, move on)
+    (on exception: POST fail {error})
 ```
 
-Retry transient network errors on `chunk` with the same `seq`. Store `nodeId` + `nodeToken` locally.
-If the gateway answers `401` on heartbeat the token is gone (database reset): register again without
-`nodeId` to get a fresh identity (an existing id cannot be re-claimed without its token).
+Retry transient network errors (and 5xx / 429, honouring `retry-after`) on `chunk` once with the same
+`seq`. Back off with jitter (1 s → 60 s) when the gateway is unreachable or answers 5xx/429 on poll
+or heartbeat; never give up, never spin. Store `nodeId` + `nodeToken` locally (0600). If the gateway
+answers `401`/`404` on heartbeat or poll the token is gone (database reset): register again without
+`nodeId` to get a fresh identity (an existing id cannot be re-claimed without its token) — and if the
+very next call is rejected again, back off rather than re-registering in a loop.
 
 **Agent privacy rules** (`docs/PRIVACY.md` §3; the reference agent does all of this and
 `apps/node-agent/test/privacy.test.ts` checks it): never write `messages` or deltas to disk or to a
@@ -365,4 +409,5 @@ counts and earnings only. A trusted node's operator has signed exactly these com
 - Signed registration is live on the gateway (§1); `apps/node-agent` still needs the `--signature/--nonce`
   flags and the web node page needs the "sign challenge" button (operators can do it by hand until then).
 - Live relays are in-process: one gateway instance. Jobs are persisted, so a restart fails them cleanly (`deadline_exceeded`).
-- One job per node at a time (`busy` is binary). Per-node concurrency slots are a follow-up.
+- `maxParallel` slots are per node and the gateway trusts the advertised number (capped at 4); it
+  does not yet verify that a node really keeps up with that many streams beyond the stall timers.

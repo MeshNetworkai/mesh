@@ -85,14 +85,46 @@ export function fakeRpc(handlers: Record<string, (params: unknown) => unknown | 
   };
 }
 
-/** Integer token amount (bigint, base units) → token units as a JS number. */
-export function toUnits(raw: bigint, decimals: number): number {
-  return Number(raw) / 10 ** decimals;
+/** 0..10000 whole basis points, else a share split goes negative and the on-chain transfer reverts. */
+export function assertBps(bps: number, what: string): number {
+  if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) throw new Error(`${what} must be an integer between 0 and 10000 (got ${bps})`);
+  return bps;
 }
 
-/** Token units → base units, rounding down. Avoids float drift for large decimals. */
+function checkDecimals(decimals: number): void {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 77) throw new Error(`invalid decimals ${decimals}`);
+}
+
+/**
+ * Integer token amount (bigint, base units) → token units as a JS number. The integer and fractional
+ * parts are split in bigint space first, so a balance far above 2^53 base units (any 18-decimal token
+ * with a few hundred tokens) keeps its integer part exact instead of going through one lossy Number().
+ */
+export function toUnits(raw: bigint, decimals: number): number {
+  checkDecimals(decimals);
+  const neg = raw < 0n;
+  const abs = neg ? -raw : raw;
+  const scale = 10n ** BigInt(decimals);
+  const whole = abs / scale;
+  const frac = abs % scale;
+  const n = Number(whole) + Number(frac) / Number(scale);
+  return neg ? -n : n;
+}
+
+/**
+ * Token units → base units, rounding down. Parses the double's shortest round-trip decimal string
+ * ("0.3", not "0.299999999999999989"), so what the caller typed is what goes on chain; handles the
+ * exponent notation JS uses at >= 1e21 and < 1e-6, and any `decimals`.
+ */
 export function toRaw(units: number, decimals: number): bigint {
+  checkDecimals(decimals);
   if (!Number.isFinite(units) || units < 0) throw new Error(`invalid amount ${units}`);
-  const [int, frac = ''] = units.toFixed(decimals).split('.');
-  return BigInt(int + frac.padEnd(decimals, '0').slice(0, decimals));
+  const [mantissa, expStr] = units.toString().split('e');
+  const exp = Number(expStr ?? 0);
+  const [int, frac = ''] = mantissa.split('.');
+  const digits = int + frac;
+  const point = int.length + exp + decimals; // where the decimal point sits in `digits` after scaling
+  if (point <= 0) return 0n;
+  if (point >= digits.length) return BigInt(digits.padEnd(point, '0'));
+  return BigInt(digits.slice(0, point));
 }

@@ -1,21 +1,22 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
-import { loadConfig, requireConfig, saveConfig } from './config.js';
+import { CONFIG_SETTERS, loadConfig, requireConfig, saveConfig } from './config.js';
 import { GatewayClient, GatewayError } from './gateway.js';
 import { createLogger } from './log.js';
 import { startLoop } from './loop.js';
-import { OllamaClient } from './ollama.js';
+import { OllamaClient, ollamaServeEnv } from './ollama.js';
 import { AGENT_VERSION, paths } from './paths.js';
 import { installService, serviceStatus, uninstallService } from './service.js';
 import { setup } from './setup.js';
+import { spawnDetached, which } from './system.js';
 import { c, fmt, out, table } from './ui.js';
-import { applyUpdate, checkForUpdate, installChannel, runUpdateChecks, updateUrl } from './update.js';
+import { applyUpdate, checkForUpdate, installChannel, rollbackUpdate, runUpdateChecks, updateUrl } from './update.js';
 
 const HELP = `mesh-node ${AGENT_VERSION} - serve AI replies from this machine and earn for them
 
 Usage
-  mesh-node setup --link <code> [--gateway <url>] [--models a,b] [--with-70b] [--ollama <url>]
+  mesh-node setup --link <code> [--gateway <url>] [--models a,b] [--with-70b] [--ollama <url>] [--max-parallel N]
                                   <code> comes from the web app: Run a node -> "Link a Mac" (your wallet signs there;
                                   this machine never holds a key). --wallet <addr> instead only works on gateways
                                   that allow unsigned registration (NODES_REQUIRE_SIGNATURE=false).
@@ -26,10 +27,14 @@ Usage
   mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating)
   mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
   mesh-node update [--check]      install the latest release (sha256-verified) and restart the service;
-                                  --check only reports. 'start' checks daily and logs when one exists.
+                                  --check only reports; --rollback puts the previous version back.
+                                  'start' checks daily and logs when one exists.
+  mesh-node config                show the saved config (token redacted)
+  mesh-node config set <key> <v>  change a setting, e.g. config set maxParallel 2 (then restart the node)
+                                  keys: ${Object.entries(CONFIG_SETTERS).map(([k, v]) => `${k} - ${v.help}`).join('\n                                        ')}
   mesh-node --version | --help
 
-Files   ~/.mesh/config.json (0600)  ~/.mesh/logs/  ~/.mesh/paused  ~/.mesh/bin/mesh-node.js
+Files   ~/.mesh/config.json (0600)  ~/.mesh/logs/  ~/.mesh/paused  ~/.mesh/bin/mesh-node.js (+ .prev after an update)
 Env     GATEWAY_URL  MESH_LINK_CODE  MESH_HOME  OLLAMA_HOST_URL  NO_COLOR
         MESH_UPDATE_URL (latest.json; default <gateway>/install/latest.json)  MESH_AUTO_UPDATE=1 (install from 'start')
 Privacy logs hold job ids, token counts and timings only; prompts and replies never touch disk (docs/PRIVACY.md)
@@ -77,6 +82,7 @@ async function cmdSetup(flags: Args['flags']) {
     models: str(flags.models)?.split(',').map((s) => s.trim()).filter(Boolean),
     with70b: flags['with-70b'] === true,
     skipPull: flags['skip-pull'] === true,
+    maxParallel: str(flags['max-parallel']) !== undefined ? Number(str(flags['max-parallel'])) : undefined,
   });
 }
 
@@ -88,14 +94,24 @@ async function cmdStart() {
   mkdirSync(paths.logsDir(), { recursive: true });
   log.info(`mesh-node ${AGENT_VERSION} starting: node=${cfg.nodeId} gateway=${cfg.gateway} models=${cfg.models.join(',')}`);
 
+  // Nothing a job does may take the process down: launchd would restart it (fine), but a crash loop
+  // on a poison job would not be. Log and keep serving; a genuinely broken process still exits.
+  process.on('unhandledRejection', (reason) => log.error(`unhandled rejection: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}`));
+  process.on('uncaughtException', (err) => {
+    log.error(`uncaught exception: ${err.stack ?? err.message}`);
+    process.exit(1);
+  });
+
   const ollama = new OllamaClient(cfg.ollama);
-  if (!(await ollama.isUp())) log.warn(`Ollama is not answering at ${cfg.ollama}; jobs will fail until it is up (run \`ollama serve\`)`);
+  if (!(await ollama.isUp())) await startOllamaIfLocal(cfg, ollama, log);
+  if (!(await ollama.isUp())) log.warn(`Ollama is not answering at ${cfg.ollama}; jobs will fail until it is up (open the Ollama app or run \`ollama serve\`)`);
   else {
     const have = await ollama.listModels().catch(() => [] as string[]);
     const missing = cfg.models.filter((m) => !have.includes(m) && !have.includes(`${m}:latest`));
     if (missing.length) log.warn(`models advertised but not pulled: ${missing.join(', ')} (ollama pull <model>)`);
   }
   if (existsSync(paths.pauseFlag())) log.info('pause flag present; heartbeating as busy until `mesh-node resume`');
+  if (cfg.maxParallel > 1) log.info(`running up to ${cfg.maxParallel} jobs at once`);
 
   const handle = startLoop({
     config: cfg,
@@ -119,11 +135,14 @@ async function cmdStart() {
     stopping = true;
     log.info(`received ${sig}`);
     updateAc.abort();
-    void handle.stop().then(() => {
-      const s = handle.stats();
-      log.info(`stopped after ${s.jobs} job(s), ${s.failed} failed`);
-      process.exit(0);
-    });
+    handle
+      .stop()
+      .catch((err: Error) => log.error(`error while stopping: ${err.message}`))
+      .then(() => {
+        const s = handle.stats();
+        log.info(`stopped after ${s.jobs} job(s), ${s.failed} failed`);
+        process.exit(0);
+      });
     // Hard exit if a job refuses to end.
     setTimeout(() => process.exit(0), 30_000).unref();
   };
@@ -132,7 +151,37 @@ async function cmdStart() {
   await handle.done;
 }
 
+/**
+ * Under launchd nobody is there to open the Ollama app: when Ollama is local and installed but not
+ * running, start `ollama serve` ourselves (privacy env + OLLAMA_NUM_PARALLEL) and wait for it briefly.
+ */
+async function startOllamaIfLocal(cfg: { ollama: string; maxParallel: number }, ollama: OllamaClient, log: ReturnType<typeof createLogger>): Promise<void> {
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.ollama)) return;
+  const bin = which('ollama');
+  if (!bin) return;
+  try {
+    mkdirSync(paths.logsDir(), { recursive: true });
+    spawnDetached(bin, ['serve'], paths.ollamaLog(), ollamaServeEnv(cfg.maxParallel));
+    log.info(`Ollama was not running; started \`ollama serve\` (log: ${paths.ollamaLog()})`);
+  } catch (err) {
+    log.warn(`could not start ollama serve: ${(err as Error).message}`);
+    return;
+  }
+  const until = Date.now() + 20_000;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await ollama.isUp()) return;
+  }
+}
+
 async function cmdUpdate(flags: Args['flags']) {
+  if (flags.rollback) {
+    if (installChannel() === 'brew') throw new Error('this copy was installed with Homebrew; roll back with brew instead (brew switch / reinstall)');
+    const r = rollbackUpdate();
+    out.ok(`restored the previous mesh-node from ${r.backup}`);
+    out.line(`   service: ${r.service === 'restarted' ? 'restarted' : r.service === 'failed' ? 'could not restart; run `mesh-node service install`' : 'not installed; restart `mesh-node start` yourself'}`);
+    return;
+  }
   const cfg = loadConfig();
   const url = process.env.MESH_UPDATE_URL?.trim() || (cfg ? updateUrl(cfg.gateway) : null);
   if (!url) throw new Error('no node configured and MESH_UPDATE_URL unset; run `mesh-node setup` first or set MESH_UPDATE_URL=https://<web-host>/downloads/latest.json');
@@ -155,7 +204,8 @@ async function cmdUpdate(flags: Args['flags']) {
   }
   out.step(`downloading ${res.latest.bundleUrl}`);
   const r = await applyUpdate({ latest: res.latest });
-  out.ok(`installed mesh-node ${r.version} at ${r.target} (sha256 verified)`);
+  out.ok(`installed mesh-node ${r.version} at ${r.target} (sha256 verified, test-started)`);
+  if (r.backup) out.line(`   previous version kept at ${r.backup} (mesh-node update --rollback)`);
   out.line(`   service: ${r.service === 'restarted' ? 'restarted' : r.service === 'failed' ? 'could not restart; run `mesh-node service install`' : 'not installed; restart `mesh-node start` yourself'}`);
 }
 
@@ -168,8 +218,9 @@ async function cmdStatus(flags: Args['flags']) {
   try {
     stats = await gateway.stats(cfg.nodeId);
   } catch (err) {
-    error = (err as Error).message;
+    error = explainStatusError(err, cfg.gateway);
   }
+  const service = serviceStatus();
   if (flags.json) {
     out.line(
       JSON.stringify(
@@ -181,7 +232,8 @@ async function cmdStatus(flags: Args['flags']) {
           ramGb: cfg.ramGb,
           models: cfg.models,
           paused,
-          service: serviceStatus(),
+          maxParallel: cfg.maxParallel,
+          service,
           agentVersion: AGENT_VERSION,
           stats,
           error,
@@ -194,12 +246,12 @@ async function cmdStatus(flags: Args['flags']) {
     return;
   }
   const status = stats?.status ?? (error ? 'unknown' : 'offline');
-  const statusText = status === 'online' || status === 'idle' ? c.green(status) : status === 'busy' ? c.cyan('busy') : status === 'offline' ? c.red('offline') : c.yellow(status);
+  const statusText = status === 'online' || status === 'idle' ? c.green(status) : status === 'busy' ? c.cyan('busy') : status === 'offline' ? c.red('offline') : c.yellow('unknown (gateway unreachable)');
   out.title(`mesh-node ${cfg.nodeId}`);
   out.line(
     table([
-      ['status', `${statusText}${paused ? c.yellow('  (paused)') : ''}`],
-      ['service', serviceStatus()],
+      ['status', `${statusText}${paused ? c.yellow('  (paused)') : ''}${stats?.quarantined ? c.red('  (quarantined)') : ''}`],
+      ['service', service],
       ['uptime 24h', fmt.pct(stats?.uptimePct24h)],
       ['jobs 24h', fmt.int(stats?.jobs24h)],
       ['tokens 24h', fmt.int(stats?.tokens24h)],
@@ -207,18 +259,63 @@ async function cmdStatus(flags: Args['flags']) {
       ['earned total', `${fmt.usd(stats?.earnedUsdTotal, 4)} credits`],
       ['last seen', fmt.ago(stats?.lastSeen)],
       ['models', cfg.models.join(', ') || '-'],
+      ['parallel jobs', `${typeof stats?.runningJobs === 'number' ? `${stats.runningJobs} running of ` : ''}${stats?.maxParallel ?? cfg.maxParallel}`],
       ['machine', `${cfg.chip} · ${cfg.ramGb} GB`],
       ['wallet', cfg.wallet],
       ['gateway', cfg.gateway],
       ['privacy', 'counts only; no prompts or replies are kept on this machine'],
     ]),
   );
-  if (error) {
-    out.line();
-    out.warn(`could not fetch live stats: ${error}`);
-    process.exitCode = 1;
-  }
   out.line();
+  if (error) {
+    out.warn(error);
+    process.exitCode = 1;
+  } else if (status === 'offline') {
+    if (service === 'running') out.warn('the node process is running but the gateway has not heard from it recently; check `mesh-node logs`');
+    else if (service === 'loaded') out.warn('the background service is installed but not running; it restarts on its own, or run `mesh-node service install` again');
+    else out.warn('the node is not running; start it with `mesh-node start` or `mesh-node service install`');
+  } else if (paused) out.line(`   paused: no new jobs until \`mesh-node resume\``);
+  out.line();
+}
+
+/** One plain-English line for a failed GET /nodes/:id. */
+export function explainStatusError(err: unknown, gateway: string): string {
+  if (!(err instanceof GatewayError)) return `could not fetch live stats: ${(err as Error).message}`;
+  if (err.status === 0) return `cannot reach the gateway at ${gateway} (${err.message.replace(/^could not reach gateway at \S+: /, '')}). Check your internet connection; if it is fine, the gateway may be down. The node keeps retrying on its own.`;
+  if (err.status === 401 || err.status === 404) return `the gateway no longer recognises this node (${err.status}). The running node re-registers itself; if this persists, run \`mesh-node setup --link <code>\` again.`;
+  if (err.status === 429) return 'the gateway is rate-limiting status requests; try again in a minute.';
+  if (err.status >= 500) return `the gateway is having trouble (${err.status}); try again shortly. The node keeps retrying on its own.`;
+  return `could not fetch live stats: ${err.message}`;
+}
+
+function cmdConfig(sub: string | undefined, key: string | undefined, value: string | undefined) {
+  if (sub === undefined || sub === 'show' || sub === 'get') {
+    const cfg = loadConfig();
+    if (!cfg) {
+      out.warn(`no node configured at ${paths.config()}; run \`mesh-node setup --link <code>\``);
+      return;
+    }
+    if (sub === 'get' && key) {
+      const v = (cfg as unknown as Record<string, unknown>)[key];
+      if (v === undefined) throw new Error(`unknown config key "${key}"`);
+      out.line(key === 'nodeToken' ? '<redacted>' : typeof v === 'string' ? v : JSON.stringify(v));
+      return;
+    }
+    out.line(JSON.stringify({ ...cfg, nodeToken: '<redacted>' }, null, 2));
+    return;
+  }
+  if (sub === 'set') {
+    const setter = key ? CONFIG_SETTERS[key] : undefined;
+    if (!key || !setter) throw new Error(`usage: mesh-node config set <key> <value>\n  keys: ${Object.keys(CONFIG_SETTERS).join(', ')}`);
+    if (value === undefined) throw new Error(`usage: mesh-node config set ${key} <value>  (${setter.help})`);
+    const cfg = requireConfig();
+    const patch = setter.parse(value);
+    saveConfig({ ...cfg, ...patch });
+    out.ok(`${key} = ${JSON.stringify(Object.values(patch)[0])} saved to ${paths.config()}`);
+    out.line(`   restart the node for it to take effect: ${serviceStatus() === 'not installed' ? 'stop and re-run `mesh-node start`' : '`mesh-node service install` (reloads the background service)'}`);
+    return;
+  }
+  throw new Error('usage: mesh-node config [show | get <key> | set <key> <value>]');
 }
 
 function cmdService(sub: string | undefined) {
@@ -244,7 +341,7 @@ function cmdPause(pause: boolean) {
   const flag = paths.pauseFlag();
   if (pause) {
     writeFileSync(flag, `${new Date().toISOString()}\n`);
-    out.ok('paused: the node stops taking new jobs after the current one and heartbeats as busy');
+    out.ok('paused: the node finishes any job it is on, then takes no new ones (it stays online and keeps heartbeating)');
   } else {
     if (existsSync(flag)) unlinkSync(flag);
     out.ok('resumed: the node takes jobs again');
@@ -292,8 +389,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case 'update':
       return cmdUpdate(flags);
     case 'config':
-      out.line(JSON.stringify({ ...loadConfig(), nodeToken: '<redacted>' }, null, 2));
-      return;
+      return cmdConfig(cmd[1], cmd[2], cmd[3]);
     default:
       throw new Error(`unknown command "${cmd[0]}"\n\n${HELP}`);
   }

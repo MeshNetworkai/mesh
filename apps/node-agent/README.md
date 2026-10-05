@@ -28,15 +28,18 @@ Re-running is safe (a re-run needs a fresh code only if the stored node identity
 ## Commands
 
 ```
-mesh-node setup --link <code> [--gateway <url>] [--models a,b] [--with-70b] [--ollama <url>] [--skip-pull]
+mesh-node setup --link <code> [--gateway <url>] [--models a,b] [--with-70b] [--ollama <url>] [--skip-pull] [--max-parallel N]
 mesh-node setup --wallet <addr> ...   legacy: unsigned registration (gateway with NODES_REQUIRE_SIGNATURE=false only)
 mesh-node start                 heartbeat, take jobs, stream replies (Ctrl-C / SIGTERM to stop)
 mesh-node status [--json]       node stats from the gateway (online, uptime 24h, jobs, earned 24h/total, models; counts only)
 mesh-node service install       launchd agent at ~/Library/LaunchAgents/xyz.mesh.node.plist (RunAtLoad, KeepAlive)
 mesh-node service uninstall     unload and remove it
-mesh-node pause | resume        stop / resume taking jobs (keeps heartbeating with busy=true)
+mesh-node pause | resume        stop / resume taking jobs (finishes running ones; heartbeats busy=true while paused)
 mesh-node logs [-n 200]         tail ~/.mesh/logs/node.log
-mesh-node update [--check]      install the latest release (sha256-verified, atomic swap, service restart); --check only reports (exit 2 if newer)
+mesh-node update [--check]      install the latest release (sha256-verified, smoke-run, atomic swap, service restart); --check only reports (exit 2 if newer)
+mesh-node update --rollback     put the previous bundle (~/.mesh/bin/mesh-node.js.prev) back and restart
+mesh-node config [show]         print the config (token redacted)
+mesh-node config set <k> <v>    maxParallel | ollama | models — e.g. `config set maxParallel 2`, then restart the node
 ```
 
 `setup` does, in order:
@@ -58,25 +61,39 @@ mesh-node update [--check]      install the latest release (sha256-verified, ato
 
 `start`:
 
-- `POST /nodes/:id/heartbeat {models, busy, loadAvg}` every 20 s.
+- `POST /nodes/:id/heartbeat {models, busy, loadAvg, maxParallel}` every 20 s. `busy` is a pin, not a count:
+  sent `true` only while paused, stopping, or with every slot taken, and an extra heartbeat unpins the moment
+  a slot frees (otherwise the gateway would route nothing for up to 20 s after each job).
 - `GET /nodes/:id/jobs/next?wait=25000` long-poll (gateway holds up to 25 s, 204 when idle).
 - Each job runs against Ollama `/api/chat` with `stream: true`; deltas are batched every ~40 ms (or 2 KB)
   into ordered `POST .../chunk {seq, delta}` calls; then `POST .../done {promptTokens, completionTokens,
   finishReason}` from Ollama's `prompt_eval_count` / `eval_count`, or `POST .../fail {error}`. A transient
   chunk failure (network, 5xx) is retried once with the same `seq`; `409 job_not_running` stops generation
   without a `fail` (the gateway already gave up on the job).
-- One job at a time (`busy: true` while running). `deadlineMs` is honoured (absolute unix-ms or a budget in
-  ms); a job that passes it is aborted and reported as failed.
-- Exponential backoff (1 s → 60 s, jittered) on gateway errors; a 401/404 re-registers with the saved
-  wallet and rewrites the config (on a signed gateway that is refused with `signature_required` and the log
-  says to run `mesh-node setup --link <code>` again).
-- SIGTERM/SIGINT: finishes the current job, sends a last heartbeat, exits 0.
+- Up to `maxParallel` jobs at once (config, default 1; the gateway caps it at its `routing.maxParallelPerNode`).
+  The `ollama serve` the agent launches gets `OLLAMA_NUM_PARALLEL` to match. `deadlineMs` is honoured
+  (absolute unix-ms or a budget in ms); a job that passes it is aborted and reported as failed, and so is a
+  stream with no token for 120 s (wedged Ollama). An Ollama error mid-stream is reported with `fail`, never
+  `done`; an empty reply is reported with `fail`; a `409 empty_output` / `job_not_running` from `done` is
+  logged and dropped (no follow-up `fail`). Missing Ollama token counts fall back to `ceil(chars/4)`,
+  completion capped at `maxTokens`. Fail reasons are control-stripped and capped at 400 chars (gateway limit 500)
+  and never contain message text (even a malformed stream line is reported by position, not content).
+- Exponential backoff (1 s → 60 s, jittered, never shorter than a `retry-after`) on gateway errors (network,
+  5xx, 429); a 401/404 re-registers with the saved wallet and rewrites the config (on a signed gateway that is
+  refused with `signature_required` and the log says, at most once a minute, to run `mesh-node setup --link
+  <code>` again). A gateway that keeps rejecting the fresh token is backed off, not re-registered in a loop.
+  A non-JSON 200 (captive portal) is a gateway error, not a crash. Under launchd, if Ollama is local and
+  installed but not running, `start` launches `ollama serve` itself.
+- SIGTERM/SIGINT: pins busy, abandons the parked long-poll at once, finishes running jobs, exits 0 (hard exit
+  after 30 s). Unhandled rejections are logged and the loop keeps going; a poison job cannot crash-loop the service.
 
 `update` (`src/update.ts`, `docs/DISTRIBUTION.md`): reads `latest.json` from `MESH_UPDATE_URL` or
 `<gateway>/install/latest.json` (`{version, bundleUrl, bundleSha256, …}`), downloads the bundle to
-`~/.mesh/bin/mesh-node.js.update.tmp`, checks the SHA-256 and that it is JavaScript, renames it over
-`mesh-node.js` (atomic), then `launchctl kickstart -k`s the service. A failed check leaves everything
-untouched. `start` checks 60 s after boot and daily, logs `update available: …` once per version, and
+`~/.mesh/bin/mesh-node.js.update.tmp.mjs`, checks the SHA-256 and that it is JavaScript, runs it once with
+`--version` (it must start and report the advertised version), copies the live bundle to `mesh-node.js.prev`,
+renames the new one over `mesh-node.js` (atomic), then `launchctl kickstart -k`s the service. If the restart
+fails the `.prev` copy is put back and restarted; `mesh-node update --rollback` does the same by hand. A
+failed check leaves everything untouched. `start` checks 60 s after boot and daily, logs `update available: …` once per version, and
 installs only with `MESH_AUTO_UPDATE=1` (`MESH_UPDATE_CHECK=0` disables). Homebrew installs
 (`MESH_INSTALL_CHANNEL=brew`, set by the brew wrapper) are told to `brew upgrade` instead. Dev builds
 (`0.1.0-dev`) never report an update.

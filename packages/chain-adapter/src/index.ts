@@ -9,15 +9,17 @@ import type { Chain, ChainAdapter } from './types.js';
 export * from './types.js';
 export * from './deploy-config.js';
 export * from './timeweight.js';
-export { jsonRpc, fakeRpc, JsonRpcError, toRaw, toUnits, type JsonRpc, type FetchLike } from './rpc.js';
+export { jsonRpc, fakeRpc, JsonRpcError, toRaw, toUnits, assertBps, type JsonRpc, type FetchLike } from './rpc.js';
 export { MockAdapter, DEFAULT_MOCK_HOLDERS, DEFAULT_MOCK_STAKES } from './mock.js';
-export { SolanaAdapter, keypairFromEnv, USDC_DEVNET, USDC_MAINNET, type SolanaAdapterOptions, type SnapshotStore } from './solana.js';
+export { SolanaAdapter, keypairFromEnv, decodeSignatureCandidates, USDC_DEVNET, USDC_MAINNET, type SolanaAdapterOptions, type SnapshotStore } from './solana.js';
 export { JupiterClient, DEFAULT_JUPITER_BASE, type JupiterQuote } from './solana/jupiter.js';
 export { heliusTransfersForMint, dasTokenAccountsByMint, balancesByOwner } from './solana/helius.js';
 export { sendInstructions, requestAirdropWithRetry, confirmSignature, type SolanaRpc } from './solana/tx.js';
 export {
   EvmAdapter,
   recoverMessageAddressSync,
+  normalizeEvmAddress,
+  normalizeEvmSignature,
   uniswapV3Swapper,
   memoryStateStore,
   KNOWN_CHAINS,

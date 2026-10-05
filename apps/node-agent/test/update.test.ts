@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Logger } from '../src/log.js';
-import { applyUpdate, checkForUpdate, compareVersions, installChannel, isNewer, parseLatest, runUpdateChecks, updateUrl } from '../src/update.js';
+import { applyUpdate, backupPath, updateTmpPath, checkForUpdate, compareVersions, installChannel, isNewer, parseLatest, rollbackUpdate, runUpdateChecks, updateUrl } from '../src/update.js';
 import { close, listen } from './fakes.js';
 
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
-const BUNDLE = `#!/usr/bin/env node\nconsole.log("mesh-node 9.9.9");\n`;
+// ESM like the real bundle (esbuild format: 'esm'): the smoke run must load it as a module.
+const BUNDLE = `#!/usr/bin/env node\nimport { argv } from "node:process";\nconsole.log(argv.includes("--version") ? "9.9.9" : "mesh-node 9.9.9");\n`;
 
 interface FakeRelease {
   version: string;
@@ -130,11 +131,77 @@ describe('mesh-node update against a fake release server', () => {
     expect(res.latest.version).toBe('9.9.9');
     let restarted = 0;
     const r = await applyUpdate({ latest: res.latest, target, restart: () => (restarted++, 'restarted') });
-    expect(r).toEqual({ target, version: '9.9.9', service: 'restarted' });
+    // No previous bundle at `target`, so nothing to back up. The default smoke test ran the bundle with --version.
+    expect(r).toEqual({ target, version: '9.9.9', service: 'restarted', backup: null });
     expect(readFileSync(target, 'utf8')).toBe(BUNDLE);
-    expect(existsSync(`${target}.update.tmp`)).toBe(false);
+    expect(existsSync(updateTmpPath(target))).toBe(false);
     expect(restarted).toBe(1);
     expect(srv.hits).toEqual({ latest: 1, bundle: 1 });
+  });
+
+  it('keeps the previous bundle as .prev and rollbackUpdate() restores it', async () => {
+    const srv = fakeUpdateServer({ version: '9.9.9' });
+    servers.push(srv.server);
+    const base = await srv.start();
+    const target = join(tmp(), 'mesh-node.js');
+    const OLD = '#!/usr/bin/env node\nconsole.log("old 1.0.0");\n';
+    writeFileSync(target, OLD);
+    const res = await checkForUpdate({ url: `${base}/latest.json`, currentVersion: '1.0.0' });
+    const r = await applyUpdate({ latest: res.latest, target, restart: () => 'not installed' });
+    expect(r.backup).toBe(backupPath(target));
+    expect(readFileSync(target, 'utf8')).toBe(BUNDLE);
+    expect(readFileSync(r.backup!, 'utf8')).toBe(OLD);
+    let restarted = 0;
+    const rb = rollbackUpdate({ target, restart: () => (restarted++, 'restarted') });
+    expect(rb.service).toBe('restarted');
+    expect(readFileSync(target, 'utf8')).toBe(OLD);
+    expect(restarted).toBe(1);
+    expect(() => rollbackUpdate({ target: join(tmp(), 'none.js'), restart: () => 'not installed' })).toThrow(/nothing to roll back/);
+  });
+
+  it('a bundle that does not start is refused before the live copy is touched', async () => {
+    const broken = '#!/usr/bin/env node\nthrow new Error("boom at startup");\n';
+    const srv = fakeUpdateServer({ version: '9.9.9', body: broken });
+    servers.push(srv.server);
+    const base = await srv.start();
+    const target = join(tmp(), 'mesh-node.js');
+    writeFileSync(target, '#!/usr/bin/env node\n// old\n');
+    const res = await checkForUpdate({ url: `${base}/latest.json`, currentVersion: '0.1.0' });
+    let restarted = 0;
+    await expect(applyUpdate({ latest: res.latest, target, restart: () => (restarted++, 'restarted') })).rejects.toThrow(/does not start.*boom at startup/);
+    expect(readFileSync(target, 'utf8')).toBe('#!/usr/bin/env node\n// old\n');
+    expect(existsSync(updateTmpPath(target))).toBe(false);
+    expect(existsSync(backupPath(target))).toBe(false);
+    expect(restarted).toBe(0);
+  });
+
+  it('a bundle that prints the wrong version is refused', async () => {
+    const wrong = '#!/usr/bin/env node\nconsole.log("1.2.3");\n';
+    const srv = fakeUpdateServer({ version: '9.9.9', body: wrong });
+    servers.push(srv.server);
+    const base = await srv.start();
+    const target = join(tmp(), 'mesh-node.js');
+    const res = await checkForUpdate({ url: `${base}/latest.json`, currentVersion: '0.1.0' });
+    await expect(applyUpdate({ latest: res.latest, target, restart: () => 'not installed' })).rejects.toThrow(/reports version "1.2.3", expected 9.9.9/);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('when the service fails to restart on the new bundle, the previous one is restored', async () => {
+    const srv = fakeUpdateServer({ version: '9.9.9' });
+    servers.push(srv.server);
+    const base = await srv.start();
+    const target = join(tmp(), 'mesh-node.js');
+    const OLD = '#!/usr/bin/env node\n// old\n';
+    writeFileSync(target, OLD);
+    const res = await checkForUpdate({ url: `${base}/latest.json`, currentVersion: '0.1.0' });
+    const calls: string[] = [];
+    const restart = () => {
+      calls.push(readFileSync(target, 'utf8') === BUNDLE ? 'new' : 'old');
+      return calls.length === 1 ? ('failed' as const) : ('restarted' as const);
+    };
+    await expect(applyUpdate({ latest: res.latest, target, restart })).rejects.toThrow(/previous version was restored \(service restarted\)/);
+    expect(calls).toEqual(['new', 'old']);
+    expect(readFileSync(target, 'utf8')).toBe(OLD);
   });
 
   it('bad hash: refuses, leaves the existing bundle untouched, does not restart', async () => {
@@ -148,7 +215,7 @@ describe('mesh-node update against a fake release server', () => {
     let restarted = 0;
     await expect(applyUpdate({ latest: res.latest, target, restart: () => (restarted++, 'restarted') })).rejects.toThrow(/checksum mismatch/);
     expect(readFileSync(target, 'utf8')).toBe('#!/usr/bin/env node\n// old\n');
-    expect(existsSync(`${target}.update.tmp`)).toBe(false);
+    expect(existsSync(updateTmpPath(target))).toBe(false);
     expect(restarted).toBe(0);
   });
 
