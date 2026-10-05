@@ -22,7 +22,7 @@ test.describe('landing', () => {
     const lede = page.locator('.home-hero .lede');
     await expect(lede).toContainText('every hour');
     await expect(lede).toContainText('Macs');
-    await expect(lede).toContainText('marketplace');
+    await expect(lede).toContainText('sell what you do not use');
     await expect(lede).toContainText('frontier models');
     // One centred column: headline and chat card share the viewport's centre line; the chat is the wide object.
     const h1Box = (await h1.boundingBox())!;
@@ -89,7 +89,7 @@ test.describe('landing', () => {
       await page.keyboard.press('Escape');
     }
     // Section labels in order (unnumbered since the quiet pass).
-    for (const t of ['How the money moves', 'Four ways in', "Why it's different", 'Privacy, stated plainly', 'Live stats']) {
+    for (const t of ['How the money moves', 'Four ways in', "Why it's different", 'Privacy, stated plainly', 'Live']) {
       await expect(page.getByText(t, { exact: true })).toBeVisible();
     }
     // Four ways in, with the live liquidity book (GET /market/book) in the "sell" column.
@@ -98,11 +98,11 @@ test.describe('landing', () => {
     await expect(page.locator('.pillar').filter({ hasText: "Sell what you don't use" }).getByRole('link', { name: 'Open the market' })).toHaveAttribute('href', '/app/market');
     // Switch strip points at the API page's guide.
     await expect(page.getByRole('link', { name: /Snippets for curl/ })).toHaveAttribute('href', '/api#switch');
-    // Seeded epoch: $100 of fees → "Fees collected" tile shows $100, one epoch run; the stats link goes to /stats.
-    await expect(page.getByText('Fees collected', { exact: true }).locator('..')).toContainText('$100');
-    await expect(page.getByText(/1 epochs run/)).toBeVisible();
+    // Seeded epoch: $100 of fees → the live line shows "$100 fees collected" and "$50 credits issued"; the stats link goes to /stats.
+    await expect(page.locator('.liveline-row')).toContainText('$100 fees collected');
+    await expect(page.locator('.liveline-row')).toContainText('$50 credits issued');
     await expect(page.getByRole('link', { name: 'All the stats' })).toHaveAttribute('href', '/stats');
-    await expect(page.getByRole('heading', { name: /Four doors/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Five free messages/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
 

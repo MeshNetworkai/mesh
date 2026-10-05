@@ -6,9 +6,9 @@ import { Hero3D, hero3dEnabled } from '../components/Hero3D';
 import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
 import { SpendCompare } from '../components/SpendCompare';
-import { Terminal, Tile } from '../components/ui';
+import { Terminal } from '../components/ui';
 import { PUBLIC_API_URL, STORAGE, TOKENOMICS, pctFromBps } from '../config';
-import { fmtCompact, fmtCost, fmtInt, fmtTime, fmtUsd } from '../lib/format';
+import { fmtCompact, fmtCost, fmtInt, fmtUsd } from '../lib/format';
 import { useStats } from '../lib/hooks';
 
 /* ---------- derived copy from config/tokenomics.json (never hardcoded) ---------- */
@@ -81,12 +81,11 @@ const SWITCH_SNIPPET = `base_url = "${PUBLIC_API_URL}/v1"\napi_key  = "mesh_sk_�
 const CHAT_ID = 'guest-chat';
 
 export function Landing() {
-  const { data: stats, loading, error } = useStats();
-  const skel = loading && !stats;
+  const { data: stats, error } = useStats();
   // Engine 2 (docs/PRICING.md): the gateway says whether the usage-revenue share is on. Off until it confirms.
   const usageOn = stats?.usageShareEnabled === true;
   const discountBps = stats?.upstreamDiscountBps ?? T.upstreamDiscountBps;
-  const frontierPhrase = discountBps > 0 ? `frontier models ${discountBps / 100}% below list` : 'frontier models at list price through zero-data-retention providers';
+  const frontierPhrase = discountBps > 0 ? `frontier models ${discountBps / 100}% below list` : 'frontier models through zero-data-retention providers';
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
   // Kept only while the points programme is on (built, disabled by default).
   const [params] = useSearchParams();
@@ -99,6 +98,34 @@ export function Landing() {
       /* ignore */
     }
   }, [params, stats?.pointsEnabled]);
+
+  // Quiet scroll reveal: sections fade up once, 12px, 600ms. Off under prefers-reduced-motion (CSS).
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll<HTMLElement>('.wrap > section:not(.home-hero), .wrap > .spend'));
+    if (!('IntersectionObserver' in window)) {
+      els.forEach((el) => el.classList.add('in'));
+      return;
+    }
+    els.forEach((el) => el.classList.add('reveal'));
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            e.target.classList.add('in');
+            io.unobserve(e.target);
+          }
+        }
+      },
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.08 },
+    );
+    els.forEach((el) => io.observe(el));
+    // Belt and braces: whatever has not revealed after a few seconds (odd embeds, print) shows anyway.
+    const all = window.setTimeout(() => els.forEach((el) => el.classList.add('in')), 4000);
+    return () => {
+      io.disconnect();
+      window.clearTimeout(all);
+    };
+  }, []);
 
   const focusChat = () => {
     const el = document.getElementById(CHAT_ID);
@@ -137,8 +164,7 @@ export function Landing() {
           </h1>
           <p className="lede">
             Hold {minHold} and AI credits land in your wallet every {epochWord}, paid from the {feePct} trading fee
-            {usageOn ? ` and a share of what paid requests earn` : ''}. Spend them on open models answered by Macs in the network or on {frontierPhrase}, and sell the credits
-            you do not use on the marketplace.
+            {usageOn ? ' and a share of paid usage' : ''}. Spend them on open models served by Macs in the network or on {frontierPhrase} — or sell what you do not use.
           </p>
         </div>
         <GuestChat id={CHAT_ID} />
@@ -270,9 +296,10 @@ export function Landing() {
           <p className="eyebrow" id="why-h">
             Why it's different
           </p>
-          <h2 className="display d-m">
-            Real fees, real margins, real machines, everything on the record.
-          </h2>
+          <div className="stack sm">
+            <h2 className="display d-m">Real fees. Real margins. Real machines.</h2>
+            <p className="sub">Everything on the record, down to the wallet.</p>
+          </div>
         </div>
         <div className="why">
           {WHY(usageOn).map((w) => (
@@ -338,51 +365,49 @@ export function Landing() {
         </div>
       </section>
 
-      {/* 7 · live stats */}
-      <section aria-labelledby="nums-h">
-        <div className="sec-head">
-          <p className="eyebrow" id="nums-h">
-            Live stats
-          </p>
-          <div className="stack sm">
-            <h2 className="display d-m">
-              The network, as it stands.
-            </h2>
-            {stats ? <p className="small muted num">Updated {fmtTime(stats.generatedAt)}</p> : null}
-          </div>
-        </div>
-        <div className="tiles">
-          <Tile label="Fees collected" value={fmtUsd(stats?.totalFeesUsd ?? null, 0)} delta="all time" loading={skel} />
-          <Tile label="Credits issued" value={fmtUsd(stats?.creditsDistributedUsd ?? null, 0)} delta={`${holderPct} of fees, every ${epochWord}`} loading={skel} />
-          <Tile label="Requests" value={fmtCompact(stats?.requestsLast24h ?? null)} delta="last 24 hours" loading={skel} />
-          <Tile label="Nodes online" value={fmtInt(stats?.nodesOnline ?? null)} delta="Macs serving right now" loading={skel} />
-        </div>
-        <p className="row between small muted">
-          <span role={error && !stats ? 'status' : undefined}>
-            {error && !stats
-              ? `Live stats unavailable right now (${error}).`
-              : `${fmtInt(stats?.epochsRun ?? null)} epochs run · ${fmtInt(stats?.holdersEligibleLastEpoch ?? null)} wallets credited last epoch`}
-          </span>
-          <Link to="/stats">All the stats</Link>
+      {/* 7 · live line: a single row, the full ledger lives on /stats */}
+      <section aria-labelledby="nums-h" className="liveline">
+        <p className="eyebrow" id="nums-h">
+          Live
+        </p>
+        <p className="liveline-row" role={error && !stats ? 'status' : undefined}>
+          {error && !stats ? (
+            <span className="muted">Live stats unavailable right now.</span>
+          ) : (
+            <>
+              <span>
+                <b className="num">{fmtInt(stats?.nodesOnline ?? null)}</b> Macs online
+              </span>
+              <span>
+                <b className="num">{fmtCompact(stats?.requestsLast24h ?? null)}</b> requests in 24h
+              </span>
+              <span>
+                <b className="num">{fmtUsd(stats?.totalFeesUsd ?? null, 0)}</b> fees collected
+              </span>
+              <span>
+                <b className="num">{fmtUsd(stats?.creditsDistributedUsd ?? null, 0)}</b> credits issued
+              </span>
+            </>
+          )}
+          <Link className="arrow-link" to="/stats">
+            All the stats
+          </Link>
         </p>
       </section>
 
       {/* 8 · final CTA */}
       <section className="final" aria-labelledby="final-h">
         <h2 className="display d-xl" id="final-h">
-          Four doors. <em>Same room.</em>
+          Five free messages. <em>No wallet.</em>
         </h2>
         <div className="row">
-          <button type="button" className="btn primary" onClick={focusChat}>
+          <button type="button" className="btn primary lg" onClick={focusChat}>
             Start chatting
           </button>
-          <Link className="btn secondary" to="/app/market">
-            Open the market
-          </Link>
-          <Link className="btn secondary" to="/download">
+          <Link className="btn secondary lg" to="/app/node">
             Run a node
           </Link>
-          <Link className="btn secondary" to="/docs">
+          <Link className="btn ghost lg" to="/docs">
             Read the docs
           </Link>
         </div>
