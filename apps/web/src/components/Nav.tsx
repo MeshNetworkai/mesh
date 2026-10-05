@@ -155,6 +155,7 @@ export function TopNav() {
         Mesh
         <BetaPill />
       </Link>
+      <div className="navlinks">
       <NavLink to="/app/chat" className={cls}>
         Chat
       </NavLink>
@@ -175,13 +176,16 @@ export function TopNav() {
       <NavLink to="/docs" className={cls}>
         Docs
       </NavLink>
-      {session ? (
-        <BalanceMenu />
-      ) : (
-        <button className="btn primary sm" style={{ marginLeft: 8 }} onClick={openModal}>
-          Connect wallet
-        </button>
-      )}
+      </div>
+      <div className="navright">
+        {session ? (
+          <BalanceMenu />
+        ) : (
+          <button className="btn primary sm" onClick={openModal}>
+            Connect wallet
+          </button>
+        )}
+      </div>
     </nav>
   );
 }

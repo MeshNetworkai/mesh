@@ -11,7 +11,9 @@
      --code is the only monospace in the system, and only for things a machine wrote (keys, commands, code). */
   --mono: 'Inter', system-ui, sans-serif;
   --code: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --r: 12px; --r-lg: 24px; --r-pill: 999px;
+  /* v0.3: one soft radius for controls (buttons, chips, tags, inputs), one for surfaces. The old full
+     pill is gone — the token name stays so nothing breaks, but it now resolves to the control radius. */
+  --r-ctl: 8px; --r: 10px; --r-lg: 14px; --r-pill: var(--r-ctl);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {

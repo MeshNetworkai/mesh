@@ -48,9 +48,9 @@ test.describe('landing', () => {
     }
     // Live guest chat: quota pill from GET /v1/guest/quota, model picker, suggested prompts, composer.
     await expect(chat).toContainText('Live · Mesh network');
-    await expect(chat.locator('.head .pill.num')).toContainText(/\d+ \/ \d+ free/);
+    await expect(chat.locator('.head .eyebrow.live')).toContainText(/Live/);
     // The composer bar reads like the app's: model pill, free counter, Send.
-    await expect(chat.locator('.composer .pill.counter')).toContainText(/\d+ of \d+ free today/);
+    await expect(chat.locator('.composer .counter')).toContainText(/\d+ of \d+ free today/);
     await expect(chat.getByLabel('Model')).toBeVisible();
     await expect(chat.getByRole('button', { name: 'Explain how Mesh pays for AI' })).toBeVisible();
     await expect(chat.getByLabel('Message')).toBeVisible();
@@ -182,11 +182,11 @@ test.describe('chat without a wallet', () => {
   test("a guest conversation carries on after sign-in, on the wallet's credits", async ({ page }) => {
     await page.goto('/app/chat');
     await expect(page.getByRole('heading', { name: 'What do you want to ask?' })).toBeVisible();
-    await expect(page.locator('.pill.counter')).toHaveText('5 of 5 free today');
+    await expect(page.locator('.counter')).toHaveText('5 of 5 free today');
     await page.locator('#prompt').fill('Remember this one');
     await page.keyboard.press('Enter');
     await expect(page.locator('.msg.ai .via').first()).toContainText('free');
-    await expect(page.locator('.pill.counter')).toHaveText('4 of 5 free today');
+    await expect(page.locator('.counter')).toHaveText('4 of 5 free today');
     // Sign in (cookie + hint) and reload: the guest history moves to the wallet's key.
     await signIn(page);
     await page.reload();
@@ -215,7 +215,7 @@ test.describe('chat without a wallet', () => {
     await expect(page.getByText('Answers come from Macs in the Mesh network or zero-data-retention providers.')).toBeVisible();
     await expect(page.locator('.chips.suggest .chip')).toHaveCount(4);
     // Guest mode: the counter from GET /v1/guest/quota, the model pill, no privacy pill (the guest route picks the tier), no footer.
-    const counter = page.locator('.pill.counter');
+    const counter = page.locator('.counter');
     await expect(counter).toHaveText(/^\d of 5 free today$/);
     const left = Number((await counter.textContent())!.trim()[0]);
     expect(left).toBeGreaterThan(1);
@@ -277,7 +277,7 @@ test.describe('chat without a wallet', () => {
     await expect(rail).toContainText('Using key: Pasted · mesh_sk_');
     await expect(rail).not.toContainText(key.slice(8, 24)); // only the mask is shown
     // The composer no longer counts free messages; it names the key instead. No wallet session exists.
-    await expect(page.locator('.pill.counter')).toHaveCount(0);
+    await expect(page.locator('.counter')).toHaveCount(0);
     await expect(page.locator('.pill.keyed')).toContainText('mesh_sk_');
     expect(await page.evaluate(() => localStorage.getItem('mesh.session'))).toBeNull();
     await expect(page.locator('#privacy')).toHaveCount(1);
@@ -295,7 +295,7 @@ test.describe('chat without a wallet', () => {
     // Forget drops it and the free counter returns.
     await rail.getByRole('button', { name: 'Forget' }).click();
     await expect(rail).toContainText('Have a key?');
-    await expect(page.locator('.pill.counter')).toBeVisible();
+    await expect(page.locator('.counter')).toBeVisible();
   });
 });
 

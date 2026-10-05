@@ -352,7 +352,7 @@ export function Chat() {
   );
 
   const status = guest ? (
-    <span className="pill sm num counter" aria-live="polite" title={`${limit} free messages a day, no sign-in`}>
+    <span className="counter num" aria-live="polite" title={`${limit} free messages a day, no sign-in`}>
       {remaining === null ? `${limit} free a day` : `${Math.max(0, remaining)} of ${limit} free today`}
     </span>
   ) : !session && activeKey ? (

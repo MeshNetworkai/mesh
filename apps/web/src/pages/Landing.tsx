@@ -31,34 +31,34 @@ const MAX_DISCOUNT_PCT = pctFromBps(T.marketplace.maxDiscountBps);
 /** Six points, written against the one-pager comparison without naming the other product. */
 const WHY = (usageOn: boolean) => [
   {
-    k: 'i · Two engines',
+    k: 'Two engines',
     t: 'Two engines, not one',
     c: usageOn
       ? `Trading fees fund the hourly pool, and so does the margin on paid requests. Holders earn when people use the network, not only when they trade it.`
       : `Trading fees fund the hourly pool today. The second engine, a share of the margin on paid requests, is built and audited; it switches on with the pricing decision, not before.`,
   },
   {
-    k: 'ii · Cost',
+    k: 'Cost',
     t: 'Credits are served by Macs, not bought from a cloud',
     c: `A dollar of credit spent on an open model buys ${fmtCompact(Math.round(1 / T.networkPricePerMTokens))}M tokens at ${netPrice} per million, answered by a Mac that is paid ${nodePay}; the difference comes from the treasury share of fees, not from a cloud invoice at list price.`,
   },
   {
-    k: 'iii · Market',
+    k: 'Market',
     t: 'Sell what you do not use',
     c: `List unused credit at any discount up to ${MAX_DISCOUNT_PCT}; buyers pay below face value and spend it on any model. The fee is ${MARKET_FEE_PCT}, half of it back to holders in the next ${epochWord}.`,
   },
   {
-    k: 'iv · Models',
+    k: 'Models',
     t: 'Frontier models and a cheaper open tier',
     c: `Claude, GPT, Gemini, Grok and DeepSeek through one key at list minus the discount when one is set, routed only to zero-data-retention providers; Llama and Qwen on Macs for a flat ${netPrice} per million.`,
   },
   {
-    k: 'v · Privacy',
+    k: 'Privacy',
     t: 'Nodes never see who asked',
     c: 'A Mac receives the model and the messages, nothing else. Three tiers per request: trusted, network, or upstream only. A sampled share of node answers is re-run elsewhere and compared.',
   },
   {
-    k: 'vi · Record',
+    k: 'Record',
     t: 'Everything on the record',
     c: 'Every epoch, the treasury ledger, marketplace fills and the usage share are public down to the dollar. Check that the credits issued match the fees collected.',
   },
@@ -183,11 +183,11 @@ export function Landing() {
       <section aria-labelledby="how-h">
         <div className="sec-head">
           <p className="eyebrow" id="how-h">
-            01 · How the money moves
+            How the money moves
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
-              Two engines, <span className="muted">one hourly pool.</span>
+              Two engines, one hourly pool.
             </h2>
             <p className="sub">
               Trading pays a {feePct} fee; {holderPct} becomes credits for holders every {epochWord}, {treasuryPct} goes to the treasury. Paid requests and marketplace sales leave a
@@ -203,11 +203,11 @@ export function Landing() {
       <section aria-labelledby="ways-h">
         <div className="sec-head">
           <p className="eyebrow" id="ways-h">
-            02 · Four ways in
+            Four ways in
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
-              Use it, sell it, run it, <span className="muted">or hold it.</span>
+              Use it, sell it, run it, or hold it.
             </h2>
             <p className="sub">Each role pays the others. You do not need a Mac to use the network, a wallet to try it, or the token to run a node.</p>
           </div>
@@ -268,20 +268,19 @@ export function Landing() {
       <section aria-labelledby="why-h">
         <div className="sec-head">
           <p className="eyebrow" id="why-h">
-            03 · Why it's different
+            Why it's different
           </p>
           <h2 className="display d-m">
-            Real fees, real margins, real machines, <span className="muted">everything on the record.</span>
+            Real fees, real margins, real machines, everything on the record.
           </h2>
         </div>
         <div className="why">
           {WHY(usageOn).map((w) => (
             <div className="why-item" key={w.k}>
-              <span className="k">{w.k}</span>
               <h3 className="display d-s">{w.t}</h3>
               <p>
                 {w.c}
-                {w.k.startsWith('vi') ? (
+                {w.k === 'Record' ? (
                   <>
                     {' '}
                     <Link to="/stats">See the stats</Link>.
@@ -300,7 +299,7 @@ export function Landing() {
             Switch in a minute
           </p>
           <h2 className="display d-m">
-            Change two strings. <span className="muted">Keep your code.</span>
+            Change two strings. Keep your code.
           </h2>
           <p className="sub">
             Point any OpenAI-compatible client at the gateway and swap the key. Model ids are unchanged; <code className="mono">GET /v1/models</code> lists the catalogue with the
@@ -318,7 +317,7 @@ export function Landing() {
         <div className="ink privacy">
           <span className="glow" aria-hidden="true" />
           <div className="privacy-copy">
-            <p className="eyebrow">04 · Privacy, stated plainly</p>
+            <p className="eyebrow">Privacy, stated plainly</p>
             <h2 className="display d-l" id="priv-h">
               You choose who sees a prompt.
             </h2>
@@ -343,11 +342,11 @@ export function Landing() {
       <section aria-labelledby="nums-h">
         <div className="sec-head">
           <p className="eyebrow" id="nums-h">
-            05 · Live stats
+            Live stats
           </p>
           <div className="stack sm">
             <h2 className="display d-m">
-              The network, <span className="muted">as it stands.</span>
+              The network, as it stands.
             </h2>
             {stats ? <p className="small muted num">Updated {fmtTime(stats.generatedAt)}</p> : null}
           </div>

@@ -4269,3 +4269,271 @@ table.schema table.schema {
   font-size: 12px;
   color: var(--fg-2);
 }
+
+
+/* =====================================================================================================
+   v0.3 · the quiet pass. Fewer boxes, one radius for controls, no capsules, no numbered eyebrows, single-
+   colour section headlines. Typography and spacing carry the hierarchy; hairlines separate, borders
+   do not decorate. Kept as one block so the change is reviewable; earlier rules above still apply
+   where nothing here overrides them.
+   ===================================================================================================== */
+
+/* ---- controls ---- */
+.btn {
+  border-radius: var(--r-ctl);
+  height: 40px;
+  padding: 0 16px;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.btn.sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.btn.lg {
+  height: 46px;
+  padding: 0 20px;
+  font-size: 15px;
+}
+.btn.primary:hover {
+  background: var(--fg);
+  color: var(--bg);
+  filter: brightness(0.92);
+}
+.btn.secondary {
+  background: transparent;
+  border-color: var(--line-2);
+}
+.btn.secondary:hover {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+}
+.chip {
+  border-radius: var(--r-ctl);
+  padding: 7px 12px;
+  background: var(--bg-2);
+  border-color: transparent;
+}
+a.chip:hover,
+button.chip:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.pill {
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--bg-2);
+  border-color: transparent;
+  color: var(--fg-2);
+}
+.pill.sm {
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.pill.beta,
+.hero .eyebrow .pill.beta {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 0;
+  font-weight: 500;
+}
+input,
+textarea,
+select,
+.input {
+  border-radius: var(--r-ctl);
+}
+
+/* ---- flat top bar instead of the floating capsule ---- */
+.topnav {
+  top: 0;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 16px;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+}
+.topnav .logo {
+  padding-right: 0;
+}
+.navlinks {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.navlinks::-webkit-scrollbar {
+  display: none;
+}
+.navright {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.topnav .navlink {
+  border-radius: var(--r-ctl);
+  padding: 7px 10px;
+  font-size: 13.5px;
+}
+.topnav .navlink.on {
+  background: transparent;
+  color: var(--fg);
+  box-shadow: inset 0 -1px 0 var(--fg);
+  border-radius: 0;
+  padding-bottom: 8px;
+}
+.topnav .pill {
+  margin-left: 0;
+}
+@media (max-width: 760px) {
+  .topnav {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    row-gap: 8px;
+    padding: 10px 0;
+  }
+  .navlinks {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ---- surfaces: hairlines, not frames ---- */
+.tiles {
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  gap: 0 32px;
+}
+.tile {
+  border-right: 0;
+  padding: 22px 0 6px;
+}
+.tile .n {
+  font-family: var(--display);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  font-size: clamp(30px, 2.6vw, 38px);
+}
+@media (max-width: 760px) {
+  .tile,
+  .tile:nth-child(2n) {
+    border-right: 0;
+    border-bottom: 0;
+  }
+}
+.why {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 0 40px;
+}
+.why-item,
+.why-item:nth-child(2n),
+.why-item:nth-child(3n),
+.why-item:last-child {
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 22px 0 30px;
+}
+.why-item .k {
+  display: none;
+}
+.readout,
+.card,
+.panel {
+  border-radius: var(--r-lg);
+}
+.readout .head .eyebrow.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.readout .head .eyebrow.live .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.composer .counter,
+.counter {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- type ---- */
+.display .muted {
+  color: inherit;
+}
+.sec-head .eyebrow,
+.eyebrow {
+  letter-spacing: 0;
+}
+h2.display.d-m {
+  max-width: 24ch;
+}
+.home-figures .tile {
+  text-align: left;
+  align-items: flex-start;
+}
+.spend {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 36px 0 8px;
+}
+.spend-nums {
+  border: 0;
+  border-radius: 0;
+  gap: 0 32px;
+}
+.spend-col {
+  padding: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.spend-col + .spend-col {
+  border-left: 0;
+}
+.spend-col .n {
+  font-family: var(--display);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+.chat-rail {
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 16px 4px 0;
+}
+.chip.on {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+@media (max-width: 760px) {
+  .readout .head .eyebrow.num {
+    display: none;
+  }
+}

@@ -124,11 +124,11 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
   return (
     <div className="readout guestchat" id={id} aria-label="Try the network">
       <div className="head">
-        <span className="eyebrow">Live · {TOKENOMICS.name} network</span>
-        <span className="pill sm num" aria-live="polite">
+        <span className="eyebrow live">
           <span className="dot dot-live" aria-hidden="true" />
-          {remaining === null ? '— free' : `${remaining}${limit ? ` / ${limit}` : ''} free`}
+          Live · {TOKENOMICS.name} network
         </span>
+        <span className="eyebrow num">Open models on Macs · frontier via ZDR</span>
       </div>
 
       <MessageList turns={turns} busy={streaming} empty={empty} after={after} className="chat-scroll" />
@@ -145,7 +145,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
           placeholder={exhausted ? 'Free messages used for today' : 'Ask the network…'}
           tools={<ModelPicker id={`${id}-model`} variant="pill" label="Model" models={models} value={model} onChange={setModel} disabled={locked} />}
           status={
-            <span className="pill sm num counter" aria-live="polite" title={`${limit ?? TOKENOMICS.guest.messagesPerDay} free messages a day, no sign-in`}>
+            <span className="counter num" aria-live="polite" title={`${limit ?? TOKENOMICS.guest.messagesPerDay} free messages a day, no sign-in`}>
               {remaining === null ? `${limit ?? TOKENOMICS.guest.messagesPerDay} free a day` : `${Math.max(0, remaining)} of ${limit ?? TOKENOMICS.guest.messagesPerDay} free today`}
             </span>
           }

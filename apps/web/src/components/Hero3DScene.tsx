@@ -51,8 +51,8 @@ const DESKTOP: BoxDef[] = [
  * cropped at the corners), the centre column kept clear by the vignette.
  */
 const PHONE: BoxDef[] = [
-  def(-4.8, 4.2, -4, 1.5, 1.5, 1.5, 0.2, 0.11),
-  def(4.8, 5.0, -5, 1.2, 1.2, 1.2, 0.18, 0.13, true),
+  def(-4.8, 3.4, -4, 1.5, 1.5, 1.5, 0.2, 0.11),
+  def(4.8, 4.2, -5, 1.2, 1.2, 1.2, 0.18, 0.13, true),
   def(-6.0, 0.2, -3, 1.2, 2.6, 1.2, 0.18, 0.08),
   def(5.8, -0.8, -4, 1.6, 1.6, 1.6, 0.22, 0.09),
   def(-6.6, -7.0, -4, 1.4, 1.4, 1.4, 0.2, 0.1, true),
