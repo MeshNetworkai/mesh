@@ -27,8 +27,8 @@ COPY apps/gateway apps/gateway
 RUN pnpm --filter @mesh/config --filter @mesh/chain-adapter --filter @mesh/gateway build
 
 # Drop devDependencies, keep the compiled native module.
-RUN pnpm install --frozen-lockfile --prod --filter @mesh/gateway... --ignore-scripts \
- && pnpm rebuild better-sqlite3
+RUN CI=true pnpm install --frozen-lockfile --prod --filter @mesh/gateway... --ignore-scripts \
+ && CI=true pnpm rebuild better-sqlite3
 
 # ---------- runtime ----------
 FROM node:20-alpine
