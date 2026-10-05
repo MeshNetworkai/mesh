@@ -493,6 +493,29 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS pool_extra_epoch ON pool_extra_micros(epoch_start);
     `,
   },
+  {
+    // Usage-revenue share (usage-share.ts, docs/PRICING.md): one row per paid request that produced a positive
+    // margin while usageShare.enabled. holder_micros is mirrored into pool_extra_micros (source 'usage', same
+    // ref) so the next epoch pays it out; treasury_micros is what stayed with the treasury. The table is the
+    // audit trail /report and /stats aggregate; it is never written while the feature is off.
+    id: 15,
+    sql: `
+    CREATE TABLE IF NOT EXISTS usage_share_log (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      source           TEXT NOT NULL CHECK (source IN ('network','upstream')),
+      ref              TEXT NOT NULL UNIQUE,
+      wallet           TEXT NOT NULL,
+      model            TEXT NOT NULL,
+      billed_micros    INTEGER NOT NULL,
+      cost_micros      INTEGER NOT NULL,
+      margin_micros    INTEGER NOT NULL,
+      holder_micros    INTEGER NOT NULL,
+      treasury_micros  INTEGER NOT NULL,
+      created_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS usage_share_created ON usage_share_log(created_at);
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

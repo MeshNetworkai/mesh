@@ -127,9 +127,13 @@ test.describe('signed-in app', () => {
     await expect(page.locator('span.display', { hasText: 'Chat' })).toBeVisible();
     const keySelect = page.locator('#key');
     await expect(keySelect).toContainText('e2e');
+    // The picker defaults to the network's Llama 3.1 8B; pick the offline mock so the reply is deterministic.
     const model = page.locator('#model');
     await expect(model).toBeEnabled();
-    await expect(model).toContainText('mesh/mock');
+    await expect(model).toContainText('Llama 3.1 8B');
+    await model.click();
+    await page.getByRole('option', { name: /Mesh mock/ }).click();
+    await expect(model).toContainText('Mesh mock');
 
     const prompt = page.locator('#prompt');
     await expect(prompt).toBeEnabled();

@@ -1,4 +1,4 @@
-import { isModelAllowed, isNetworkModel, networkModelNames } from '@mesh/config';
+import { isModelAllowed, upstreamBilledMicros } from '@mesh/config';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { bearer, keySpendExhausted, lookupApiKey, type ApiKeyRow } from '../auth.js';
 import type { AppContext } from '../context.js';
@@ -8,6 +8,7 @@ import { microsToUsd } from '../money.js';
 import { syncPoints } from '../points.js';
 import { openaiError, relayChat, upstreamFailure, upstreamThrow, type ChatAccount, type RecordInput } from '../relay.js';
 import { resolvePrivacy } from '../routing.js';
+import { catalogueView } from '../catalogue.js';
 import { savedMicros } from '../savings.js';
 import { costMicros, tokenCount } from '../upstream.js';
 
@@ -37,10 +38,13 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
       wallet: key.wallet,
       apiKeyId: key.id,
       balanceMicros: () => balanceMicros(ctx.db, key.wallet),
+      paid: true,
       record({ model, usage, upstream, latencyMs, stream, network }: RecordInput): number {
-        const cost = network?.costMicros ?? costMicros(usage, model, ctx.prices, ctx.config.requestPricing.markupBps);
-        const listCost = network?.listCostMicros ?? cost;
-        const saved = network ? savedMicros(listCost, cost) : 0;
+        // Upstream-served: list (what the upstream charged, or the fallback price) ± the configured
+        // markup/discount (docs/PRICING.md). Network-served: the flat network price the relay computed.
+        const listCost = network?.listCostMicros ?? costMicros(usage, model, ctx.prices);
+        const cost = network?.costMicros ?? upstreamBilledMicros(listCost, ctx.config.requestPricing);
+        const saved = savedMicros(listCost, cost);
         const tx = ctx.db.transaction(() => {
           const res = ctx.db
             .prepare(
@@ -61,26 +65,21 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     };
   }
 
-  app.get('/v1/models', { config: { rateLimit } }, async (req, reply) => {
-    const key = await requireApiKey(req, reply);
-    if (!key) return reply;
-    let res: Response;
-    try {
-      res = await ctx.upstream.models();
-    } catch (err) {
-      return upstreamThrow(ctx, req, reply, err);
+  /**
+   * The curated catalogue (config/model-prices.json entries with a tier) plus every network model, with
+   * list price, Mesh price, privacy tier and how many nodes advertise it (catalogue.ts). OpenAI shape
+   * (`object: 'list'`, `data[].id/object/created/owned_by`) with the extra fields. Works without a key
+   * (the web picker and guest chat read it); a bearer that is present must be a valid key. `?guest=1`
+   * narrows it to what a guest may pick (network models + config guest.allowedTiers).
+   */
+  app.get<{ Querystring: { guest?: string } }>('/v1/models', { config: { rateLimit } }, async (req, reply) => {
+    if (bearer(req.headers.authorization)) {
+      const key = await requireApiKey(req, reply);
+      if (!key) return reply;
     }
-    if (!res.ok) return upstreamFailure(ctx, req, reply, res);
-    const json = (await res.json()) as { data?: Array<Record<string, unknown> & { id: string }> };
-    const data: Array<Record<string, unknown> & { id: string; mesh_network: boolean }> = (json.data ?? [])
-      .filter((m) => typeof m.id === 'string' && isModelAllowed(ctx.policy, m.id))
-      .map((m) => ({ ...m, mesh_network: isNetworkModel(ctx.policy, m.id) }));
-    const seen = new Set(data.map((m) => m.id));
-    for (const name of networkModelNames(ctx.policy)) {
-      if (seen.has(name) || !isModelAllowed(ctx.policy, name)) continue;
-      data.push({ id: name, object: 'model', created: 0, owned_by: 'mesh', name: `${name} (Mesh network)`, mesh_network: true });
-    }
-    return { object: 'list', data };
+    const guest = req.query.guest === '1' || req.query.guest === 'true';
+    reply.header('cache-control', 'no-store');
+    return catalogueView(ctx, { guest });
   });
 
   app.post('/v1/chat/completions', { config: { rateLimit } }, async (req, reply) => {

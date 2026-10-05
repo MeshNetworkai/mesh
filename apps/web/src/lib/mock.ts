@@ -1,6 +1,8 @@
 // Realistic fake data for VITE_MOCK=1. Keeps state in module scope so the UI behaves like a live gateway.
 // Shapes mirror apps/gateway exactly (see ./types.ts).
 import type {
+  Catalogue,
+  CatalogueModel,
   AdminAction,
   AdminOverview,
   AdminWaitlist,
@@ -1170,4 +1172,62 @@ export const mockAccount = {
     state.balanceMicros += deltaMicros;
     state.ledger.push({ id: 9000 + state.ledger.length, kind, deltaUsd: deltaMicros / 1e6, deltaUsdMicros: deltaMicros, ref, created_at: now() });
   },
+};
+
+/* ---------- model catalogue (GET /v1/models) ---------- */
+
+type MockCatalogueRow = [id: string, displayName: string, vendor: string, tier: 'frontier' | 'fast' | 'open', prompt: number, completion: number, served: CatalogueModel['served'], online: number];
+/** Mirrors config/model-prices.json + config/model-policy.json: network models first, then the curated upstream catalogue. */
+const MOCK_CATALOGUE: MockCatalogueRow[] = [
+  ['llama-3.1-8b', 'Llama 3.1 8B', 'Meta', 'open', 0.05, 0.08, 'both', 14],
+  ['qwen-2.5-7b', 'Qwen 2.5 7B', 'Qwen', 'open', 0.04, 0.1, 'both', 5],
+  ['anthropic/claude-sonnet-4.5', 'Claude Sonnet 4.5', 'Anthropic', 'frontier', 3, 15, 'upstream', 0],
+  ['anthropic/claude-opus-4.1', 'Claude Opus 4.1', 'Anthropic', 'frontier', 15, 75, 'upstream', 0],
+  ['openai/gpt-5', 'GPT-5', 'OpenAI', 'frontier', 1.25, 10, 'upstream', 0],
+  ['openai/gpt-4.1', 'GPT-4.1', 'OpenAI', 'frontier', 2, 8, 'upstream', 0],
+  ['google/gemini-2.5-pro', 'Gemini 2.5 Pro', 'Google', 'frontier', 1.25, 10, 'upstream', 0],
+  ['x-ai/grok-4', 'Grok 4', 'xAI', 'frontier', 3, 15, 'upstream', 0],
+  ['mistralai/mistral-large', 'Mistral Large', 'Mistral', 'frontier', 2, 6, 'upstream', 0],
+  ['anthropic/claude-3.5-haiku', 'Claude 3.5 Haiku', 'Anthropic', 'fast', 0.8, 4, 'upstream', 0],
+  ['openai/gpt-5-mini', 'GPT-5 mini', 'OpenAI', 'fast', 0.25, 2, 'upstream', 0],
+  ['google/gemini-2.5-flash', 'Gemini 2.5 Flash', 'Google', 'fast', 0.3, 2.5, 'upstream', 0],
+  ['deepseek/deepseek-chat-v3.1', 'DeepSeek V3.1', 'DeepSeek', 'open', 0.2, 0.8, 'upstream', 0],
+  ['deepseek/deepseek-r1', 'DeepSeek R1', 'DeepSeek', 'open', 0.4, 2, 'upstream', 0],
+  ['moonshotai/kimi-k2', 'Kimi K2', 'Moonshot', 'open', 0.14, 2.49, 'upstream', 0],
+  ['meta-llama/llama-3.3-70b-instruct', 'Llama 3.3 70B', 'Meta', 'open', 0.1, 0.32, 'upstream', 0],
+  ['qwen/qwen-2.5-72b-instruct', 'Qwen 2.5 72B', 'Qwen', 'open', 0.12, 0.39, 'upstream', 0],
+];
+/** Mock gateway runs a 20% upstream discount so the picker shows "mesh price vs list" on frontier rows too. */
+const MOCK_UPSTREAM_DISCOUNT_BPS = 2000;
+const MOCK_GUEST_TIERS: Array<'frontier' | 'fast' | 'open'> = ['open', 'fast'];
+
+export const mockCatalogue = async (guest = false): Promise<Catalogue> => {
+  await sleep(200);
+  const disc = 1 - MOCK_UPSTREAM_DISCOUNT_BPS / 10_000;
+  const rows: CatalogueModel[] = MOCK_CATALOGUE.map(([id, displayName, vendor, tier, prompt, completion, served, online]) => {
+    const network = served !== 'upstream';
+    return {
+      id,
+      object: 'model',
+      owned_by: network ? 'mesh' : vendor.toLowerCase(),
+      name: displayName,
+      displayName,
+      vendor,
+      tier,
+      served,
+      listPrice: { promptUsdPerM: prompt, completionUsdPerM: completion },
+      meshPrice: network
+        ? { promptUsdPerM: NETWORK_USD_PER_M, completionUsdPerM: NETWORK_USD_PER_M }
+        : { promptUsdPerM: Math.round(prompt * disc * 1e6) / 1e6, completionUsdPerM: Math.round(completion * disc * 1e6) / 1e6 },
+      privacy: network ? 'network' : 'upstream_zdr',
+      online,
+      guestAllowed: network || MOCK_GUEST_TIERS.includes(tier),
+      mesh_network: network,
+    };
+  });
+  return {
+    object: 'list',
+    data: guest ? rows.filter((r) => r.guestAllowed) : rows,
+    pricing: { networkPricePerMTokens: NETWORK_USD_PER_M, upstreamDiscountBps: MOCK_UPSTREAM_DISCOUNT_BPS, upstreamMarkupBps: 0, guestTiers: MOCK_GUEST_TIERS },
+  };
 };

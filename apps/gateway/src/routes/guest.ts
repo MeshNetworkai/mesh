@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import type { AppContext } from '../context.js';
 import { nowSec, type Db } from '../db.js';
+import { guestModelAllowed } from '../catalogue.js';
 import { addTreasuryEntry } from '../ledger.js';
 import { openaiError, relayChat, type ChatAccount, type RecordInput } from '../relay.js';
 import { savedMicros } from '../savings.js';
@@ -155,6 +156,8 @@ export async function guestRoutes(app: FastifyInstance, ctx: AppContext) {
     const parsed = guestBody((req.body ?? {}) as Record<string, unknown>, c);
     if ('error' in parsed) return openaiError(reply, 400, parsed.error, 'invalid_request_error', parsed.code);
     if (!isModelAllowed(ctx.policy, parsed.model)) return openaiError(reply, 403, `Model '${parsed.model}' is not available on Mesh.`, 'invalid_request_error', 'model_not_allowed');
+    // Guests get the network models and the cheaper catalogue tiers (config guest.allowedTiers); frontier models need a wallet.
+    if (!guestModelAllowed(ctx, parsed.model)) return openaiError(reply, 403, `Model '${parsed.model}' is not available to guests. Connect a wallet to use it.`, 'invalid_request_error', 'model_not_allowed_for_guests');
 
     const ipHash = ipHashOf(req);
     const taken = consumeGuestMessage(ctx.db, ipHash, c.messagesPerDay);

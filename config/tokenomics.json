@@ -9,8 +9,10 @@
   "epochSeconds": 3600,
   "creditUsdPerFeeUsd": 1.0,
   "requestPricing": {
+    "_comment": "Upstream-served requests bill OpenRouter list x (1 - upstreamDiscountBps/10000) or x (1 + upstreamMarkupBps/10000); exactly one may be non-zero. The discount gap is treasury-funded (docs/PRICING.md). Network-served requests bill the flat networkPricePerMTokens.",
     "mode": "passthrough",
-    "markupBps": 0,
+    "upstreamMarkupBps": 0,
+    "upstreamDiscountBps": 0,
     "networkPricePerMTokens": 0.02,
     "showSavings": true
   },
@@ -80,7 +82,8 @@
   "guest": {
     "enabled": true,
     "messagesPerDay": 5,
-    "maxTokens": 400
+    "maxTokens": 400,
+    "allowedTiers": ["open", "fast"]
   },
   "points": {
     "enabled": false,
@@ -98,6 +101,13 @@
     "minListingUsd": 1,
     "maxDiscountBps": 7000,
     "listingTtlHours": 168
+  },
+  "usageShare": {
+    "_comment": "Holders earn from paid usage (docs/PRICING.md, engine 2). Off by default. Suggested when on: network price 0.08/M (node cost 0.06), holderBps 3000.",
+    "enabled": false,
+    "holderBps": 3000,
+    "treasuryBps": 7000,
+    "sources": { "network": true, "upstream": true, "marketplaceFee": true }
   },
   "meta": {
     "description": "Trading fees buy AI inference for holders, every hour.",

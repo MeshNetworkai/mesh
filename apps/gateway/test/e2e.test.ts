@@ -143,7 +143,8 @@ describe('end to end: fees -> epoch -> key -> completion -> balance', () => {
   it('/v1/models is proxied; bad key is OpenAI-shaped 401; zero balance is 402', async () => {
     const m = await app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: `Bearer ${apiKey}` } });
     expect(m.statusCode).toBe(200);
-    expect(m.json().data[0].id).toBe('mesh/mock');
+    expect(m.json().object).toBe('list');
+    expect(m.json().data.map((x: { id: string }) => x.id)).toContain('mesh/mock');
 
     const bad = await app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: 'Bearer mesh_sk_nope' } });
     expect(bad.statusCode).toBe(401);

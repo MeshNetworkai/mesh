@@ -665,3 +665,50 @@ export interface MyStake {
   contract: string | null;
   epoch: number;
 }
+
+/* ---------- model catalogue (GET /v1/models, docs/PRICING.md) ---------- */
+
+export type ModelTier = 'frontier' | 'fast' | 'open';
+
+export interface PricePerM {
+  promptUsdPerM: number;
+  completionUsdPerM: number;
+}
+
+/** One row of GET /v1/models: OpenAI `model` shape plus Mesh's pricing, routing and privacy fields. */
+export interface CatalogueModel extends Model {
+  displayName: string;
+  vendor: string;
+  tier: ModelTier | null;
+  /** Mesh nodes, the upstream, or either (network first). */
+  served: 'network' | 'upstream' | 'both';
+  /** OpenRouter list price, USD per 1M tokens. */
+  listPrice: PricePerM;
+  /** What Mesh bills: the flat network price per 1M tokens on a node, else list ± markup/discount. */
+  meshPrice: PricePerM;
+  /** Where the prompt is processed. */
+  privacy: 'network' | 'upstream_zdr';
+  /** Online nodes advertising the model right now. */
+  online: number;
+  /** Guests may pick it (network models + config guest.allowedTiers). */
+  guestAllowed: boolean;
+}
+
+export interface CataloguePricing {
+  networkPricePerMTokens: number;
+  upstreamDiscountBps: number;
+  upstreamMarkupBps: number;
+  guestTiers: ModelTier[];
+}
+
+export interface Catalogue {
+  object: 'list';
+  data: CatalogueModel[];
+  pricing: CataloguePricing;
+}
+
+export const MODEL_TIER_INFO: Record<ModelTier, { label: string; blurb: string }> = {
+  frontier: { label: 'Frontier', blurb: 'The strongest closed models, served upstream with zero-data-retention providers only.' },
+  fast: { label: 'Fast', blurb: 'Cheaper closed models for everyday work, served upstream (ZDR).' },
+  open: { label: 'Open weights', blurb: 'Open models at open prices; the ones Mesh nodes run are served from Macs first.' },
+};

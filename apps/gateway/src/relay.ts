@@ -11,7 +11,8 @@ import { decideRoute, eligibleNodes, type PrivacyChoice, type RouteDecision } fr
 import { listCostMicros, savedMicros } from './savings.js';
 import { applyMultiplier } from './staking.js';
 import { getNode } from './routes/nodes.js';
-import { SseUsageScanner, UpstreamError, describeUpstreamError, normalizeUsage, type Usage } from './upstream.js';
+import { SseUsageScanner, UpstreamError, costMicros, describeUpstreamError, normalizeUsage, type Usage } from './upstream.js';
+import { recordUsageShare } from './usage-share.js';
 
 /**
  * Chat relay shared by `/v1/chat/completions` (API-key accounts) and `/v1/guest/chat` (treasury-paid
@@ -51,6 +52,21 @@ export interface ChatAccount {
   record(input: RecordInput): number;
   /** Credit balance for `x-mesh-balance-usd` on non-stream responses; omitted → header not sent. */
   balanceMicros?(): number;
+  /**
+   * The caller really pays (credits debited): the margin on the request may feed the usage-revenue
+   * share (usage-share.ts). Absent/false for treasury-paid guests, which never contribute.
+   */
+  paid?: boolean;
+}
+
+/**
+ * Usage-revenue share hook (usage-share.ts): books `holderBps` of a paid request's positive margin into
+ * the next holder pool. `billed` is what the account was charged, `cost` what the request cost Mesh.
+ * No-op unless the account pays and usageShare is enabled.
+ */
+function shareUsageMargin(ctx: AppContext, account: ChatAccount, input: { source: 'network' | 'upstream'; ref: string; model: string; billed: number; cost: number }) {
+  if (!account.paid || !ctx.config.usageShare.enabled || input.billed <= 0) return null;
+  return recordUsageShare(ctx.db, ctx.config.usageShare, { source: input.source, ref: input.ref, wallet: account.wallet, model: input.model, billedMicros: input.billed, costMicros: input.cost });
 }
 
 export interface RelayOptions {
@@ -94,6 +110,13 @@ export function sseWriter(raw: ServerResponse): (text: string) => Promise<void> 
       raw.once('close', done);
     });
   };
+}
+
+let upstreamSeq = 0;
+/** Unique ref for an upstream-served request's usage-share row (there is no job id on that leg). */
+function upstreamRef(account: ChatAccount, started: number): string {
+  upstreamSeq = (upstreamSeq + 1) % 1_000_000;
+  return `usage:up:${account.wallet}:${started.toString(36)}:${process.pid.toString(36)}:${upstreamSeq.toString(36)}`;
 }
 
 /** Map a failed upstream Response to our own error; never charges. */
@@ -261,7 +284,7 @@ async function serveFromNetwork(
       const pricing = ctx.config.requestPricing;
       const price = networkCostMicros(tokens, pricing.networkPricePerMTokens);
       // What the upstream would have charged for the same tokens at the model's list price.
-      const listCost = listCostMicros(u, model, ctx.prices, ctx.policy, pricing.markupBps);
+      const listCost = listCostMicros(u, model, ctx.prices, ctx.policy);
       const saved = savedMicros(listCost, price);
       // Stake tier of the node's reward wallet multiplies the reward (staking.ts; 1× when unstaked / not wired).
       const stake = node && ctx.stakes ? await ctx.stakes.resolve(node.wallet).catch(() => null) : null;
@@ -271,6 +294,8 @@ async function serveFromNetwork(
       ctx.db.transaction(() => {
         cost = account.record({ model, usage: u, upstream: `node:${nodeId}`, latencyMs: Date.now() - started, stream, network: { costMicros: price, listCostMicros: listCost } });
         if (node) addNodeReward(ctx.db, { wallet: node.wallet, nodeId, jobId: job.job_id, tokens, usdMicros: reward });
+        // Engine 2: the network margin (what the user paid − what the node earned) feeds the holder pool.
+        shareUsageMargin(ctx, account, { source: 'network', ref: `usage:job:${job.job_id}`, model, billed: cost, cost: reward });
       })();
       syncPoints(ctx.db, ctx.config.points); // node operator's points for the tokens served
       // Spot-check verification (verification.ts): decided now, run in the background after the reply is out.
@@ -409,7 +434,13 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       return false;
     }
     const model = typeof json.model === 'string' && json.model ? json.model : requestedModel;
-    const cost = account.record({ model, usage: normalizeUsage(json.usage), upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: false });
+    const usage = normalizeUsage(json.usage);
+    let cost = 0;
+    ctx.db.transaction(() => {
+      cost = account.record({ model, usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: false });
+      // Engine 2: upstream margin = billed (list ± markup/discount) − upstream cost (list). Negative under a discount → nothing.
+      shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(usage, model, ctx.prices) });
+    })();
     reply.header('x-mesh-cost-usd', microsToUsd(cost).toString());
     if (account.balanceMicros) reply.header('x-mesh-balance-usd', microsToUsd(account.balanceMicros()).toString());
     await reply.send({ ...json, mesh: meshUpstream });
@@ -494,7 +525,11 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       req.log.warn({ wallet: account.wallet, model, error: scanner.error }, 'upstream error inside stream; not charged');
     } else {
       // Charge whatever the upstream reported (or fallback from tokens) even if client disconnected.
-      const cost = account.record({ model, usage: scanner.usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: true });
+      let cost = 0;
+      ctx.db.transaction(() => {
+        cost = account.record({ model, usage: scanner.usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: true });
+        shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(scanner.usage, model, ctx.prices) });
+      })();
       req.log.info({ wallet: account.wallet, model, costUsd: microsToUsd(cost), aborted }, 'chat completion (stream)');
     }
   }

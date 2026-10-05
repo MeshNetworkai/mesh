@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { ModelPicker } from '../components/ModelPicker';
 import { Empty, Notice, Spinner } from '../components/ui';
 import { STORAGE } from '../config';
 import * as api from '../lib/api';
@@ -9,7 +10,7 @@ import { fmtCost, fmtLatency, fmtUsd } from '../lib/format';
 import { useKeys, useLocalStorage, useMe, useStats } from '../lib/hooks';
 import { loadSecrets } from '../lib/keystore';
 import { errorMessage, useToast } from '../lib/toast';
-import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type Model, type PrivacyTier } from '../lib/types';
+import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type CatalogueModel, type PrivacyTier } from '../lib/types';
 
 interface Turn {
   id: number;
@@ -20,6 +21,12 @@ interface Turn {
 }
 
 const PASTE = '__paste__';
+/** Default model: the network's own Llama 3.1 8B (docs/PRICING.md); the first network model if the catalogue renamed it. */
+const DEFAULT_MODEL = 'llama-3.1-8b';
+
+export function pickDefaultModel(ms: CatalogueModel[]): string {
+  return (ms.find((m) => m.id === DEFAULT_MODEL) ?? ms.find((m) => m.served !== 'upstream') ?? ms[0])?.id ?? '';
+}
 
 export function Chat() {
   const toast = useToast();
@@ -46,29 +53,26 @@ export function Chat() {
   const [privacyRaw, setPrivacy] = useLocalStorage<string>(STORAGE.chatPrivacy, 'trusted');
   const privacy: PrivacyTier = (PRIVACY_TIERS as string[]).includes(privacyRaw) ? (privacyRaw as PrivacyTier) : 'trusted';
 
-  const [models, setModels] = useState<Model[] | null>(null);
+  // The catalogue (GET /v1/models) does not need a key, so the picker is ready before one is chosen.
+  const [models, setModels] = useState<CatalogueModel[] | null>(null);
   const [modelsErr, setModelsErr] = useState<string | null>(null);
   const [model, setModel] = useLocalStorage<string>(STORAGE.chatModel, '');
   useEffect(() => {
-    if (!apiKey || !apiKey.startsWith('mesh_sk_')) {
-      setModels(null);
-      return;
-    }
     let alive = true;
     setModelsErr(null);
     api
-      .listModels(apiKey)
-      .then((ms) => {
+      .getCatalogue()
+      .then((c) => {
         if (!alive) return;
-        setModels(ms);
-        if (ms.length && !ms.some((m) => m.id === model)) setModel(ms[0].id);
+        setModels(c.data);
+        if (c.data.length && !c.data.some((m) => m.id === model)) setModel(pickDefaultModel(c.data));
       })
       .catch((err) => alive && setModelsErr(errorMessage(err)));
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey]);
+  }, []);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
@@ -175,14 +179,7 @@ export function Chat() {
         ) : null}
         <div className="field">
           <label htmlFor="model">Model</label>
-          <select id="model" className="input sm" value={model} onChange={(e) => setModel(e.target.value)} disabled={!models}>
-            {!models ? <option>{apiKey ? (modelsErr ? 'Could not load models' : 'Loading…') : 'Select a key first'}</option> : null}
-            {(models ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name ? `${m.name} · ${m.id}` : m.id}
-              </option>
-            ))}
-          </select>
+          <ModelPicker id="model" models={models} value={model} onChange={setModel} placeholder={modelsErr ? 'Could not load models' : 'Loading…'} />
         </div>
         <div className="field">
           <label htmlFor="privacy">Privacy</label>

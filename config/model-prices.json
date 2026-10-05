@@ -1,13 +1,29 @@
 {
-  "_comment": "Fallback prices in USD per 1M tokens, used only when the upstream does not report usage.cost",
+  "_comment": "OpenRouter list prices in USD per 1M tokens. Curated catalogue entries carry tier/vendor/displayName and are what GET /v1/models lists; price-only entries are billing fallbacks used when the upstream does not report usage.cost. Refresh with `node scripts/refresh-model-prices.mjs` (GET https://openrouter.ai/api/v1/models): it rewrites the prices of the curated ids in place and leaves everything else alone.",
+  "_source": "https://openrouter.ai/api/v1/models",
+  "_refreshedAt": "2026-10-05",
   "default": { "promptUsdPerM": 1.0, "completionUsdPerM": 3.0 },
   "models": {
+    "anthropic/claude-sonnet-4.5": { "promptUsdPerM": 3.0, "completionUsdPerM": 15.0, "tier": "frontier", "vendor": "Anthropic", "displayName": "Claude Sonnet 4.5" },
+    "anthropic/claude-opus-4.1": { "promptUsdPerM": 15.0, "completionUsdPerM": 75.0, "tier": "frontier", "vendor": "Anthropic", "displayName": "Claude Opus 4.1" },
+    "anthropic/claude-3.5-haiku": { "promptUsdPerM": 0.8, "completionUsdPerM": 4.0, "tier": "fast", "vendor": "Anthropic", "displayName": "Claude 3.5 Haiku" },
+    "openai/gpt-5": { "promptUsdPerM": 1.25, "completionUsdPerM": 10.0, "tier": "frontier", "vendor": "OpenAI", "displayName": "GPT-5" },
+    "openai/gpt-5-mini": { "promptUsdPerM": 0.25, "completionUsdPerM": 2.0, "tier": "fast", "vendor": "OpenAI", "displayName": "GPT-5 mini" },
+    "openai/gpt-4.1": { "promptUsdPerM": 2.0, "completionUsdPerM": 8.0, "tier": "frontier", "vendor": "OpenAI", "displayName": "GPT-4.1" },
+    "google/gemini-2.5-pro": { "promptUsdPerM": 1.25, "completionUsdPerM": 10.0, "tier": "frontier", "vendor": "Google", "displayName": "Gemini 2.5 Pro" },
+    "google/gemini-2.5-flash": { "promptUsdPerM": 0.3, "completionUsdPerM": 2.5, "tier": "fast", "vendor": "Google", "displayName": "Gemini 2.5 Flash" },
+    "deepseek/deepseek-chat-v3.1": { "promptUsdPerM": 0.2, "completionUsdPerM": 0.8, "tier": "open", "vendor": "DeepSeek", "displayName": "DeepSeek V3.1" },
+    "deepseek/deepseek-r1": { "promptUsdPerM": 0.4, "completionUsdPerM": 2.0, "tier": "open", "vendor": "DeepSeek", "displayName": "DeepSeek R1" },
+    "x-ai/grok-4": { "promptUsdPerM": 3.0, "completionUsdPerM": 15.0, "tier": "frontier", "vendor": "xAI", "displayName": "Grok 4" },
+    "moonshotai/kimi-k2": { "promptUsdPerM": 0.14, "completionUsdPerM": 2.49, "tier": "open", "vendor": "Moonshot", "displayName": "Kimi K2" },
+    "meta-llama/llama-3.3-70b-instruct": { "promptUsdPerM": 0.1, "completionUsdPerM": 0.32, "tier": "open", "vendor": "Meta", "displayName": "Llama 3.3 70B" },
+    "meta-llama/llama-3.1-8b-instruct": { "promptUsdPerM": 0.05, "completionUsdPerM": 0.08, "tier": "open", "vendor": "Meta", "displayName": "Llama 3.1 8B" },
+    "qwen/qwen-2.5-72b-instruct": { "promptUsdPerM": 0.12, "completionUsdPerM": 0.39, "tier": "open", "vendor": "Qwen", "displayName": "Qwen 2.5 72B" },
+    "qwen/qwen-2.5-7b-instruct": { "promptUsdPerM": 0.04, "completionUsdPerM": 0.1, "tier": "open", "vendor": "Qwen", "displayName": "Qwen 2.5 7B" },
+    "mistralai/mistral-large": { "promptUsdPerM": 2.0, "completionUsdPerM": 6.0, "tier": "frontier", "vendor": "Mistral", "displayName": "Mistral Large" },
     "openai/gpt-4o-mini": { "promptUsdPerM": 0.15, "completionUsdPerM": 0.6 },
     "openai/gpt-4o": { "promptUsdPerM": 2.5, "completionUsdPerM": 10.0 },
-    "anthropic/claude-3.5-haiku": { "promptUsdPerM": 0.8, "completionUsdPerM": 4.0 },
     "anthropic/claude-sonnet-4": { "promptUsdPerM": 3.0, "completionUsdPerM": 15.0 },
-    "meta-llama/llama-3.1-8b-instruct": { "promptUsdPerM": 0.05, "completionUsdPerM": 0.08 },
-    "qwen/qwen-2.5-7b-instruct": { "promptUsdPerM": 0.04, "completionUsdPerM": 0.1 },
-    "mesh/mock": { "promptUsdPerM": 0.0, "completionUsdPerM": 0.0 }
+    "mesh/mock": { "promptUsdPerM": 0.0, "completionUsdPerM": 0.0, "vendor": "Mesh", "displayName": "Mesh mock (offline)" }
   }
 }

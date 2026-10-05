@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { TOKENOMICS } from '../config';
-import { ApiError, getGuestQuota, onGuestRemaining, streamGuestChat, type ChatMessage, type ChatResult } from '../lib/api';
+import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamGuestChat, type ChatMessage, type ChatResult } from '../lib/api';
 import { fmtLatency } from '../lib/format';
+import type { CatalogueModel } from '../lib/types';
+import { ModelPicker } from './ModelPicker';
 import { Notice, Spinner } from './ui';
 
 interface Turn {
@@ -12,6 +14,7 @@ interface Turn {
 }
 
 const PROMPTS = ['Explain how Mesh pays for AI', 'Write a tweet about privacy', 'What runs on my Mac?'];
+const DEFAULT_GUEST_MODEL = 'llama-3.1-8b';
 
 /**
  * Free homepage chat (POST /v1/guest/chat, a few messages per day, no sign-in). Same bubbles, caret and
@@ -28,9 +31,21 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  // Guests pick from the network models and the cheaper tiers (GET /v1/models?guest=1; config guest.allowedTiers).
+  const [models, setModels] = useState<CatalogueModel[] | null>(null);
+  const [model, setModel] = useState(DEFAULT_GUEST_MODEL);
 
   useEffect(() => {
     let alive = true;
+    getCatalogue({ guest: true })
+      .then((c) => {
+        if (!alive) return;
+        setModels(c.data);
+        if (c.data.length && !c.data.some((m) => m.id === model)) setModel((c.data.find((m) => m.served !== 'upstream') ?? c.data[0]).id);
+      })
+      .catch(() => {
+        /* picker stays on the default model */
+      });
     getGuestQuota()
       .then((q) => {
         if (!alive) return;
@@ -52,6 +67,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
       off();
       abortRef.current?.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -71,7 +87,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
       const ac = new AbortController();
       abortRef.current = ac;
       try {
-        const result = await streamGuestChat({ messages: history, signal: ac.signal }, (delta) => {
+        const result = await streamGuestChat({ messages: history, model, signal: ac.signal }, (delta) => {
           setTurns((prev) => {
             const next = prev.slice();
             const last = next[next.length - 1];
@@ -100,7 +116,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
         abortRef.current = null;
       }
     },
-    [turns, streaming, exhausted],
+    [turns, streaming, exhausted, model],
   );
 
   const onSubmit = (e: FormEvent) => {
@@ -164,6 +180,10 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
         {error ? <Notice kind="bad">{error}</Notice> : null}
       </div>
 
+      <div className="field" style={{ marginTop: 10 }}>
+        <label htmlFor={`${id}-model`}>Model</label>
+        <ModelPicker id={`${id}-model`} models={models} value={model} onChange={setModel} disabled={locked} />
+      </div>
       <form className="composer" onSubmit={onSubmit}>
         <label className="sr-only" htmlFor={`${id}-prompt`}>
           Message
@@ -189,7 +209,8 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
         )}
       </form>
       <p className="small muted">
-        {limit ?? 5} free messages a day, no sign-up. Served by a Mac in the {TOKENOMICS.name} network; nothing is stored after the reply.
+        {limit ?? 5} free messages a day, no sign-up. Network models run on a Mac in the {TOKENOMICS.name} network; the rest go upstream with
+        zero-data-retention providers. Nothing is stored after the reply. Frontier models need a wallet.
       </p>
     </div>
   );

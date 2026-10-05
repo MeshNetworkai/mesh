@@ -8,6 +8,7 @@ import { microsToUsd } from '../money.js';
 import { jobStats24h } from '../network.js';
 import { NODE_ONLINE_SEC } from '../routing.js';
 import { networkSavingsUsd24h } from '../savings.js';
+import { usageShareToHolders24hUsd } from '../usage-share.js';
 
 export interface HourPoint {
   /** unix seconds, start of hour */
@@ -161,6 +162,12 @@ export function computeStats(ctx: AppContext) {
     /** Network credits: USD saved across all wallets in the last 24h by Mesh nodes serving requests at the network price. */
     networkSavingsUsd24h: networkSavingsUsd24h(db, now),
     showSavings: ctx.config.requestPricing.showSavings,
+    /** Usage-revenue share (docs/PRICING.md engine 2): USD booked to the holder pool from paid-request margins in the last 24h; 0 while disabled. */
+    usageShareToHolders24hUsd: usageShareToHolders24hUsd(db, now),
+    usageShareEnabled: ctx.config.usageShare.enabled,
+    /** Upstream pricing: a discount on OpenRouter list (or a markup), bps. */
+    upstreamDiscountBps: ctx.config.requestPricing.upstreamDiscountBps,
+    upstreamMarkupBps: ctx.config.requestPricing.upstreamMarkupBps,
     /** Points/leaderboard/referral programme: built but disabled by default; the web app hides every points surface when false. */
     pointsEnabled: ctx.config.points.enabled,
     /** Public beta gating: the web app shows the pill and swaps the CTA for the waitlist when `inviteRequired`. */

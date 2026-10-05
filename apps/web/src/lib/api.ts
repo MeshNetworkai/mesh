@@ -2,6 +2,7 @@ import { API_URL, MOCK } from '../config';
 import { shortAddr } from './format';
 import * as mock from './mock';
 import type {
+  Catalogue,
   AdminOverview,
   AdminWaitlist,
   AdmitResult,
@@ -545,3 +546,15 @@ export async function streamGuestChat(
 
 // Shared request helpers for feature modules that keep their own endpoint bindings (lib/market.ts).
 export { request as rawRequest, sessionRequest as rawSessionRequest };
+
+/* ---------- model catalogue (GET /v1/models) ---------- */
+
+/**
+ * The curated catalogue with list and Mesh prices (docs/PRICING.md). Works without a key; `guest` narrows
+ * it to what POST /v1/guest/chat accepts (network models + the guest tiers).
+ */
+export const getCatalogue = async (opts: { apiKey?: string; guest?: boolean } = {}): Promise<Catalogue> => {
+  if (MOCK) return mock.mockCatalogue(opts.guest === true);
+  const q = opts.guest ? '?guest=1' : '';
+  return request<Catalogue>(`/v1/models${q}`, {}, opts.apiKey);
+};

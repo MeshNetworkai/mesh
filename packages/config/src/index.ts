@@ -30,21 +30,35 @@ export const TokenomicsSchema = z
     minHoldTokens: z.number().min(0),
     epochSeconds: z.number().int().positive(),
     creditUsdPerFeeUsd: z.number().min(0),
-    requestPricing: z.object({
-      mode: z.enum(['passthrough', 'fixed']),
-      markupBps: bps,
-      /** USD per 1M total tokens charged to the user when a Mesh node serves the request. */
-      networkPricePerMTokens: z.number().min(0).default(0.02),
-      /**
-       * "Network credits": when a Mesh node serves a request the user is billed the flat network
-       * price above instead of the model's list price (config/model-prices.json). With showSavings
-       * the gateway reports the list cost and the amount saved on every network-served reply
-       * (`mesh.listCostUsd`, `mesh.savedUsd`), aggregates savings per wallet (GET /me) and
-       * network-wide (GET /stats), and the web app surfaces an "effective multiplier"
-       * (list cost ÷ network cost, e.g. "2.4× further").
-       */
-      showSavings: z.boolean().default(true),
-    }),
+    requestPricing: z
+      .object({
+        mode: z.enum(['passthrough', 'fixed']),
+        /** @deprecated alias of `upstreamMarkupBps`; folded into it at parse time. */
+        markupBps: bps.default(0),
+        /**
+         * Upstream-served requests (docs/PRICING.md): the user is billed the upstream list price plus this
+         * markup, or minus `upstreamDiscountBps`. Exactly one of the two may be non-zero. Credits are USD,
+         * so a 2000 bps discount bills list × 0.8 and the treasury funds the gap, like the network gap.
+         */
+        upstreamMarkupBps: bps.default(0),
+        upstreamDiscountBps: bps.default(0),
+        /** USD per 1M total tokens charged to the user when a Mesh node serves the request. */
+        networkPricePerMTokens: z.number().min(0).default(0.02),
+        /**
+         * "Network credits": when a Mesh node serves a request the user is billed the flat network
+         * price above instead of the model's list price (config/model-prices.json). With showSavings
+         * the gateway reports the list cost and the amount saved on every network-served reply
+         * (`mesh.listCostUsd`, `mesh.savedUsd`), aggregates savings per wallet (GET /me) and
+         * network-wide (GET /stats), and the web app surfaces an "effective multiplier"
+         * (list cost ÷ network cost, e.g. "2.4× further").
+         */
+        showSavings: z.boolean().default(true),
+      })
+      .transform((p) => (p.upstreamMarkupBps === 0 && p.markupBps > 0 ? { ...p, upstreamMarkupBps: p.markupBps } : p))
+      .refine((p) => p.upstreamMarkupBps === 0 || p.upstreamDiscountBps === 0, {
+        message: 'upstreamMarkupBps and upstreamDiscountBps are exclusive: set one of them, not both',
+        path: ['upstreamDiscountBps'],
+      }),
     /** What a node earns per completed job, accrued in the node_rewards ledger. */
     nodeRewards: z
       .object({
@@ -179,6 +193,8 @@ export const TokenomicsSchema = z
         maxInputChars: z.number().int().positive().default(2000),
         /** Model used when the request does not name one. */
         model: z.string().min(1).default('llama-3.1-8b'),
+        /** Catalogue tiers a guest may pick from (network models are always allowed). */
+        allowedTiers: z.array(z.enum(['frontier', 'fast', 'open'])).default(['open', 'fast']),
       })
       .default({}),
     /** Node network registration policy. */
@@ -241,6 +257,35 @@ export const TokenomicsSchema = z
         listingTtlHours: z.number().int().positive().default(168),
       })
       .default({}),
+    /**
+     * Usage-revenue share (docs/PRICING.md "Engine 2"): holders earn from paid inference, not only from
+     * trading fees. Whenever a paid request is recorded the gateway computes the margin Mesh made on it
+     * (network: user price − node reward; upstream: billed − upstream cost) and, when enabled and the
+     * margin is positive, books `holderBps` of it into the next hourly holder pool (`pool_extra_micros`,
+     * source `usage`); the rest stays with the treasury. Guest messages never contribute. Ships OFF.
+     */
+    usageShare: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Share of each positive margin that joins the holder pool. */
+        holderBps: bps.default(3000),
+        /** Share that stays with the treasury. holderBps + treasuryBps must equal 10000. */
+        treasuryBps: bps.default(7000),
+        /**
+         * Which margins count. `network` and `upstream` gate the contribution itself. The marketplace fee's
+         * holder share is always paid to the pool (marketplace.feeToHoldersBps, market.ts); `marketplaceFee`
+         * only decides whether it is counted in the usage-share report (/report totals.usageShare).
+         */
+        sources: z
+          .object({
+            network: z.boolean().default(true),
+            upstream: z.boolean().default(true),
+            marketplaceFee: z.boolean().default(true),
+          })
+          .default({}),
+      })
+      .refine((u) => u.holderBps + u.treasuryBps === 10_000, { message: 'usageShare.holderBps + treasuryBps must equal 10000', path: ['holderBps'] })
+      .default({}),
     meta: z
       .object({
         website: z.string().url().optional(),
@@ -258,19 +303,69 @@ export const TokenomicsSchema = z
 export type TokenomicsConfig = z.infer<typeof TokenomicsSchema>;
 export type StakeTier = z.infer<typeof StakeTierSchema>;
 
+/** Catalogue tier (GET /v1/models, the web model picker): frontier closed models, fast/cheap closed models, open-weight models. */
+export const MODEL_TIERS = ['frontier', 'fast', 'open'] as const;
+export type ModelTier = (typeof MODEL_TIERS)[number];
+
 const ModelPriceSchema = z.object({
+  /** OpenRouter list price, USD per 1M prompt tokens. */
   promptUsdPerM: z.number().min(0),
+  /** OpenRouter list price, USD per 1M completion tokens. */
   completionUsdPerM: z.number().min(0),
+  /** Present on curated catalogue entries only; a price-only entry is a billing fallback and is not listed. */
+  tier: z.enum(MODEL_TIERS).optional(),
+  vendor: z.string().min(1).optional(),
+  displayName: z.string().min(1).optional(),
 });
 
 export const ModelPricesSchema = z.object({
   _comment: z.string().optional(),
+  /** Set by scripts/refresh-model-prices.mjs. */
+  _source: z.string().optional(),
+  _refreshedAt: z.string().optional(),
   default: ModelPriceSchema,
   models: z.record(ModelPriceSchema),
 });
 
 export type ModelPrices = z.infer<typeof ModelPricesSchema>;
 export type ModelPrice = z.infer<typeof ModelPriceSchema>;
+
+/** A curated catalogue entry: a priced model with a tier (config/model-prices.json). */
+export interface CatalogueEntry extends ModelPrice {
+  id: string;
+  tier: ModelTier;
+  vendor: string;
+  displayName: string;
+}
+
+/** The curated catalogue: every priced model that carries a tier, in file order. */
+export function catalogueEntries(prices: ModelPrices): CatalogueEntry[] {
+  const out: CatalogueEntry[] = [];
+  for (const [id, p] of Object.entries(prices.models)) {
+    if (!p.tier) continue;
+    out.push({ ...p, id, tier: p.tier, vendor: p.vendor ?? id.split('/')[0], displayName: p.displayName ?? id.split('/').pop() ?? id });
+  }
+  return out;
+}
+
+export type UpstreamPricing = Pick<TokenomicsConfig['requestPricing'], 'upstreamMarkupBps' | 'upstreamDiscountBps'>;
+
+/**
+ * What the user is billed for an upstream-served request, from the upstream's own cost in micro-USD:
+ * list × (1 + markup) or list × (1 − discount). Integer micros; the discount is floored so the user
+ * is never under-billed by rounding, the markup is floored so they are never over-billed.
+ */
+export function upstreamBilledMicros(listMicros: number, pricing: UpstreamPricing): number {
+  if (pricing.upstreamMarkupBps > 0) return listMicros + Math.floor((listMicros * pricing.upstreamMarkupBps) / 10_000);
+  if (pricing.upstreamDiscountBps > 0) return listMicros - Math.floor((listMicros * pricing.upstreamDiscountBps) / 10_000);
+  return listMicros;
+}
+
+/** Per-1M-token price after the upstream markup/discount (what GET /v1/models reports as `meshPrice`). */
+export function meshPricePerM(listUsdPerM: number, pricing: UpstreamPricing): number {
+  const factor = pricing.upstreamMarkupBps > 0 ? 1 + pricing.upstreamMarkupBps / 10_000 : 1 - pricing.upstreamDiscountBps / 10_000;
+  return Math.round(listUsdPerM * factor * 1e6) / 1e6;
+}
 
 /** Absolute path of the repo-level `config/` directory. */
 export function configDir(): string {

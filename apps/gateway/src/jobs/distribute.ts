@@ -168,7 +168,9 @@ async function runEpochUnlocked(
   // 2. split holder / treasury, apply credit conversion rate
   const holderPoolRaw = bpsOf(feesUsdMicros, config.holderShareBps);
   const treasuryUsdMicros = feesUsdMicros - holderPoolRaw;
-  // Extra pool money (pool_extra_micros): the holders' share of credit-marketplace fees since the last epoch (market.ts).
+  // Extra pool money (pool_extra_micros) since the last epoch: the holders' share of credit-marketplace fees
+  // (market.ts, source market_fee) and of paid-usage margins (usage-share.ts, source usage; off by default).
+  // Both are drained the same way: summed here, claimed inside the write below.
   const extra = pendingPoolExtra(db);
   const holderPoolUsdMicros = Math.floor(holderPoolRaw * config.creditUsdPerFeeUsd) + extra.usdMicros;
 

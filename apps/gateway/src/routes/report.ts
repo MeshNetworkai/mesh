@@ -4,6 +4,7 @@ import { nowSec } from '../db.js';
 import { treasuryBalanceMicros, treasuryTotalsByKind } from '../ledger.js';
 import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
+import { usageShareTotals } from '../usage-share.js';
 import { publicEpochView, type EpochRow } from './stats.js';
 
 /**
@@ -169,6 +170,8 @@ export const REPORT_METHOD = {
   network: 'servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period (requests_log).',
   marketplace:
     'Credit marketplace (docs/MARKETPLACE.md): listed = face value of every listing ever created; filled = face value that changed hands; buyers paid the discounted price from a prepaid balance. Mesh keeps 2.5% of the price: feesToHolders joins the next hourly holder pool, feesToTreasury is a market_fee treasury row. openDepth = credit on the book right now.',
+  usageShare:
+    'Usage-revenue share (docs/PRICING.md): when enabled, holderBps of the margin on every paid request (network: user price − node reward; upstream: billed − upstream cost) joins the next hourly holder pool; the rest stays with the treasury. Negative margins and guest messages contribute nothing. bySource.marketplaceFee is the marketplace fee share already paid to the pool, counted here when usageShare.sources.marketplaceFee is on.',
   guestChat:
     'Free guest messages (POST /v1/guest/chat) are paid by the treasury: upstreamCostUsd is what the upstream charged for guest messages it served (guest_chat treasury rows); nodeRewardsUsd is what Mesh nodes earned serving guest messages (already inside node rewards accrued). Requests are counted in requests_log under the guest wallet.',
 };
@@ -187,6 +190,30 @@ export function marketplaceTotals(ctx: AppContext) {
     openListings: t.openListings,
     bestDiscountBps: t.bestDiscountBps,
     avgDiscountBps: t.avgDiscountBps,
+  };
+}
+
+/** Usage-revenue share totals (usage-share.ts): margins on paid requests and how they were split. */
+export function usageShareReport(ctx: AppContext) {
+  const cfg = ctx.config.usageShare;
+  const all = usageShareTotals(ctx.db);
+  const network = usageShareTotals(ctx.db, { source: 'network' });
+  const upstream = usageShareTotals(ctx.db, { source: 'upstream' });
+  const marketFee = cfg.sources.marketplaceFee ? microsToUsd(marketTotals(ctx.db).feesToHoldersMicros) : 0;
+  return {
+    enabled: cfg.enabled,
+    holderBps: cfg.holderBps,
+    treasuryBps: cfg.treasuryBps,
+    marginUsd: all.marginUsd,
+    toHoldersUsd: all.toHoldersUsd,
+    toTreasuryUsd: all.toTreasuryUsd,
+    requests: all.requests,
+    bySource: {
+      network: { marginUsd: network.marginUsd, toHoldersUsd: network.toHoldersUsd, toTreasuryUsd: network.toTreasuryUsd, requests: network.requests },
+      upstream: { marginUsd: upstream.marginUsd, toHoldersUsd: upstream.toHoldersUsd, toTreasuryUsd: upstream.toTreasuryUsd, requests: upstream.requests },
+      /** Always paid to the pool by the marketplace (feeToHoldersBps); counted here when sources.marketplaceFee is on. */
+      marketplaceFee: { toHoldersUsd: marketFee, counted: cfg.sources.marketplaceFee },
+    },
   };
 }
 
@@ -243,6 +270,7 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
       },
       guestChat: guestChatTotals(ctx),
       marketplace: marketplaceTotals(ctx),
+      usageShare: usageShareReport(ctx),
     },
     last7d,
     last30d,

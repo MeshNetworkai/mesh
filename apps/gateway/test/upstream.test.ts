@@ -172,14 +172,18 @@ describe('/v1 with an OpenRouter-shaped upstream', () => {
     expect(await balance()).toBe(before - 28);
   });
 
-  it('GET /v1/models is filtered by policy and flags network models', async () => {
+  it('GET /v1/models is the curated catalogue filtered by policy, network models first and flagged', async () => {
     const { app, key } = await boot(fakeOpenRouter());
     const r = await app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: `Bearer ${key}` } });
     expect(r.statusCode).toBe(200);
-    const ids = r.json().data.map((m: { id: string }) => m.id);
-    expect(ids).toEqual(['openai/gpt-4o-mini', 'anthropic/claude-sonnet-4', 'meta-llama/llama-3.1-8b-instruct']);
+    const ids: string[] = r.json().data.map((m: { id: string }) => m.id);
+    // allow: openai/*, claude-sonnet-4 (not in the catalogue), llama 8b, mesh/mock → grok / sonnet-4.5 / gemini are out
+    expect(ids).toContain('openai/gpt-5');
+    expect(ids).not.toContain('x-ai/grok-4');
+    expect(ids).not.toContain('anthropic/claude-sonnet-4.5');
+    expect(ids[0]).toBe('meta-llama/llama-3.1-8b-instruct');
     expect(r.json().data.find((m: { id: string }) => m.id === 'meta-llama/llama-3.1-8b-instruct').mesh_network).toBe(true);
-    expect(r.json().data[0].mesh_network).toBe(false);
+    expect(r.json().data.find((m: { id: string }) => m.id === 'openai/gpt-5').mesh_network).toBe(false);
   });
 
   it('denied / unlisted models get 403 model_not_allowed and are not charged', async () => {
