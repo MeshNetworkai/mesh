@@ -1,6 +1,7 @@
 import type { TokenomicsConfig } from '@mesh/config';
 import type { Hex } from 'viem';
 import { EvmAdapter, type EvmAdapterOptions } from './evm.js';
+import { PonsEvmAdapter, type PonsEvmAdapterOptions } from './pons.js';
 import { MockAdapter, type MockAdapterOptions } from './mock.js';
 import { SolanaAdapter, keypairFromEnv, type SolanaAdapterOptions } from './solana.js';
 import { defaultNetworkFor, loadDeployConfig, type DeployConfig, type EvmDeployConfig, type SolanaDeployConfig } from './deploy-config.js';
@@ -29,13 +30,15 @@ export {
   type EvmStateStore,
 } from './evm.js';
 export * as evmAbi from './evm/abi.js';
+export { PonsEvmAdapter, PONS_MAINNET, ETH_ASSET, type PonsEvmAdapterOptions, type PonsSweepDetail, type PonsAssetSweep } from './pons.js';
+export { checkPonsConfig, checksumPastedAddress, sweeperAddressFromKey, type PonsCheckReport, type PonsCheckItem } from './pons-check.js';
 
 export interface CreateAdapterOptions {
   /** Force the in-memory MockAdapter (dev/tests). */
   mock?: boolean;
   mockOptions?: MockAdapterOptions;
   solana?: SolanaAdapterOptions;
-  evm?: EvmAdapterOptions;
+  evm?: EvmAdapterOptions | PonsEvmAdapterOptions;
   /** `config/deploy.<network>.json` to load (default MESH_DEPLOY_NETWORK, then devnet / base-sepolia). */
   network?: string;
   /** Pre-parsed deploy config (skips the file read). */
@@ -51,12 +54,12 @@ export interface CreateAdapterOptions {
  * (signature verification works) but network methods throw a clear configuration error.
  */
 export function createAdapter(
-  config: Pick<TokenomicsConfig, 'chain'> & Partial<Pick<TokenomicsConfig, 'holderShareBps'>>,
+  config: Pick<TokenomicsConfig, 'chain'> & Partial<Pick<TokenomicsConfig, 'holderShareBps' | 'deployNetwork'>>,
   opts: CreateAdapterOptions = {},
 ): ChainAdapter {
   if (opts.mock) return new MockAdapter({ chain: config.chain, ...opts.mockOptions });
   const env = opts.env ?? process.env;
-  const network = opts.network ?? defaultNetworkFor(config.chain, env);
+  const network = opts.network ?? defaultNetworkFor(config.chain, env, config.deployNetwork);
   const deploy = opts.deploy ?? safeLoad(network);
   if (deploy && deploy.chain !== config.chain) {
     throw new Error(`config/deploy.${network}.json is for chain "${deploy.chain}" but tokenomics.chain is "${config.chain}"`);
@@ -70,13 +73,12 @@ export function createAdapter(
         dryRun,
         ...opts.solana,
       });
-    case 'evm':
-      return new EvmAdapter({
-        ...evmOptionsFrom(deploy as EvmDeployConfig | null, env),
-        holderShareBps: config.holderShareBps,
-        dryRun,
-        ...opts.evm,
-      });
+    case 'evm': {
+      const d = deploy as EvmDeployConfig | null;
+      const evmOpts = { ...evmOptionsFrom(d, env), holderShareBps: config.holderShareBps, dryRun, ...opts.evm };
+      // Pons launch: creator fees come from the Pons escrow via our PonsFeeVault, not from a MeshToken transfer fee.
+      return d?.feeSource === 'pons' || (opts.evm as PonsEvmAdapterOptions | undefined)?.ponsEscrow ? new PonsEvmAdapter(evmOpts) : new EvmAdapter(evmOpts);
+    }
     default: {
       const never: never = config.chain;
       throw new Error(`unsupported chain: ${String(never)}`);
@@ -113,8 +115,9 @@ export function solanaOptionsFrom(d: SolanaDeployConfig | null, env: NodeJS.Proc
   };
 }
 
-export function evmOptionsFrom(d: EvmDeployConfig | null, env: NodeJS.ProcessEnv): EvmAdapterOptions {
+export function evmOptionsFrom(d: EvmDeployConfig | null, env: NodeJS.ProcessEnv): PonsEvmAdapterOptions {
   const pk = env.MESH_EVM_PRIVATE_KEY;
+  const fixedEthUsd = env.MESH_FIXED_ETH_USD ? Number(env.MESH_FIXED_ETH_USD) : d?.fixedEthUsd;
   return {
     rpcUrl: env.MESH_EVM_RPC_URL ?? d?.rpcUrl,
     chainId: env.MESH_EVM_CHAIN_ID ? Number(env.MESH_EVM_CHAIN_ID) : d?.chainId,
@@ -122,8 +125,20 @@ export function evmOptionsFrom(d: EvmDeployConfig | null, env: NodeJS.ProcessEnv
     feeVault: d?.feeVault,
     staking: d?.staking,
     treasury: d?.treasury,
-    usdc: d?.usdc,
+    usdc: d?.usdc ?? d?.stable,
+    stable: d?.stable ?? d?.usdc,
+    stableDecimals: d?.stableDecimals,
     swapRouter: d?.swapRouter,
+    ponsEscrow: d?.ponsEscrow,
+    ponsFactory: d?.ponsFactory,
+    ponsHook: d?.ponsHook,
+    launchLocker: d?.launchLocker,
+    buybackVault: d?.buybackVault,
+    creditPool: d?.creditPool,
+    quoteTokens: d?.quoteTokens,
+    sweepMode: d?.sweepMode,
+    priceFeed: d?.priceFeed,
+    fixedEthUsd,
     poolFee: d?.poolFee,
     deployBlock: d?.deployBlock,
     decimals: d?.decimals,

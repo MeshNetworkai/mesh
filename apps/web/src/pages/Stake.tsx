@@ -340,7 +340,7 @@ export function Stake() {
 
       {!live ? (
         <Empty title="Staking opens with the token launch">
-          The staking contract is written and tested; it goes live when the team deploys {TICKER} on launch day, on the chain decided then. Your tier shows here the moment
+          The staking contract is written and tested; it goes live when the team launches {TICKER} on Robinhood Chain on launch day. Your tier shows here the moment
           the contract address lands in the deploy config.
         </Empty>
       ) : MOCK ? (

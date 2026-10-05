@@ -78,7 +78,7 @@ export interface EvmAdapterOptions {
   now?: () => number;
 }
 
-export const KNOWN_CHAINS: Record<number, { name: string; rpc?: string; usdc?: Address; swapRouter?: Address; quoter?: Address }> = {
+export const KNOWN_CHAINS: Record<number, { name: string; rpc?: string; explorer?: string; usdc?: Address; swapRouter?: Address; quoter?: Address }> = {
   8453: {
     name: 'Base',
     rpc: 'https://mainnet.base.org',
@@ -93,9 +93,10 @@ export const KNOWN_CHAINS: Record<number, { name: string; rpc?: string; usdc?: A
     swapRouter: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
     quoter: '0xC5290058841028F1614F3A6F0F5816cAd0df5E27',
   },
-  // Robinhood Chain (Arbitrum Orbit L2), mainnet id 4663. No public RPC / USDC / router is hard-coded:
-  // set rpcUrl + usdc + swapRouter in config/deploy.robinhood.json (testnet: parameterise chainId too).
-  4663: { name: 'Robinhood Chain' },
+  // Robinhood Chain (Arbitrum Orbit L2). Gas is ETH. USDC/USDG + router addresses are not hard-coded:
+  // set `stable` + `swapRouter` in config/deploy.robinhood.json once a stable route exists.
+  4663: { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com' },
+  46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com' },
   31337: { name: 'Anvil', rpc: 'http://127.0.0.1:8545' },
 };
 
@@ -109,8 +110,8 @@ export const KNOWN_CHAINS: Record<number, { name: string; rpc?: string; usdc?: A
 export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
   readonly chain = 'evm' as const;
   readonly publicClient: PublicClient;
-  private walletClient?: WalletClient;
-  private readonly store: EvmStateStore;
+  protected walletClient?: WalletClient;
+  protected readonly store: EvmStateStore;
   private readonly now: () => number;
   private decimalsCache?: number;
   lastSweep?: SweepDetail;
@@ -135,11 +136,11 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
 
   // ------------------------------------------------------------------ config helpers
 
-  private token(): Address {
+  protected token(): Address {
     if (!this.opts.tokenAddress) throw new NotWiredError('EvmAdapter', 'tokenAddress not configured (config/deploy.<network>.json)');
     return this.opts.tokenAddress;
   }
-  private vault(): Address {
+  protected vault(): Address {
     if (!this.opts.feeVault) throw new NotWiredError('EvmAdapter', 'feeVault not configured');
     return this.opts.feeVault;
   }
@@ -147,14 +148,14 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
     if (!this.opts.staking) throw new NotWiredError('EvmAdapter', 'staking contract not configured (deploy json `staking`)');
     return this.opts.staking;
   }
-  private wallet(): WalletClient & { account: Account } {
+  protected wallet(): WalletClient & { account: Account } {
     if (!this.walletClient?.account) throw new NotWiredError('EvmAdapter', 'signer not configured (MESH_EVM_PRIVATE_KEY)');
     return this.walletClient as WalletClient & { account: Account };
   }
-  private signerAddress(): Address {
+  protected signerAddress(): Address {
     return this.wallet().account.address;
   }
-  private treasury(): Address {
+  protected treasury(): Address {
     return this.opts.treasury ?? this.signerAddress();
   }
   private usdc(): Address {
@@ -162,7 +163,7 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
     if (!u) throw new NotWiredError('EvmAdapter', 'usdc address not configured');
     return u;
   }
-  private excluded(): Set<string> {
+  protected excluded(): Set<string> {
     const s = new Set((this.opts.excludeWallets ?? []).map((w) => w.toLowerCase()));
     if (this.opts.treasury) s.add(this.opts.treasury.toLowerCase());
     if (this.opts.feeVault) s.add(this.opts.feeVault.toLowerCase());
@@ -195,7 +196,7 @@ export class EvmAdapter implements ChainAdapter, ChainAdapterExtras {
     });
   }
 
-  private async write(req: { address: Address; abi: Abi | readonly unknown[]; functionName: string; args?: readonly unknown[] }): Promise<Hex> {
+  protected async write(req: { address: Address; abi: Abi | readonly unknown[]; functionName: string; args?: readonly unknown[] }): Promise<Hex> {
     const w = this.wallet();
     const hash = await w.writeContract({ ...req, account: w.account, chain: w.chain } as unknown as Parameters<WalletClient['writeContract']>[0]);
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });

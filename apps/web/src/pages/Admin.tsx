@@ -6,7 +6,7 @@ import { ApiError, COOKIE_SESSION } from '../lib/api';
 import { fmtAgo, fmtDateTime, fmtInt, fmtUsd, shortAddr } from '../lib/format';
 import { useAsync, useCopy } from '../lib/hooks';
 import { MOCK_ADMIN_TOKEN_HINT } from '../lib/mock';
-import type { AdminOverview, StarterStatus, WaitlistEntry } from '../lib/types';
+import type { AdminOverview, ChainCheckReport, ChainField, ChainView, StarterStatus, WaitlistEntry } from '../lib/types';
 
 /**
  * Operator page. The ADMIN_TOKEN is sent once to POST /admin/login, which answers with a 12 h
@@ -248,6 +248,8 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
           <Result s={revoke} />
         </div>
       </div>
+
+      <TokenPanel token={token} onUnauthorized={onUnauthorized} />
 
       {o?.beta?.enabled ? <BetaPanels token={token} o={o} onUnauthorized={onUnauthorized} onChanged={() => void ov.reload()} /> : null}
 
@@ -584,6 +586,229 @@ function StarterPanel({ token, onUnauthorized, onChanged }: { token: string; onU
         <Skeleton w="100%" h="64px" />
       )}
       <Result s={toggle} />
+    </div>
+  );
+}
+
+/**
+ * Admin → Token. The $MESH token is launched by the team's developer on Pons (Robinhood Chain); the founder
+ * pastes the addresses the dev hands back here instead of editing config/deploy.robinhood.json. Saved values
+ * live in the gateway DB (chain_settings, audited) and win over the JSON when the adapter is built at start-up.
+ * "Check" verifies them against the chain; the live adapter switches on at the next restart once token + fee
+ * vault are known (docs/DEV_HANDOFF.md).
+ */
+const CHAIN_FIELD_HELP: Record<ChainField, { label: string; hint: string; placeholder?: string }> = {
+  token: { label: 'Token', hint: 'The $MESH ERC-20 the Pons factory minted (from the dev: TokenLaunched event).', placeholder: '0x…' },
+  feeVault: { label: 'Fee vault (PonsFeeVault)', hint: 'Our PonsFeeVault — the Pons creatorFeeRecipient.', placeholder: '0x…' },
+  creditPool: { label: 'Credit pool wallet', hint: 'Gateway pool wallet; the holder share of every sweep lands here.', placeholder: '0x…' },
+  treasury: { label: 'Treasury', hint: 'Treasury multisig; the treasury share of every sweep.', placeholder: '0x…' },
+  stable: { label: 'Stable (USDG / USDC)', hint: 'Optional until a stable route exists on Robinhood Chain.', placeholder: '0x… (optional)' },
+  swapRouter: { label: 'Swap router', hint: 'Uniswap v3 SwapRouter02, informative (the route is set on the vault).', placeholder: '0x… (optional)' },
+  priceFeed: { label: 'ETH/USD price feed', hint: 'Chainlink aggregator; blank → fixedEthUsd from the JSON / env.', placeholder: '0x… (optional)' },
+  deployBlock: { label: 'Deploy block', hint: 'Block of the launch tx; holder scans start here.', placeholder: 'e.g. 1842930' },
+  excludeWallets: { label: 'Exclude wallets', hint: 'Bonding curve, pool, locker… one per line or comma-separated. Merged with the JSON list.' },
+};
+const ADDRESS_FIELDS: ChainField[] = ['token', 'feeVault', 'creditPool', 'treasury', 'stable', 'swapRouter', 'priceFeed'];
+
+function fieldToText(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (Array.isArray(v)) return v.join('\n');
+  return String(v);
+}
+
+function TokenPanel({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
+  const cv = useAsync(() => api.adminChain(token), [token]);
+  const v: ChainView | null = cv.data;
+  const [form, setForm] = useState<Record<ChainField, string> | null>(null);
+  const [save, runSave] = useAction(onUnauthorized);
+  const [check, runCheck] = useAction(onUnauthorized);
+  const [clear, runClear] = useAction(onUnauthorized);
+  const [showEffective, setShowEffective] = useState(false);
+  const [copied, copy] = useCopy();
+
+  // Seed the form from the current overrides once loaded (the JSON values show as placeholders).
+  useEffect(() => {
+    if (!v || form) return;
+    const f = {} as Record<ChainField, string>;
+    for (const k of v.fields) f[k] = fieldToText(v.overrides[k]);
+    setForm(f);
+  }, [v, form]);
+
+  if (cv.error && !v) return <Notice kind="bad">Could not load the chain settings: {cv.error}</Notice>;
+  if (!v || !form) return <div className="panel"><span className="eyebrow">Token · Robinhood Chain via Pons</span><Skeleton w="100%" h="160px" /></div>;
+
+  const set = (k: ChainField, val: string) => setForm((f) => (f ? { ...f, [k]: val } : f));
+  const dirty = v.fields.some((k) => form[k].trim() !== fieldToText(v.overrides[k]).trim());
+  const badAddr = ADDRESS_FIELDS.filter((k) => form[k].trim() && !/^0x[0-9a-fA-F]{40}$/.test(form[k].trim()));
+  const badBlock = form.deployBlock.trim() !== '' && !/^\d+$/.test(form.deployBlock.trim());
+  const canSave = dirty && badAddr.length === 0 && !badBlock && !save.busy;
+
+  const submit = () =>
+    runSave(
+      () => {
+        const body: Record<string, unknown> = { chainId: v.chainId ?? undefined };
+        for (const k of ADDRESS_FIELDS) body[k] = form[k].trim() || null;
+        body.deployBlock = form.deployBlock.trim() ? Number(form.deployBlock.trim()) : null;
+        body.excludeWallets = form.excludeWallets.trim() ? form.excludeWallets : null;
+        return api.adminChainSave(token, body);
+      },
+      () => {
+        setForm(null);
+        void cv.reload();
+      },
+    );
+
+  const report = check.result as ChainCheckReport | undefined;
+  const statusPill = (
+    <span className={`pill sm ${v.adapter.ready ? 'outline-accent' : 'off'}`}>
+      <span className={`dot ${v.adapter.status.startsWith('mock') ? '' : 'dot-live'}`} /> {v.adapter.status}
+      {v.adapter.restartNeeded ? ' · restart to apply' : ''}
+    </span>
+  );
+
+  return (
+    <div className="stack sm" aria-label="Token and chain settings">
+      <div className="row between" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <span className="eyebrow">Token · {v.chainName ?? v.chain} {v.chainId ? `#${v.chainId}` : ''} · {v.feeSource === 'pons' ? 'Pons launch' : v.feeSource}</span>
+          {statusPill}
+        </div>
+        <span className="small muted">
+          {v.explorer ? <a href={v.explorer} target="_blank" rel="noreferrer">explorer</a> : null}
+          {v.explorer ? ' · ' : ''}
+          <span className="mono">{v.file.path}</span>
+        </span>
+      </div>
+      <div className="panel">
+        <p className="hint">
+          The dev launches $MESH on Pons and hands back the addresses; paste them here. Saved values win over <span className="mono">{v.file.path}</span> (shown as placeholders) and are audited.
+          {v.adapter.waitingFor ? ` Adapter: ${v.adapter.waitingFor}.` : v.adapter.ready ? ' Token + fee vault are set: the live adapter runs after the next restart with MESH_ADAPTER=evm.' : ' Token + fee vault are required before the live adapter can start.'}
+          {v.sweeper ? (
+            <>
+              {' '}Sweeper (gateway hot wallet): <span className="mono">{shortAddr(v.sweeper)}</span>{' '}
+              <button className="btn ghost sm" type="button" onClick={() => copy(v.sweeper!)}>{copied ? 'copied' : 'copy'}</button>
+            </>
+          ) : null}
+        </p>
+        <div className="panels" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+          {ADDRESS_FIELDS.map((k) => {
+            const h = CHAIN_FIELD_HELP[k];
+            const fileVal = fieldToText(v.file.values[k]);
+            const bad = badAddr.includes(k);
+            const isOverridden = v.overridden.includes(k);
+            return (
+              <div className="field" key={k}>
+                <label htmlFor={`chain-${k}`}>
+                  {h.label}
+                  {isOverridden ? <span className="pill sm outline-accent" style={{ marginLeft: 6 }}>override</span> : fileVal ? <span className="pill sm" style={{ marginLeft: 6 }}>from json</span> : null}
+                </label>
+                <input
+                  id={`chain-${k}`}
+                  className="input mono sm"
+                  value={form[k]}
+                  placeholder={fileVal || h.placeholder}
+                  onChange={(e) => set(k, e.target.value)}
+                  aria-invalid={bad || undefined}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <span className="small muted">{bad ? 'Not a 0x address (40 hex chars).' : h.hint}</span>
+              </div>
+            );
+          })}
+          <div className="field">
+            <label htmlFor="chain-deployBlock">
+              {CHAIN_FIELD_HELP.deployBlock.label}
+              {v.overridden.includes('deployBlock') ? <span className="pill sm outline-accent" style={{ marginLeft: 6 }}>override</span> : null}
+            </label>
+            <input id="chain-deployBlock" className="input mono sm" inputMode="numeric" value={form.deployBlock} placeholder={fieldToText(v.file.values.deployBlock) || CHAIN_FIELD_HELP.deployBlock.placeholder} onChange={(e) => set('deployBlock', e.target.value)} aria-invalid={badBlock || undefined} />
+            <span className="small muted">{badBlock ? 'Digits only.' : CHAIN_FIELD_HELP.deployBlock.hint}</span>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="chain-excludeWallets">
+            {CHAIN_FIELD_HELP.excludeWallets.label}
+            {v.overridden.includes('excludeWallets') ? <span className="pill sm outline-accent" style={{ marginLeft: 6 }}>override</span> : null}
+          </label>
+          <textarea id="chain-excludeWallets" className="input mono" rows={3} value={form.excludeWallets} placeholder={'0x<bonding curve>\n0x<pool after graduation>'} onChange={(e) => set('excludeWallets', e.target.value)} spellCheck={false} />
+          <span className="small muted">
+            {CHAIN_FIELD_HELP.excludeWallets.hint} Already excluded from the JSON: {((v.file.values.excludeWallets as string[] | null) ?? []).length} Pons contract{((v.file.values.excludeWallets as string[] | null) ?? []).length === 1 ? '' : 's'}; the fee vault, credit pool, treasury and sweeper are excluded implicitly.
+          </span>
+        </div>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <button className="btn primary sm" disabled={!canSave} onClick={submit}>
+            {save.busy ? <Spinner /> : null} Save
+          </button>
+          <button className="btn secondary sm" disabled={check.busy} onClick={() => runCheck(() => api.adminChainCheck(token))}>
+            {check.busy ? <Spinner /> : null} Check on chain
+          </button>
+          <button className="btn ghost sm" onClick={() => setShowEffective((x) => !x)}>
+            {showEffective ? 'Hide' : 'Show'} effective config
+          </button>
+          <button
+            className="btn ghost sm"
+            disabled={clear.busy || v.overridden.length === 0}
+            onClick={() => {
+              if (!window.confirm('Clear every saved override and fall back to the JSON file?')) return;
+              void runClear(() => api.adminChainClear(token), () => { setForm(null); void cv.reload(); });
+            }}
+          >
+            Clear overrides
+          </button>
+          {dirty ? <span className="small muted">unsaved changes</span> : null}
+        </div>
+        {save.error ? <Notice kind="bad">{save.error}</Notice> : save.result ? <Notice kind="ok">Saved. {v.adapter.restartNeeded || !v.adapter.ready ? 'Restart the gateway with MESH_ADAPTER=evm once Check is clean.' : ''}</Notice> : null}
+        {clear.error ? <Notice kind="bad">{clear.error}</Notice> : null}
+        {check.error ? <Notice kind="bad">{check.error}</Notice> : null}
+        {report ? (
+          <div className="stack sm">
+            <div className="row between">
+              <span className={`pill sm ${report.ok ? 'outline-accent' : 'off'}`}>
+                <span className={`dot ${report.ok ? 'dot-live' : ''}`} /> {report.ok ? 'check passed' : 'check found problems'} · RPC {report.rpcReachable ? `ok (chain ${report.rpcChainId})` : 'unreachable'}
+              </span>
+              <span className="small muted">{fmtAgo(report.checkedAt)}</span>
+            </div>
+            <div className="tblwrap">
+              <table className="tbl small">
+                <thead>
+                  <tr>
+                    <th>Check</th>
+                    <th>Status</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.items.filter((i) => i.status !== 'skip').map((i) => (
+                    <tr key={i.check}>
+                      <td className="mono">{i.check}</td>
+                      <td>
+                        <span className={`pill sm ${i.status === 'ok' ? '' : i.status === 'warn' ? 'outline-accent' : 'off'}`}>{i.status}</span>
+                      </td>
+                      <td className="small" style={{ overflowWrap: 'anywhere' }}>{i.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+        {showEffective ? (
+          <div className="panels" style={{ gap: 12 }}>
+            <div className="stack sm">
+              <span className="small muted">JSON file{v.file.error ? ` (error: ${v.file.error})` : ''}</span>
+              <pre className="result">{JSON.stringify(v.file.values, null, 1)}</pre>
+            </div>
+            <div className="stack sm">
+              <span className="small muted">Overrides (DB){v.overrideMeta.length ? ` · last change ${fmtAgo(Math.max(...v.overrideMeta.map((m) => m.updatedAt)))}` : ''}</span>
+              <pre className="result">{JSON.stringify(v.overrides, null, 1)}</pre>
+            </div>
+            <div className="stack sm">
+              <span className="small muted">Effective (what the adapter gets)</span>
+              <pre className="result">{JSON.stringify(v.effective, null, 1)}</pre>
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

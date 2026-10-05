@@ -60,3 +60,48 @@ export const swapRouter02Abi = parseAbi([
 export const quoterV2Abi = parseAbi([
   'function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
 ]);
+
+/** Extra ERC-20 metadata reads used by the admin "Check" (not every token implements them). */
+export const erc20MetadataAbi = parseAbi(['function name() view returns (string)', 'function symbol() view returns (string)']);
+
+/** Pons v2 Fee Escrow (contracts/evm/src/interfaces/IPonsFeeEscrow.sol). Selectors from the Pons docs — verify on Blockscout before mainnet. */
+export const ponsEscrowAbi = parseAbi([
+  'function balanceOf(address recipient) view returns (uint256)',
+  'function balanceOfToken(address recipient, address token) view returns (uint256)',
+  'function claim()',
+  'function claimToken(address quoteToken)',
+  'function transferCreatorFeeRecipient(address token, address newRecipient)',
+]);
+
+/** contracts/evm/src/PonsFeeVault.sol */
+export const ponsFeeVaultAbi = parseAbi([
+  'struct Route { uint8 kind; address router; uint24 fee; bytes path; }',
+  'function owner() view returns (address)',
+  'function sweeper() view returns (address)',
+  'function escrow() view returns (address)',
+  'function creditPool() view returns (address)',
+  'function treasury() view returns (address)',
+  'function stable() view returns (address)',
+  'function weth() view returns (address)',
+  'function holderShareBps() view returns (uint16)',
+  'function paused() view returns (bool)',
+  'function quoteTokens() view returns (address[])',
+  'function routeOf(address asset) view returns (Route)',
+  'function pendingInEscrow() view returns (address[] assets, uint256[] amounts)',
+  'function held(address asset) view returns (uint256)',
+  'function pull() returns (uint256 ethPulled)',
+  'function sweep(address asset, uint256 minOut) returns (uint256 grossIn, uint256 holderOut, uint256 treasuryOut)',
+  'function sweepRaw(address asset) returns (uint256 grossIn, uint256 holderOut, uint256 treasuryOut)',
+  'function setRoute(address asset, uint8 kind, address router, uint24 fee, bytes path)',
+  'function setStable(address stable, address weth)',
+  'function setSweeper(address sweeper)',
+  'event Pulled(address indexed asset, uint256 amount)',
+  'event Swept(address indexed asset, uint256 grossIn, uint256 holderOut, uint256 treasuryOut)',
+  'event SweptRaw(address indexed asset, uint256 grossIn, uint256 holderOut, uint256 treasuryOut)',
+]);
+
+/** Chainlink AggregatorV3 (ETH/USD). */
+export const chainlinkAggregatorAbi = parseAbi([
+  'function decimals() view returns (uint8)',
+  'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
+]);

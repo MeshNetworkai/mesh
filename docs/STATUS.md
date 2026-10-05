@@ -4,7 +4,7 @@ One page: what is live right now, what is in the repo, how it is tested, what is
 
 ## What is live now
 
-Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gateway), auto-deployed from `main`. Open beta: `beta.inviteRequired: false`, anyone can connect a wallet. The token is **not** deployed; the team deploys it on launch day on the chain decided then (`docs/DEV_HANDOFF.md`), so fees come from the mock adapter's test feed and the credits it mints are beta credits.
+Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gateway), auto-deployed from `main`. Open beta: `beta.inviteRequired: false`, anyone can connect a wallet. The token is **not** launched yet; the team launches it on launch day on Robinhood Chain via Pons (`docs/CHAIN_DECISION.md`, `docs/DEV_HANDOFF.md`) — the Pons fee path (`PonsFeeVault`, `PonsEvmAdapter`, Admin → Token panel) is built and tested — so until then fees come from the mock adapter's test feed and the credits it mints are beta credits.
 
 | Live | Where | Notes |
 | --- | --- | --- |

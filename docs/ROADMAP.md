@@ -7,8 +7,8 @@
 
 Statuses: **done** shipped and live · **now** in the open beta, being finished or switched on ·
 **next** after the token launches · **later** on the list, not scheduled · **exploring** researched,
-not committed. No dates anywhere; the token launch is the one event most of the list waits for, and
-the chain is decided on launch day by the team.
+not committed. No dates anywhere; the token launch (Robinhood Chain, via Pons) is the one event most
+of the list waits for.
 
 ## Now (beta)
 
@@ -31,7 +31,7 @@ marketplace and the catalogue. What is left before launch.
 
 ## Launch
 
-The token is deployed by the team on launch day, on the chain decided at that point. Everything
+The token launches on Robinhood Chain via Pons on launch day (docs/CHAIN_DECISION.md). Everything
 below waits for that one event.
 
 | Status | Item | Detail |

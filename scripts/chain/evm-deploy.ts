@@ -9,9 +9,11 @@
  * Networks (override any with --rpc-url / --chain-id):
  *   base-sepolia      chainId 84532, RPC $BASE_SEPOLIA_RPC_URL or https://sepolia.base.org
  *   base              chainId 8453,  RPC $BASE_RPC_URL or https://mainnet.base.org
- *   robinhood         chainId 4663,  RPC $ROBINHOOD_RPC_URL (required)
- *   robinhood-testnet chainId $ROBINHOOD_TESTNET_CHAIN_ID, RPC $ROBINHOOD_TESTNET_RPC_URL (both required;
- *                     the public docs were not reachable from this environment, so nothing is assumed)
+ *   robinhood         chainId 4663,  RPC $ROBINHOOD_RPC_URL or https://rpc.mainnet.chain.robinhood.com
+ *   robinhood-testnet chainId 46630, RPC $ROBINHOOD_TESTNET_RPC_URL or https://rpc.testnet.chain.robinhood.com
+ *
+ * NOTE: with the Pons launch (docs/CHAIN_DECISION.md) this script is the FALLBACK path only — the token is
+ * minted by the Pons factory, and our contract is PonsFeeVault (contracts/evm/script/DeployPonsFeeVault.s.sol).
  *   anvil             chainId 31337, RPC http://127.0.0.1:8545
  *
  * Env: MESH_EVM_PRIVATE_KEY (deployer; FeeVault owner + token owner unless MESH_OWNER is set),
@@ -33,10 +35,10 @@ const args = Object.fromEntries(
 const NETWORKS: Record<string, { chainId?: number; rpc?: string }> = {
   'base-sepolia': { chainId: 84532, rpc: process.env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org' },
   base: { chainId: 8453, rpc: process.env.BASE_RPC_URL ?? 'https://mainnet.base.org' },
-  robinhood: { chainId: 4663, rpc: process.env.ROBINHOOD_RPC_URL },
+  robinhood: { chainId: 4663, rpc: process.env.ROBINHOOD_RPC_URL ?? KNOWN_CHAINS[4663]?.rpc },
   'robinhood-testnet': {
-    chainId: process.env.ROBINHOOD_TESTNET_CHAIN_ID ? Number(process.env.ROBINHOOD_TESTNET_CHAIN_ID) : undefined,
-    rpc: process.env.ROBINHOOD_TESTNET_RPC_URL,
+    chainId: process.env.ROBINHOOD_TESTNET_CHAIN_ID ? Number(process.env.ROBINHOOD_TESTNET_CHAIN_ID) : 46630,
+    rpc: process.env.ROBINHOOD_TESTNET_RPC_URL ?? KNOWN_CHAINS[46630]?.rpc,
   },
   anvil: { chainId: 31337, rpc: 'http://127.0.0.1:8545' },
 };

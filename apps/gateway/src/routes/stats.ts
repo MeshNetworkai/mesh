@@ -197,7 +197,9 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
     const body = {
       ok,
       db: ok ? 'ok' : 'error',
-      adapter: ctx.env.MESH_ADAPTER,
+      /** `mock`, `mock (waiting for token)` (MESH_ADAPTER asks for the chain but token/feeVault are not set yet), `evm (pons)`, `evm`, `solana`. */
+      adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
+      adapterRequested: ctx.env.MESH_ADAPTER,
       chain: ctx.adapter.chain,
       upstream: ctx.upstream.name,
       upstreamMode: ctx.upstream.name === 'mock' ? 'mock (offline)' : 'live',

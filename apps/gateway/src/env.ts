@@ -14,7 +14,12 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
   HOST: z.string().default('0.0.0.0'),
   MESH_DB_PATH: z.string().default('./data/mesh.db'),
-  MESH_ADAPTER: z.enum(['mock', 'chain']).default('mock'),
+  /**
+   * `mock` = in-memory MockAdapter. `chain` (alias `evm` / `solana`) = the live adapter for tokenomics.chain,
+   * configured from config/deploy.<network>.json + the admin Token panel overrides. A live EVM adapter only
+   * goes live once token + feeVault are known; until then the gateway stays on mock and /health says so.
+   */
+  MESH_ADAPTER: z.enum(['mock', 'chain', 'evm', 'solana']).default('mock'),
   JWT_SECRET: z.string().min(16).default(DEV_JWT_SECRET),
   /**
    * Previous JWT secret, accepted for verification only, so sessions survive a rotation:

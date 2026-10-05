@@ -1,4 +1,4 @@
-import type { ChainAdapter } from '@mesh/chain-adapter';
+import type { ChainAdapter, checkPonsConfig } from '@mesh/chain-adapter';
 import type { ModelPolicy, ModelPrices, TokenomicsConfig } from '@mesh/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AlertMonitor } from './alerts.js';
@@ -27,6 +27,13 @@ import type { Verifier } from './verification.js';
 export interface AppContext {
   db: Db;
   adapter: ChainAdapter;
+  /**
+   * How the adapter was resolved (chain-settings.ts): `mock`, `mock (waiting for token)`, `evm (pons)`,
+   * `evm`, `solana`. Reported by /health and the admin overview.
+   */
+  adapterStatus?: string;
+  /** Test hook: replaces the on-chain Check behind POST /admin/chain/check. */
+  chainCheck?: typeof checkPonsConfig;
   config: TokenomicsConfig;
   prices: ModelPrices;
   policy: ModelPolicy;

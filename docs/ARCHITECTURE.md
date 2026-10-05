@@ -184,6 +184,46 @@ Credits never expire and are not pooled: a wallet's balance is `SUM(delta_usd_mi
 market_escrow). Nothing on-chain happens for
 the holder; the fee sweep is the only transaction.
 
+### 3a. Fee source: Robinhood Chain via Pons (`PonsEvmAdapter`)
+
+The decided launch (docs/CHAIN_DECISION.md) does not use a transfer fee of ours. The token is minted by the
+Pons factory on Robinhood Chain; Pons charges the trading fee on the bonding curve and, after graduation,
+through its Uniswap v4 hook, and credits the creator's share to its **Fee Escrow**
+(`0xd3AF…Ac9e`) as a balance for `creatorFeeRecipient`. That recipient is our **`PonsFeeVault`**
+(`contracts/evm/src/PonsFeeVault.sol`).
+
+```
+trade on Pons curve / v4 pool
+   └─ Pons hook: feeBps (1%, 70% to creator) + creatorTaxBps (80, 100% to creator)
+        └─ Fee Escrow: balanceOf(PonsFeeVault) += creator fee (ETH)        ← accrues between epochs
+epoch (jobs/distribute.ts → adapter.collectFees())
+   1. read escrow.balanceOf(vault) (+ balanceOfToken for each quote token) and the vault's held balances
+   2. PonsFeeVault.pull()            sweeper tx: escrow.claim() / claimToken(q) → vault
+   3. per asset: PonsFeeVault.sweep(asset, minOut)   swap → stable via route, split holderShareBps → creditPool, rest → treasury   (sweepMode "swap")
+             or  PonsFeeVault.sweepRaw(asset)        no swap, same split in the asset                                             (sweepMode "raw")
+   4. value in USD: stable received (swap) or amount × Chainlink ETH/USD | fixedEthUsd (raw) → feesUsdMicros
+   5. holder balances: same Transfer-log indexer as EvmAdapter, excluding Pons escrow/factory/hook/locker/buyback vault, curve, pool, creditPool, vault, treasury, sweeper
+```
+
+Roles on the vault: `owner` (multisig; Ownable2Step) sets recipients, shares, routes, pause; `sweeper`
+(gateway hot wallet, `MESH_EVM_PRIVATE_KEY`) can only drive `pull / sweep / sweepRaw`. Funds can only
+land in `creditPool` or `treasury` (plus the owner's `rescue`). Routes: `V3Single` / `V3Path` (Uniswap v3
+SwapRouter02, ETH wrapped by the router) or `Adapter` (a one-function `IMeshSwapAdapter` for the v4
+universal router or an aggregator).
+
+Configuration surface: `config/deploy.robinhood.json` is a committed template (Pons addresses prefilled,
+token/feeVault null). The founder pastes the launched addresses in **Admin → Token** (routes/chain.ts);
+they are stored in `chain_settings` (migration 17, every change also an `admin_actions` row) and applied
+over the JSON at adapter construction (`chain-settings.ts → resolveAdapter`). With `MESH_ADAPTER=evm` but
+no token/feeVault yet the gateway runs the MockAdapter and `/health` reports
+`adapter: "mock (waiting for token)"`; once both are set a restart brings up `PonsEvmAdapter`
+(`"evm (pons)"`). **Check on chain** (`POST /admin/chain/check` → `checkPonsConfig`) verifies the RPC chain
+id, that `token` is an ERC-20, the escrow balance for the vault, the vault's owner/sweeper/recipients and
+the exclusion list before the flip.
+
+The previous fee source (MeshToken transfer fee → `FeeVault`, `EvmAdapter`) stays as the fallback behind
+`feeSource: "meshToken"`; both adapters share the indexer, the signature verifier and the gateway contract.
+
 ## 4. Data model (SQLite, `apps/gateway/src/db.ts`)
 
 Migrations are an append-only array; each `{id, sql}` runs once inside a transaction and is
@@ -200,6 +240,7 @@ all `*_at`/`ts` columns are unix seconds and `*_ms` are unix milliseconds.
 | `pool_extra_micros` | money owed to the next holder pool from the marketplace fee and engine 2 | `source`, `usd_micros`, `ref` (unique), `epoch_start` (null until an epoch pays it) |
 | `usage_share_log` | audit of engine 2 per paid request | `source` ∈ network/upstream, `ref`, `wallet`, `model`, `billed_micros`, `cost_micros`, `margin_micros`, `holder_micros`, `treasury_micros` |
 | `starter_grants`, `starter_settings` | first-connect starter credits | `wallet` PK, `amount_micros`, `granted_at`, `ip_hash`; runtime enabled override as a key/value row |
+| `chain_settings` | Admin → Token overrides of `config/deploy.<network>.json` (migration 17) | `key` PK (token, feeVault, creditPool, treasury, stable, swapRouter, priceFeed, deployBlock, excludeWallets), JSON `value`, `updated_at`, `updated_by`; history in `admin_actions` (`chain-settings`) |
 | `verifications` | spot checks of node answers | `job_id`, `check_job_id`, `primary_node`, `check_node`, `score`, `verdict` ∈ ok/suspect/mismatch/inconclusive, `reasons`, token counts; no output text |
 | `epochs` | one row per processed hour | `epoch_start` PK, `epoch_end`, `fees_usd_micros`, `holder_pool_usd_micros`, `treasury_usd_micros`, `eligible_holders`, `fee_tx_id`, `status` ∈ complete/empty/failed |
 | `requests_log` | one row per billed/served `/v1` call | `api_key_id`, `wallet`, `model`, `prompt_tokens`, `completion_tokens`, `cost_usd_micros`, `list_cost_usd_micros`, `saved_usd_micros`, `upstream` (`openrouter` / `mock` / `node:<id>`), `latency_ms`, `stream` |
@@ -230,7 +271,7 @@ long-poll). Both are plain in-memory maps in the gateway process; see §8.
 | `tokenomics.json` | token name/ticker/chain (the chain value is a default; the team decides on launch day), `tradeFeeBps`, `holderShareBps`/`treasuryShareBps`, `minHoldTokens`, `epochSeconds`, `creditUsdPerFeeUsd`, `requestPricing` {`upstreamDiscountBps` \| `upstreamMarkupBps` (one non-zero at most), `networkPricePerMTokens`, `showSavings`}, `nodeRewards.usdPerMTokens`, `usageShare` {`enabled`, `holderBps`, `treasuryBps`, `sources`}, `marketplace` {`enabled`, `feeBps`, `feeToHoldersBps`, `minListingUsd`, `maxDiscountBps`, `listingTtlHours`}, `starterCredits`, `guest`, `beta`, `privacy`, `verification`, `points`, `stakeTiers`, `distribution.holdingAge`, `geoBlock` (ISO country codes, empty = none), `routing` {`preferNetwork`, `firstTokenTimeoutMs`, `stallTimeoutMs`, `jobTimeoutMs`, `defaultMaxTokens`, `minSuccessRate`, `reputationMinJobs`, queue settings}, `nodes` {`requireSignature`, `maxPerWallet`}, `meta` | gateway start (`createContext`); tests inject their own; the web app bundles the same file for every number it prints |
 | `model-policy.json` | `allow` / `deny` patterns (trailing `*`), `networkModels` {client name → Ollama tag} | gateway start |
 | `model-prices.json` | the curated catalogue (`tier`, `vendor`, `displayName`) with OpenRouter list prices per 1M tokens: what `GET /v1/models` shows as `listPrice`, the fallback when the upstream does not report `usage.cost`, and the list price savings are measured against; refreshed by `node scripts/refresh-model-prices.mjs` | gateway start |
-| `deploy.<network>.json` | addresses the live adapters need (token mint/contract, fee vault, treasury, `deployBlock`, staking) — written by `scripts/chain/*` deploy tools | adapter construction when `MESH_ADAPTER=chain` |
+| `deploy.<network>.json` | addresses the live adapters need (token, fee vault, treasury, `deployBlock`, staking; for `feeSource: "pons"` also the Pons contracts, `creditPool`, `quoteTokens`, `stable`, `sweepMode`, `priceFeed`). `deploy.robinhood.json` is a committed template whose nulls the Admin → Token panel fills (`chain_settings` wins) | adapter construction when `MESH_ADAPTER=chain|evm`; `tokenomics.deployNetwork` / `MESH_DEPLOY_NETWORK` picks the file |
 
 Env overrides a handful of config values for dev/demo (`NODES_REQUIRE_SIGNATURE`,
 `GEO_BLOCK_ENFORCE`); everything else about *economics* lives in JSON so it is diffable and
@@ -246,7 +287,7 @@ Gateway (`apps/gateway/src/env.ts`, zod-validated at boot; `.env.example` docume
 | --- | --- | --- |
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | listen address |
 | `MESH_DB_PATH` | `./data/mesh.db` | SQLite file (`:memory:` in tests); directory is created |
-| `MESH_ADAPTER` | `mock` | `mock` = in-memory holders/fees; `chain` = adapter for `tokenomics.json → chain` |
+| `MESH_ADAPTER` | `mock` | `mock` = in-memory holders/fees; `chain` (alias `evm`/`solana`) = live adapter for `tokenomics.json → chain`. An EVM config without `token` + `feeVault` keeps the mock and `/health` says `mock (waiting for token)` |
 | `JWT_SECRET`, `JWT_SECRET_PREVIOUS` | dev default (refused in prod) | session signing; previous accepted for verification during rotation |
 | `ADMIN_TOKEN` | `dev-admin-token` | `x-admin-token` for `/admin/*` |
 | `ALLOW_DEV_LOGIN` | true outside production | enables `POST /admin/dev-login` |
@@ -270,7 +311,7 @@ Gateway (`apps/gateway/src/env.ts`, zod-validated at boot; `.env.example` docume
 Chain adapter (`MESH_ADAPTER=chain`; read by `packages/chain-adapter` and `scripts/chain/*`):
 `MESH_DEPLOY_NETWORK`, `MESH_SOLANA_RPC_URL`, `MESH_SOLANA_KEYPAIR`, `MESH_HELIUS_API_KEY`,
 `MESH_JUPITER_API_KEY`, `MESH_JUPITER_BASE_URL`, `MESH_EVM_RPC_URL`, `MESH_EVM_CHAIN_ID`,
-`MESH_EVM_PRIVATE_KEY`, `MESH_HOLD_SINCE_LOOKBACK_SEC`, `MESH_DRY_RUN`. Foundry
+`MESH_EVM_PRIVATE_KEY`, `MESH_FIXED_ETH_USD` (ETH/USD when no Chainlink feed is configured), `MESH_HOLD_SINCE_LOOKBACK_SEC`, `MESH_DRY_RUN`. Foundry
 (`contracts/evm/foundry.toml`): `BASE_SEPOLIA_RPC_URL`, `ROBINHOOD_RPC_URL`,
 `ROBINHOOD_TESTNET_RPC_URL`, `BASESCAN_API_KEY`, `FOUNDRY_SOLC`.
 

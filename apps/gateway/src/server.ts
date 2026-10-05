@@ -1,12 +1,13 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import { createAdapter } from '@mesh/chain-adapter';
+import { MockAdapter } from '@mesh/chain-adapter';
 import { loadModelPolicy, loadModelPrices, loadTokenomics } from '@mesh/config';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { AlertMonitor, alertRoutes, senderFromEnv } from './alerts.js';
 import { randomUUID } from 'node:crypto';
 import { ADMIN_COOKIE, CSRF_HEADER, NonceStore, SESSION_COOKIE, csrfOk } from './auth.js';
+import { resolveAdapter } from './chain-settings.js';
 import { cookiesOf, type AppContext } from './context.js';
 import { openDb, recordAdminAction, recordError } from './db.js';
 import { adminIpAllowlist, corsOrigin, loadEnv, productionProblems, trustedProxyCidrs, type Env } from './env.js';
@@ -50,8 +51,11 @@ export function createContext(opts: BuildOptions = {}): AppContext {
   const loaded = opts.context?.config ?? loadTokenomics();
   // VERIFICATION_ENABLED (env) overrides config.verification.enabled, like NODES_REQUIRE_SIGNATURE does for registration.
   const config = env.VERIFICATION_ENABLED === undefined ? loaded : { ...loaded, verification: { ...loaded.verification, enabled: env.VERIFICATION_ENABLED } };
-  const adapter = opts.context?.adapter ?? createAdapter(config, { mock: env.MESH_ADAPTER === 'mock' });
   const db = opts.context?.db ?? openDb(env.MESH_DB_PATH);
+  // Live adapter only once the token + fee vault are known (admin Token panel / deploy json); mock until then.
+  const resolved = opts.context?.adapter ? null : resolveAdapter(db, config, env);
+  const adapter = opts.context?.adapter ?? resolved!.adapter;
+  const adapterStatus = opts.context?.adapterStatus ?? resolved?.status ?? (adapter instanceof MockAdapter ? 'mock' : adapter.chain);
   const stakes = opts.context?.stakes ?? new StakeResolver({ adapter, config });
   // Trusted-tier jobs (docs/PRIVACY.md) may only be claimed by trusted nodes; the broker asks here.
   const broker = opts.context?.broker ?? new JobBroker(db, () => reputationConfig(config), (node) => isTrustedNode({ config, stakes }, node));
@@ -63,6 +67,8 @@ export function createContext(opts: BuildOptions = {}): AppContext {
     env,
     config,
     adapter,
+    adapterStatus,
+    chainCheck: opts.context?.chainCheck,
     db,
     prices: opts.context?.prices ?? loadModelPrices(),
     policy: opts.context?.policy ?? loadModelPolicy(),

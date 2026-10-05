@@ -2,8 +2,8 @@
 
 Mesh is a token whose trading fees buy AI inference for the people who hold it, spent through an
 OpenAI-compatible gateway, served by Macs and by frontier providers, and sold on a marketplace when
-unused. Open beta at https://mesh-network.ai; the token is deployed by the team on launch day, on the
-chain decided then (both Solana and EVM adapters are built and tested).
+unused. Open beta at https://mesh-network.ai; the token launches on launch day on Robinhood Chain via
+Pons (docs/CHAIN_DECISION.md); fees reach the gateway through our PonsFeeVault (docs/DEV_HANDOFF.md).
 
 **Two engines, one hourly pool.** Every hour the gateway builds one credit pool and splits it pro rata
 across wallets holding at least 1,000 $MESH, time-weighted over the hour (`config/tokenomics.json`).

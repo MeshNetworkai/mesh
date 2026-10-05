@@ -24,6 +24,11 @@ export const TokenomicsSchema = z
     name: z.string().min(1),
     ticker: z.string().min(1).max(10),
     chain: z.enum(['solana', 'evm']),
+    /**
+     * Which `config/deploy.<network>.json` the live adapter loads (MESH_DEPLOY_NETWORK overrides).
+     * `robinhood` = Robinhood Chain mainnet via Pons; `robinhood-testnet` for the rehearsal.
+     */
+    deployNetwork: z.string().min(1).optional(),
     tradeFeeBps: bps,
     holderShareBps: bps,
     treasuryShareBps: bps,

@@ -57,9 +57,9 @@ export const ROADMAP: RoadmapPhase[] = [
   {
     id: 'launch',
     name: 'Launch',
-    summary: 'The token is deployed by the team on launch day, on the chain decided at that point. Everything below waits for that one event.',
+    summary: 'The token launches on Robinhood Chain via Pons on launch day. Everything below waits for that one event.',
     items: [
-      { title: 'Chain decision and token deployment', detail: 'The team deploys the token, the fee vault and the team lock; the gateway and indexer are pointed at it and the first live sweep is confirmed.', status: 'next' },
+      { title: 'Token launch on Robinhood Chain (Pons)', detail: 'The team launches the token on Pons with our fee vault as the creator-fee recipient; the token address is pasted into the gateway, the indexer is pointed at it and the first live sweep is confirmed.', status: 'next' },
       { title: 'First live epoch', detail: 'Real trading fees become credits for real holders. The mock fee feed is retired.', status: 'next' },
       { title: 'Staking live', detail: 'Lock tokens for a bigger node multiplier, a place at the front of the queue and, with the operator pledge, trusted status.', status: 'next' },
       { title: 'USDC checkout for the market', detail: 'Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta.', status: 'next' },

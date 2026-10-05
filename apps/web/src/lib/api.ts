@@ -41,6 +41,9 @@ import type {
   Stats,
   Usage,
   WeekDetail,
+  ChainCheckReport,
+  ChainSettingsInput,
+  ChainView,
 } from './types';
 
 export class ApiError extends Error {
@@ -226,6 +229,20 @@ export const adminLogout = (): Promise<{ ok: boolean }> => (MOCK ? Promise.resol
 
 export const adminOverview = (token: string): Promise<AdminOverview> =>
   MOCK ? mock.mockAdminOverview(token) : request<AdminOverview>('/admin/overview', { headers: adminHeaders(token) });
+
+// Admin → Token: paste the Pons-launched token + our PonsFeeVault without editing JSON (gateway routes/chain.ts).
+export const adminChain = (token: string): Promise<ChainView> => (MOCK ? mock.mockAdminChain(token) : request<ChainView>('/admin/chain', { headers: adminHeaders(token) }));
+
+export const adminChainSave = (token: string, input: ChainSettingsInput): Promise<ChainView & { ok: boolean; written: Record<string, unknown> }> =>
+  MOCK
+    ? mock.mockAdminChainSave(token, input)
+    : request<ChainView & { ok: boolean; written: Record<string, unknown> }>('/admin/chain', { method: 'POST', headers: adminHeaders(token), body: JSON.stringify(input) });
+
+export const adminChainClear = (token: string): Promise<ChainView & { ok: boolean; cleared: string[] }> =>
+  MOCK ? mock.mockAdminChainClear(token) : request<ChainView & { ok: boolean; cleared: string[] }>('/admin/chain', { method: 'DELETE', headers: adminHeaders(token) });
+
+export const adminChainCheck = (token: string, rpcUrl?: string): Promise<ChainCheckReport> =>
+  MOCK ? mock.mockAdminChainCheck(token) : request<ChainCheckReport>('/admin/chain/check', { method: 'POST', headers: adminHeaders(token), body: JSON.stringify(rpcUrl ? { rpcUrl } : {}) });
 
 export const adminRunEpoch = (token: string, epochStart?: number): Promise<RunEpochResult> =>
   MOCK

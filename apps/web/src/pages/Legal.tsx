@@ -198,7 +198,7 @@ export function Terms() {
                 Jobs are routed to online, idle nodes that advertise the requested model and meet the reputation threshold. We do not guarantee
                 that your node receives any job, any number of jobs, or any amount of rewards. Rewards accrue as a US-dollar balance per completed
                 job at the published rate and are visible on your Node page. Paying accrued rewards out on-chain is not live yet; it starts after the
-                token is deployed by the team, on the chain decided then. Until it is, the balance is a counter, not a payment, and we may change the
+                token is launched by the team on Robinhood Chain. Until it is, the balance is a counter, not a payment, and we may change the
                 rate or the mechanism with notice in the docs. A sample of node answers is re-run elsewhere and compared; a job whose answer does not
                 hold up earns no reward.
               </p>
@@ -426,7 +426,7 @@ export function Risk() {
             {GEO ? <Clause n="8" title="Regional restriction">{GEO}</Clause> : null}
             <Clause n="9" title="Smart contract, chain and wallet risk">
               <p>
-                The token will be deployed by the team on launch day on a chain decided then. Chains halt, contracts have bugs, wallets get phished. We do not control the chain, your wallet,
+                The token will be launched by the team on launch day on Robinhood Chain (an Arbitrum Orbit L2) through the Pons launchpad. Chains halt, contracts have bugs, wallets get phished. We do not control the chain, your wallet,
                 or any exchange where the token trades. A signature you make with your wallet is yours; check what you sign.
               </p>
             </Clause>

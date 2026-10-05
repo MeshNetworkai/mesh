@@ -536,6 +536,22 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     );
     `,
   },
+  {
+    // Chain / token settings pasted in Admin → Token (chain-settings.ts): one row per overridable deploy-config
+    // field (token, feeVault, creditPool, treasury, stable, swapRouter, priceFeed, deployBlock, excludeWallets).
+    // Values are JSON. They take precedence over config/deploy.<network>.json when the adapter is built; every
+    // change is also an admin_actions row ('chain-settings'), so the table is the current state and the
+    // audit log is the history.
+    id: 17,
+    sql: `
+    CREATE TABLE IF NOT EXISTS chain_settings (
+      key         TEXT PRIMARY KEY,
+      value       TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      updated_by  TEXT
+    );
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

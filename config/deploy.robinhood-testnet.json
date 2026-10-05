@@ -1,0 +1,45 @@
+{
+  "_comment": "Robinhood Chain TESTNET twin of deploy.robinhood.json for the rehearsal (scripts/chain/robinhood-testnet-rehearsal.md). The rehearsal script deploys MockPonsEscrow + MockERC20 'MESH-test' + PonsFeeVault with a throwaway key and prints the values to paste here (or into Admin → Token). Pons itself is not on the testnet, so ponsEscrow here is OUR MockPonsEscrow.",
+  "chain": "evm",
+  "network": "robinhood-testnet",
+  "chainId": 46630,
+  "rpcUrl": "https://rpc.testnet.chain.robinhood.com",
+  "explorer": "https://explorer.testnet.chain.robinhood.com",
+  "feeSource": "pons",
+
+  "token": null,
+  "_comment_token": "MockERC20 'MESH-test' from the rehearsal script.",
+  "launchTx": null,
+  "curve": null,
+  "poolId": null,
+  "deployBlock": null,
+  "decimals": 18,
+
+  "ponsEscrow": null,
+  "_comment_ponsEscrow": "MockPonsEscrow from the rehearsal script (stands in for the Pons Fee Escrow).",
+  "ponsFactory": null,
+  "ponsHook": null,
+  "launchLocker": null,
+  "buybackVault": null,
+
+  "feeVault": null,
+  "_comment_feeVault": "PonsFeeVault from the rehearsal script.",
+  "creditPool": null,
+  "treasury": null,
+
+  "quoteTokens": ["0x0000000000000000000000000000000000000000"],
+  "stable": null,
+  "stableDecimals": 6,
+  "swapRouter": null,
+  "sweepMode": "raw",
+  "priceFeed": null,
+  "fixedEthUsd": 3000,
+  "_comment_fixedEthUsd": "Testnet ETH has no price; a fixed number makes the USD arithmetic visible.",
+  "slippageBps": 100,
+  "logChunkBlocks": 5000,
+  "holderShareBps": 5000,
+
+  "excludeWallets": [],
+  "_comment_excludeWallets": "Add the rehearsal 'curve' wallet (the one that received the whole MESH-test supply).",
+  "deployedAt": null
+}

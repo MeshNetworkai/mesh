@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MOCK, TOKENOMICS } from '../config';
+import { MOCK, CHAIN_LABEL, TOKENOMICS } from '../config';
 import { useAuth } from '../lib/auth';
 import { useBeta } from '../lib/hooks';
 import { EVM_WALLETS, evmInstalled, getSolanaAdapters, solanaReady } from '../lib/wallets';
@@ -38,7 +38,7 @@ export function ConnectModal() {
     <Modal title="Sign in with a wallet" onClose={auth.closeModal}>
       <p className="small muted">
         Signing proves you hold the wallet. It costs nothing and sends no transaction. {TOKENOMICS.ticker} lives on{' '}
-        <span className="mono">{TOKENOMICS.chain}</span>.
+        <span className="mono">{CHAIN_LABEL}</span>.
       </p>
       {auth.inviteNeeded ? (
         <div className="stack sm" aria-label="Invite code">

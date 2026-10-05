@@ -789,3 +789,63 @@ export const MODEL_TIER_INFO: Record<ModelTier, { label: string; blurb: string }
   fast: { label: 'Fast', blurb: 'Cheaper closed models for everyday work, served upstream (ZDR).' },
   open: { label: 'Open weights', blurb: 'Open models at open prices; the ones Mesh nodes run are served from Macs first.' },
 };
+
+// ---------- Admin → Token (chain settings; gateway routes/chain.ts) ----------
+
+/** The overridable deploy-config fields the founder pastes after the Pons launch. */
+export type ChainField = 'token' | 'feeVault' | 'creditPool' | 'treasury' | 'stable' | 'swapRouter' | 'priceFeed' | 'deployBlock' | 'excludeWallets';
+
+export type ChainFieldValues = Partial<Record<ChainField, string | number | string[] | null>>;
+
+/** GET /admin/chain */
+export interface ChainView {
+  chain: string;
+  network: string;
+  chainId: number | null;
+  chainName: string | null;
+  explorer: string | null;
+  rpcUrl: string | null;
+  feeSource: string | null;
+  adapter: { status: string; requested: string; ready: boolean; restartNeeded: boolean; waitingFor: string | null };
+  sweeper: string | null;
+  file: { path: string; exists: boolean; error: string | null; values: ChainFieldValues };
+  overrides: ChainFieldValues;
+  overrideMeta: Array<{ key: string; updatedAt: number; updatedBy: string | null }>;
+  effective: ChainFieldValues & { chainId: number | null; rpcUrl: string | null; sweepMode: string | null; quoteTokens: string[] | null; fixedEthUsd: number | null; ponsEscrow: string | null; curve: string | null };
+  overridden: ChainField[];
+  fields: ChainField[];
+}
+
+/** POST /admin/chain body: present keys are written (null / '' clears), absent keys are left alone. */
+export interface ChainSettingsInput {
+  chainId?: number;
+  token?: string | null;
+  feeVault?: string | null;
+  creditPool?: string | null;
+  treasury?: string | null;
+  stable?: string | null;
+  swapRouter?: string | null;
+  priceFeed?: string | null;
+  deployBlock?: number | string | null;
+  excludeWallets?: string[] | string | null;
+}
+
+export interface ChainCheckItem {
+  check: string;
+  status: 'ok' | 'warn' | 'fail' | 'skip';
+  detail: string;
+  value?: unknown;
+}
+
+/** POST /admin/chain/check */
+export interface ChainCheckReport {
+  ok: boolean;
+  ready: boolean;
+  adapter: string;
+  chainId: number;
+  rpcUrl: string | null;
+  rpcReachable: boolean;
+  rpcChainId: number | null;
+  items: ChainCheckItem[];
+  checkedAt: number;
+}

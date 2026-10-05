@@ -263,7 +263,7 @@ export function Docs() {
     ['Can I use several keys?', 'Yes. All keys spend from one balance. Each key can carry its own spend limit and default privacy tier. Revoke a key and requests using it fail immediately.'],
     [
       'Which chain is the token on?',
-      'The team deploys the token on launch day and the chain is decided then; the gateway, indexer and fee sweeper are built for both Solana and EVM chains and switch with one config value. Nothing about credits, keys, the marketplace or nodes changes with the choice.',
+      'Robinhood Chain (an Arbitrum Orbit L2, chain id 4663). The team launches the token on launch day through the Pons launchpad; trading fees reach the gateway through our fee vault on that chain. Nothing about credits, keys, the marketplace or nodes depends on the chain.',
     ],
     [
       'Is there a free way to try it?',
@@ -333,7 +333,7 @@ export function Docs() {
               {epochWord} with no trades distributes nothing from fees, and the full epoch history is public.
             </p>
             <p>
-              Mesh is in open beta. No invite is needed: connect a wallet and you are in. The token is deployed by the team on launch day, on the chain decided then; until
+              Mesh is in open beta. No invite is needed: connect a wallet and you are in. The token is launched by the team on launch day on Robinhood Chain; until
               that day the fee feed is a test harness and the credits it mints are beta credits under the same terms as everything else here.
             </p>
           </div>

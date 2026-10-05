@@ -16,7 +16,8 @@
     "test:anvil": "MESH_ANVIL=1 vitest run test/evm.anvil.test.ts",
     "solana:create-mint": "tsx ../../scripts/chain/solana-create-mint.ts",
     "solana:smoke": "tsx ../../scripts/chain/solana-devnet-smoke.ts",
-    "evm:deploy": "tsx ../../scripts/chain/evm-deploy.ts"
+    "evm:deploy": "tsx ../../scripts/chain/evm-deploy.ts",
+    "evm:rehearsal": "tsx ../../scripts/chain/robinhood-testnet-rehearsal.ts"
   },
   "dependencies": {
     "@mesh/config": "workspace:*",

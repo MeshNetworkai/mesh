@@ -32,7 +32,7 @@ async function main() {
     {
       token: `${config.name} (${config.ticker})`,
       chain: config.chain,
-      adapter: env.MESH_ADAPTER,
+      adapter: app.ctx.adapterStatus ?? env.MESH_ADAPTER,
       upstream: upstream.name,
       epochCron: env.EPOCH_CRON,
       db: env.MESH_DB_PATH,

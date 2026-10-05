@@ -11,6 +11,7 @@ import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
 import { clearQuarantine, nodeVerificationStats, quarantineNode, verificationOverview } from '../verification.js';
 import { starterAdminRoutes } from '../starter.js';
+import { chainRoutes } from './chain.js';
 import { getNode } from './nodes.js';
 
 const FakeFeesBody = z.object({ amountUsd: z.number().positive() });
@@ -81,6 +82,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // Starter credits on first connect: GET /admin/starter, POST /admin/starter/toggle (starter.ts).
   starterAdminRoutes(app, ctx, guard, audit);
+  // Admin → Token: GET/POST/DELETE /admin/chain, POST /admin/chain/check (routes/chain.ts).
+  chainRoutes(app, ctx, guard as never, audit);
 
   app.post('/admin/run-epoch', { preHandler: guard }, async (req, reply) => {
     const parsed = RunEpochBody.safeParse(req.body ?? undefined);
@@ -194,7 +197,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     return {
       time: now,
       upstream: ctx.upstream.name,
-      adapter: ctx.env.MESH_ADAPTER,
+      adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       chain: ctx.adapter.chain,
       epochs: epochs.map((e) => ({
         epochStart: e.epoch_start,

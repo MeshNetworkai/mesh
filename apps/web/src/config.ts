@@ -7,6 +7,13 @@ const envChain = String(tokenomics.chain ?? 'solana').toLowerCase();
 /** Chain the token lives on, from config/tokenomics.json. Anything not `solana` is treated as EVM. */
 export const DEFAULT_CHAIN: Chain = envChain === 'solana' ? 'solana' : 'evm';
 
+/** Which config/deploy.<network>.json the live adapter reads (`robinhood` = Robinhood Chain mainnet via Pons). */
+export const DEPLOY_NETWORK: string = String((tokenomics as { deployNetwork?: string }).deployNetwork ?? (DEFAULT_CHAIN === 'solana' ? 'mainnet-beta' : 'base'));
+
+/** Human label for the chain, for copy ("lives on Robinhood Chain"). */
+export const CHAIN_LABEL: string =
+  DEFAULT_CHAIN === 'solana' ? 'Solana' : DEPLOY_NETWORK.startsWith('robinhood') ? `Robinhood Chain${DEPLOY_NETWORK.endsWith('testnet') ? ' testnet' : ''}` : DEPLOY_NETWORK.startsWith('base') ? 'Base' : 'an EVM chain';
+
 export const TOKENOMICS = {
   name: tokenomics.name,
   ticker: tokenomics.ticker,

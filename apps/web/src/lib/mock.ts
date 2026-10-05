@@ -52,6 +52,10 @@ import type {
   WeekReport,
   MyStake,
   StakeTiers,
+  ChainCheckReport,
+  ChainFieldValues,
+  ChainSettingsInput,
+  ChainView,
 } from './types';
 import type { KeyInput } from './api';
 import { TOKENOMICS } from '../config';
@@ -1035,6 +1039,157 @@ export const mockAdminStarterToggle = async (token: string, enabled: boolean | n
   mockStarter.enabled = enabled === null ? TOKENOMICS.starterCredits.enabled : enabled;
   pushAdminAction('starter-toggle', { before, after: mockStarter.enabled, override: enabled });
   return mockStarterStatus();
+};
+
+// ---------- Admin → Token (chain settings) ----------
+
+const PONS = {
+  escrow: '0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e',
+  factory: '0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e',
+  hook: '0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044',
+  launchLocker: '0x267444D099b10fB5Ed7c3Cc7B7c767AdcA574952',
+  buybackVault: '0x42df2a798f82289E177311362e8f5ccC45c1219c',
+};
+const chainFile: ChainFieldValues = {
+  token: null,
+  feeVault: null,
+  creditPool: null,
+  treasury: null,
+  stable: null,
+  swapRouter: null,
+  priceFeed: null,
+  deployBlock: null,
+  excludeWallets: [PONS.escrow, PONS.factory, PONS.hook, PONS.launchLocker, PONS.buybackVault].map((a) => a.toLowerCase()),
+};
+const chainOverrides: ChainFieldValues = {
+  token: '0x5fB2a3C8e9d1F0b47a6E2c9D8e7F1a2B3c4D5e6F',
+  feeVault: '0x9A1b2C3d4E5f60718293A4b5C6d7E8f9A0B1c2D3',
+  creditPool: '0x1F2e3D4c5B6a79889766554433221100FfEeDdCc',
+  treasury: '0xAbCdEf0123456789aBcDeF0123456789AbCdEf01',
+  deployBlock: 1_842_930,
+  excludeWallets: ['0x7777777777777777777777777777777777777777'],
+};
+const chainMeta = new Map<string, { updatedAt: number; updatedBy: string | null }>(Object.keys(chainOverrides).map((k) => [k, { updatedAt: now() - 3_600 * 5, updatedBy: 'cookie' }]));
+
+function isHexAddr(v: unknown): v is string {
+  return typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v);
+}
+
+function mockChainView(): ChainView {
+  const fields = ['token', 'feeVault', 'creditPool', 'treasury', 'stable', 'swapRouter', 'priceFeed', 'deployBlock', 'excludeWallets'] as const;
+  const effective: ChainFieldValues = { ...chainFile };
+  const overridden: ChainView['overridden'] = [];
+  for (const f of fields) {
+    const v = chainOverrides[f];
+    if (v === undefined || v === null || v === '') continue;
+    overridden.push(f);
+    if (f === 'excludeWallets') effective.excludeWallets = Array.from(new Set([...((chainFile.excludeWallets as string[]) ?? []), ...((v as string[]) ?? [])]));
+    else effective[f] = v;
+  }
+  const ready = isHexAddr(effective.token) && isHexAddr(effective.feeVault);
+  return {
+    chain: 'evm',
+    network: 'robinhood',
+    chainId: 4663,
+    chainName: 'Robinhood Chain',
+    explorer: 'https://robinhoodchain.blockscout.com',
+    rpcUrl: 'https://rpc.mainnet.chain.robinhood.com',
+    feeSource: 'pons',
+    adapter: { status: 'mock', requested: 'mock', ready, restartNeeded: false, waitingFor: null },
+    sweeper: '0x3C0ffEe1234567890aBcDeF1234567890AbCdEf0',
+    file: { path: 'config/deploy.robinhood.json', exists: true, error: null, values: { ...chainFile } },
+    overrides: { ...chainOverrides },
+    overrideMeta: Array.from(chainMeta.entries()).map(([key, m]) => ({ key, ...m })),
+    effective: { ...effective, chainId: 4663, rpcUrl: 'https://rpc.mainnet.chain.robinhood.com', sweepMode: 'raw', quoteTokens: ['0x0000000000000000000000000000000000000000'], fixedEthUsd: null, ponsEscrow: PONS.escrow, curve: null },
+    overridden,
+    fields: [...fields],
+  };
+}
+
+export const mockAdminChain = async (token: string): Promise<ChainView> => {
+  await sleep(220);
+  requireMockAdmin(token);
+  return mockChainView();
+};
+
+export const mockAdminChainSave = async (token: string, input: ChainSettingsInput): Promise<ChainView & { ok: boolean; written: Record<string, unknown> }> => {
+  await sleep(300);
+  requireMockAdmin(token);
+  if (input.chainId !== undefined && input.chainId !== 4663) throw new ApiError(400, `these addresses are for chainId ${input.chainId}; config/deploy.robinhood.json is chainId 4663`, 'chain_mismatch');
+  const written: Record<string, unknown> = {};
+  for (const k of ['token', 'feeVault', 'creditPool', 'treasury', 'stable', 'swapRouter', 'priceFeed'] as const) {
+    const v = input[k];
+    if (v === undefined) continue;
+    if (v === null || v === '') {
+      delete chainOverrides[k];
+      chainMeta.delete(k);
+      written[k] = null;
+      continue;
+    }
+    if (!isHexAddr(v)) throw new ApiError(400, `${k}: not a 0x address: ${v}`, 'bad_request');
+    chainOverrides[k] = v;
+    chainMeta.set(k, { updatedAt: now(), updatedBy: 'cookie' });
+    written[k] = v;
+  }
+  if (input.deployBlock !== undefined) {
+    if (input.deployBlock === null || input.deployBlock === '') {
+      delete chainOverrides.deployBlock;
+      chainMeta.delete('deployBlock');
+      written.deployBlock = null;
+    } else {
+      chainOverrides.deployBlock = Number(input.deployBlock);
+      chainMeta.set('deployBlock', { updatedAt: now(), updatedBy: 'cookie' });
+      written.deployBlock = Number(input.deployBlock);
+    }
+  }
+  if (input.excludeWallets !== undefined) {
+    const raw = input.excludeWallets === null ? [] : Array.isArray(input.excludeWallets) ? input.excludeWallets : input.excludeWallets.split(/[\s,]+/);
+    const list = Array.from(new Set(raw.map((w) => w.trim()).filter(Boolean).map((w) => w.toLowerCase())));
+    const bad = list.find((w) => !isHexAddr(w));
+    if (bad) throw new ApiError(400, `excludeWallets: not a 0x address: ${bad}`, 'bad_request');
+    if (list.length) {
+      chainOverrides.excludeWallets = list;
+      chainMeta.set('excludeWallets', { updatedAt: now(), updatedBy: 'cookie' });
+    } else {
+      delete chainOverrides.excludeWallets;
+      chainMeta.delete('excludeWallets');
+    }
+    written.excludeWallets = list.length ? list : null;
+  }
+  pushAdminAction('chain-settings', { written });
+  return { ok: true, written, ...mockChainView() };
+};
+
+export const mockAdminChainClear = async (token: string): Promise<ChainView & { ok: boolean; cleared: string[] }> => {
+  await sleep(200);
+  requireMockAdmin(token);
+  const cleared = Object.keys(chainOverrides);
+  for (const k of cleared) delete chainOverrides[k as keyof ChainFieldValues];
+  chainMeta.clear();
+  pushAdminAction('chain-settings-clear', { cleared });
+  return { ok: true, cleared, ...mockChainView() };
+};
+
+export const mockAdminChainCheck = async (token: string): Promise<ChainCheckReport> => {
+  await sleep(900);
+  requireMockAdmin(token);
+  const v = mockChainView();
+  const items: ChainCheckReport['items'] = [
+    { check: 'rpc.chainId', status: 'ok', detail: 'RPC https://rpc.mainnet.chain.robinhood.com is chain 4663 (Robinhood Chain)' },
+    { check: 'token.erc20', status: 'ok', detail: 'Mesh (MESH), 18 decimals, supply 1000000000', value: { name: 'Mesh', symbol: 'MESH', decimals: 18 } },
+    { check: 'escrow.balance', status: 'ok', detail: 'escrow holds 0.4821 ETH for feeVault', value: '482100000000000000' },
+    { check: 'feeVault.owner', status: 'ok', detail: 'owner 0xAbCdEf0123456789aBcDeF0123456789AbCdEf01' },
+    { check: 'feeVault.sweeper', status: 'ok', detail: 'sweeper 0x3C0ffEe1234567890aBcDeF1234567890AbCdEf0 (matches MESH_EVM_PRIVATE_KEY)' },
+    { check: 'feeVault.creditPool', status: 'ok', detail: `creditPool ${v.effective.creditPool as string}` },
+    { check: 'feeVault.treasury', status: 'ok', detail: `treasury ${v.effective.treasury as string}` },
+    { check: 'feeVault.stable', status: 'ok', detail: 'vault has no stable set: only sweepRaw works (sweepMode raw, fine)' },
+    { check: 'feeVault.holderShareBps', status: 'ok', detail: 'holder share 5000 bps', value: 5000 },
+    { check: 'excludeWallets.curve', status: 'warn', detail: 'no `curve` address yet: add the Pons bonding-curve address (and the pool after graduation) to excludeWallets' },
+    { check: 'priceFeed', status: 'warn', detail: 'no priceFeed and no fixedEthUsd: ETH fees will be valued at $0 until one is set' },
+    { check: 'deployBlock', status: 'ok', detail: `scans start at block ${v.effective.deployBlock as number}` },
+  ];
+  pushAdminAction('chain-check', { ok: true, rpcReachable: true, fails: [] });
+  return { ok: true, ready: v.adapter.ready, adapter: 'mock', chainId: 4663, rpcUrl: v.rpcUrl, rpcReachable: true, rpcChainId: 4663, items, checkedAt: now() };
 };
 
 export const mockAdminRevokeKey = async (token: string, id: number): Promise<RevokeKeyResult> => {
