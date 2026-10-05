@@ -124,6 +124,15 @@ Every step from design system to launch, grouped by session. Tick items as they 
 - [ ] Pick A, B, or a mix — then it becomes the homepage and the old landing retires (Oliver)
 - [x] Public checklist page shared: Share → anyone with the link (Oliver)
 
+**Hardening pass (4–5 Oct):**
+
+- [x] Gateway bug hunt: 12 bugs fixed with regression tests (node could over-bill via token counts, reward paid for empty replies, heartbeat reset busy mid-job, client disconnect leaked streams, two epoch runs could race the sweep, relay buffer unbounded, malformed upstream usage could crash, non-atomic registration, missing indexes) — 273 gateway tests
+- [x] Load-test bottlenecks fixed: requests queue for a busy node instead of going straight upstream, nodes can run several jobs at once (maxParallel), per-token hot path no longer hits the database, reputation and online-node caches, heartbeat prune on a timer, registration limits keyed on wallet, /nodes cached — before/after in docs/LOADTEST.md
+- [x] Node agent bug hunt: exponential backoff with jitter when the gateway is down, job deadlines and wedged-Ollama timeout, Ollama errors reported as fail never done, prompts never in logs, update with sha256 + smoke-run + atomic swap + rollback, pause finishes running jobs, maxParallel config — 73 agent tests
+- [x] Installer idempotent and clean on failed download; chain adapters accept checksummed/lowercase EVM addresses and base58/base64 Solana signatures — 59 adapter tests
+- [ ] Web app bug hunt (auth races, streaming abort, stale sessions, mobile) — next, ~1 hour of my time
+- [ ] Status page + public node explorer; buyback floor; onboarding + launch pack — offered, not started
+
 ## Open decisions and inputs
 
 | Decision | Default if you don't say | Needed by |
