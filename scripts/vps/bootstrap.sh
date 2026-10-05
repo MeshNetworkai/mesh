@@ -140,10 +140,18 @@ ${geo_block}
 	@admin path /admin /admin/*
 	respond @admin 404
 
+	# Deploys recreate the gateway container. Pooled keep-alive connections to the old container go stale
+	# and Go only retries GETs on a dead pooled connection, so POSTs got a bare 502 (no CORS headers → the
+	# browser shows a CORS error) for up to two minutes after every deploy. No pooling to a localhost
+	# upstream (a new TCP connection per request costs nothing here), and dial failures during the swap
+	# itself are retried for up to 15 s instead of failing the request.
 	reverse_proxy 127.0.0.1:${port} {
+		lb_try_duration 15s
+		lb_try_interval 250ms
 		flush_interval -1 # stream SSE chunks immediately
 		transport http {
 			read_timeout 10m # long generations
+			keepalive off
 		}
 	}
 }
