@@ -13,7 +13,7 @@ test.describe('landing', () => {
     const chat = page.getByLabel('Try the network');
     await expect(chat).toBeVisible();
     await expect(chat).toContainText('Live · Mesh network');
-    await expect(chat.locator('.pill')).toContainText(/\d+ \/ \d+ free/);
+    await expect(chat.locator('.pill.num')).toContainText(/\d+ \/ \d+ free/);
     await expect(chat.getByRole('button', { name: 'Explain how Mesh pays for AI' })).toBeVisible();
     await expect(chat.getByLabel('Message')).toBeVisible();
     await expect(chat.getByRole('button', { name: 'Send' })).toBeDisabled();
