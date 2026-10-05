@@ -35,10 +35,10 @@ interface Dot {
   accent: boolean;
 }
 
-const LINK_PX = 110;
-const DOT_ALPHA = 0.07;
-const ACCENT_ALPHA = 0.35;
-const LINE_ALPHA = 0.06;
+const LINK_PX = 140;
+const DOT_ALPHA = 0.28;
+const ACCENT_ALPHA = 0.85;
+const LINE_ALPHA = 0.18;
 
 /** `--fg` / `--accent` as rgb() so an alpha can be appended. Falls back to near-black/green. */
 function readColours(el: HTMLElement): { fg: [number, number, number]; accent: [number, number, number] } {
@@ -97,7 +97,7 @@ export function DotField({ className = '' }: { className?: string }) {
     let lastColourRead = 0;
 
     const count = () => {
-      const target = phone.matches ? 28 : 70;
+      const target = phone.matches ? 36 : 90;
       // Scale with width around the 1440 reference, within sane bounds.
       return Math.max(12, Math.min(110, Math.round((target * Math.max(320, w)) / (phone.matches ? 390 : 1440))));
     };
@@ -160,7 +160,7 @@ export function DotField({ className = '' }: { className?: string }) {
       for (const d of dots) {
         ctx.fillStyle = d.accent ? rgba(colours.accent, ACCENT_ALPHA) : rgba(fg, DOT_ALPHA);
         ctx.beginPath();
-        ctx.arc(d.x, d.y, d.accent ? 1.6 : 1.8, 0, Math.PI * 2);
+        ctx.arc(d.x, d.y, d.accent ? 2.6 : 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
       mask();

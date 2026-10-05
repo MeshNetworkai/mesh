@@ -1,237 +1,300 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Empty, Notice, Skeleton, Spinner, Tile } from '../components/ui';
+import { Empty, Notice, Skeleton, Spinner } from '../components/ui';
+import { WalletGate } from '../components/WalletGate';
+import { CHAIN_LABEL, PUBLIC_API_URL, TOKENOMICS, addressExplorerUrl } from '../config';
 import { useAuth } from '../lib/auth';
 import { fmtAgo, fmtDate, fmtUsd, shortAddr } from '../lib/format';
-import { useAsync, useMe, useSessionAsync } from '../lib/hooks';
+import { useAsync, useCopy, useKeys, useSessionAsync } from '../lib/hooks';
 import * as market from '../lib/market';
 import { fmtDiscount, quoteLocal, type Book, type BookTier, type Fill, type Listing, type MarketConfig, type MyMarket } from '../lib/market';
 import { errorMessage, useToast } from '../lib/toast';
+import type { ApiKey } from '../lib/types';
 
 /**
  * Credit market (docs/MARKETPLACE.md). Holders list credits they will not use at a discount; buyers pay
- * the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps
- * 2.5% of the price: half joins the next hourly holder pool, half is treasury.
+ * the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps a
+ * fee (config/tokenomics.json marketplace.feeBps; live value on GET /market/config): half joins the next
+ * hourly holder pool, half is treasury.
+ *
+ * Layout: wallet strip → [balance + key card | order book card with the depth ladder and the sell/buy
+ * forms] → claimable proceeds + history. Nothing renders without a wallet except the gate card.
  */
 
+interface HistoryRow {
+  key: string;
+  at: number;
+  kind: string;
+  who: string;
+  credits: number | null;
+  price: number | null;
+  fee: number | null;
+  net: number;
+  status?: string;
+}
+
 const statusWord: Record<string, string> = { open: 'Open', filled: 'Sold out', cancelled: 'Cancelled', expired: 'Expired', pending: 'Pending', paid: 'Paid' };
-const prepaidWord: Record<string, string> = { topup: 'Top-up', market_buy: 'Bought credits', market_sale: 'Sold credits', withdrawal: 'Withdrawal', withdrawal_refund: 'Withdrawal returned', adjustment: 'Adjustment' };
-const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDC payment and pays withdrawals out by hand; USDC checkout replaces this after the token launch.';
+const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDC payment and pays withdrawals out by hand.';
+const BASE_URL = `${PUBLIC_API_URL}/v1`;
+const floor2 = (n: number) => Math.floor(n * 100) / 100;
 
-/** Thin horizontal depth bar; `share` is 0..1 of the deepest tier. */
-function DepthBar({ share, on }: { share: number; on: boolean }) {
+// ---------------------------------------------------------------- Wallet strip ----------------------------------------------------------------
+
+function WalletStrip({ wallet, chain }: { wallet: string; chain: string }) {
+  const [copied, copy] = useCopy();
+  const explorer = addressExplorerUrl(wallet, chain);
   return (
-    <span className="meter" style={{ margin: 0, width: '100%', minWidth: 60, height: 6, display: 'block' }} aria-hidden="true">
-      <i style={{ width: `${Math.max(3, Math.round(share * 100))}%`, background: on ? 'var(--accent)' : 'var(--fg-2)', opacity: on ? 1 : 0.55 }} />
-    </span>
-  );
-}
-
-function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="row between" style={{ gap: 12 }}>
-      <span className="small" style={{ color: 'var(--fg-2)' }}>
-        {label}
-      </span>
-      <span className="num" style={{ fontWeight: strong ? 600 : 400 }}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- Liquidity book ----------------------------------------------------------------
-
-function LiquidityBook({ book, tier, onPick }: { book: Book | null; tier: number | null; onPick: (bps: number) => void }) {
-  const tiers = book?.tiers ?? [];
-  const deepest = Math.max(1e-9, ...tiers.map((t) => t.availableUsd));
-  return (
-    <div className="panel">
-      <div className="row between">
-        <span className="eyebrow">Liquidity book</span>
-        <span className="small muted num">{book ? `${fmtUsd(book.totalAvailableUsd, 0)} across ${book.listings} listing${book.listings === 1 ? '' : 's'}` : ''}</span>
+    <div className="mkt-strip">
+      <div className="stack" style={{ gap: 2 }}>
+        <span className="display d-s">Credit market</span>
+        <span className="small muted">Credits trade below face value and spend at face value, on any model.</span>
       </div>
-      {!book ? (
-        <div className="stack sm">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} w="100%" h="36px" />
-          ))}
-        </div>
-      ) : tiers.length === 0 ? (
-        <Empty title="Nothing on the book">Sellers list credits at a discount; the first listing shows up here within seconds.</Empty>
-      ) : (
-        <div className="tblwrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Discount</th>
-                <th className="num">You pay per $1</th>
-                <th style={{ width: '40%' }}>Depth</th>
-                <th className="num">Available</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tiers.map((t) => {
-                const on = tier === t.discountBps;
-                return (
-                  <tr key={t.discountBps} onClick={() => onPick(t.discountBps)} style={{ cursor: 'pointer', background: on ? 'var(--bg-2)' : undefined }} aria-selected={on}>
-                    <td>
-                      <b>{fmtDiscount(t.discountBps)} off</b>
-                      <span className="small muted">
-                        {' '}
-                        · {t.listings} listing{t.listings === 1 ? '' : 's'}
-                      </span>
-                    </td>
-                    <td className="num">{fmtUsd(t.pricePerUsd, 2)}</td>
-                    <td>
-                      <DepthBar share={t.availableUsd / deepest} on={on} />
-                    </td>
-                    <td className="num">{fmtUsd(t.availableUsd, 2)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="hint">Deepest discount first. Pick a row to buy at that discount; partial fills are fine.</p>
+      <div className="row mkt-wallet" aria-label="Connected wallet">
+        <span className="pill mono" title={wallet}>
+          <span className="dot dot-live" aria-hidden="true" />
+          {shortAddr(wallet, 6, 4)}
+        </span>
+        <button type="button" className="btn ghost sm" onClick={() => void copy(wallet)} aria-label="Copy wallet address">
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        {explorer ? (
+          <a className="btn ghost sm" href={explorer} target="_blank" rel="noreferrer">
+            Explorer
+          </a>
+        ) : null}
+        <span className="pill">{CHAIN_LABEL}</span>
+      </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------- Buy ----------------------------------------------------------------
+// ---------------------------------------------------------------- Left: balance, prepaid, key ----------------------------------------------------------------
 
-function BuyPanel({ cfg, book, tier, mine, onChanged }: { cfg: MarketConfig | null; book: Book | null; tier: number | null; mine: MyMarket | null; onChanged: () => void }) {
+function KeyBlock({ keys, loading, creditsUsd }: { keys: ApiKey[] | null; loading: boolean; creditsUsd: number | null }) {
+  const [copied, copy] = useCopy();
+  const newest = useMemo(() => (keys ?? []).filter((k) => !k.revoked).sort((a, b) => b.created_at - a.created_at)[0] ?? null, [keys]);
+  const used = newest?.spentUsd ?? 0;
+  const available = newest?.spendLimitUsd !== null && newest?.spendLimitUsd !== undefined ? Math.max(0, Math.min(newest.spendLimitUsd - used, creditsUsd ?? Infinity)) : (creditsUsd ?? 0);
+  const share = used + available > 0 ? used / (used + available) : 0;
+  return (
+    <div className="stack sm">
+      <div className="row between">
+        <span className="eyebrow">Your key</span>
+        {newest ? <span className="small muted">{newest.name ?? 'untitled'}</span> : null}
+      </div>
+      {loading && !keys ? (
+        <Skeleton w="100%" h="44px" />
+      ) : newest ? (
+        <>
+          <div className="row between small">
+            <span style={{ color: 'var(--fg-2)' }}>
+              Used <b className="num">{fmtUsd(used, 2)}</b>
+            </span>
+            <span style={{ color: 'var(--fg-2)' }}>
+              Available <b className="num">{creditsUsd === null ? '…' : fmtUsd(available, 2)}</b>
+            </span>
+          </div>
+          <span className="meter mkt-meter" aria-hidden="true">
+            <i style={{ width: `${Math.round(share * 100)}%` }} />
+          </span>
+        </>
+      ) : (
+        <p className="small muted">No key yet. One is created when you first chat, or make one now.</p>
+      )}
+      <div className="field">
+        <span className="lbl">Base URL</span>
+        <div className="keybox">
+          <input className="input sm mono" value={BASE_URL} readOnly onFocus={(e) => e.currentTarget.select()} aria-label="API base URL" />
+          <button type="button" className="btn secondary sm" onClick={() => void copy(BASE_URL)}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+      <div className="row">
+        <Link className="btn ghost sm" to="/app/keys">
+          {newest ? 'Manage keys' : 'Create a key'}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | null; loading: boolean; onBuy: () => void; onChanged: () => void }) {
   const { token } = useAuth();
   const toast = useToast();
-  const [amount, setAmount] = useState('20');
-  const [listingId, setListingId] = useState<string>('');
-  const [busy, setBusy] = useState(false);
-  const chosen: BookTier | null = useMemo(() => (book?.tiers ?? []).find((t) => t.discountBps === tier) ?? null, [book, tier]);
-  const open = useAsync(chosen ? () => market.getOpenListings({ discountBps: chosen.discountBps, limit: 50 }) : null, [chosen?.discountBps], 15_000);
-  const listings = useMemo(() => (open.data?.listings ?? []).filter((l) => !mine || l.id !== mine.listings.find((m) => m.id === l.id)?.id), [open.data, mine]);
-  useEffect(() => {
-    if (!listings.some((l) => l.id === listingId)) setListingId(listings[0]?.id ?? '');
-  }, [listings, listingId]);
-  const listing = listings.find((l) => l.id === listingId) ?? null;
-
-  const amt = Number(amount);
-  const feeBps = cfg?.feeBps ?? 250;
-  const q = chosen && Number.isFinite(amt) && amt > 0 ? quoteLocal(amt, chosen.discountBps, feeBps, cfg?.feeToHoldersBps) : null;
-  const minFill = cfg?.minFillUsd ?? 0.01;
+  const keys = useKeys();
+  const credits = mine?.creditBalanceUsd ?? null;
   const prepaid = mine?.prepaid.usd ?? null;
-  const tooSmall = q !== null && amt < minFill && amt !== listing?.remainingUsd;
-  const tooBig = q !== null && listing !== null && amt > listing.remainingUsd + 1e-9;
-  const cantAfford = q !== null && prepaid !== null && q.buyerPaysUsd > prepaid + 1e-9;
+  const [wdOpen, setWdOpen] = useState(false);
+  const [wd, setWd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const wdAmt = Number(wd);
+  const wdOk = Number.isFinite(wdAmt) && wdAmt > 0 && prepaid !== null && wdAmt <= prepaid + 1e-9;
+  const pending = (mine?.withdrawals ?? []).filter((w) => w.status === 'pending');
 
-  const submit = async (e: FormEvent) => {
+  const withdraw = async (e: FormEvent) => {
     e.preventDefault();
-    if (!token || !listing || !q || tooSmall || tooBig || cantAfford) return;
+    if (!token || !wdOk) return;
     setBusy(true);
     try {
-      const r = await market.fill(token, { listingId: listing.id, amountUsd: amt });
-      toast.ok(`${fmtUsd(r.creditsUsd)} of credit landed in your balance for ${fmtUsd(r.paidUsd)}.`);
+      const w = await market.withdraw(token, wdAmt);
+      toast.ok(`Withdrawal of ${fmtUsd(w.amountUsd)} requested. The team pays it out and marks it done.`);
+      setWd('');
+      setWdOpen(false);
       onChanged();
-      void open.reload();
     } catch (err) {
       toast.error(errorMessage(err));
-      onChanged();
-      void open.reload();
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <form className="panel" onSubmit={submit}>
-      <div className="row between">
-        <span className="eyebrow">Buy credits</span>
-        <span className="small muted num">{token ? (prepaid === null ? <Skeleton w="8ch" /> : `${fmtUsd(prepaid)} prepaid`) : ''}</span>
+    <section className="panel mkt-card" aria-label="Your balance">
+      <span className="eyebrow">Available credit balance</span>
+      <div className="row between" style={{ alignItems: 'flex-end' }}>
+        <span className="mkt-big num" data-testid="credit-balance">
+          {loading && !mine ? <Skeleton w="5ch" h="0.9em" /> : fmtUsd(credits, 2)}
+        </span>
+        <button type="button" className="btn primary" onClick={onBuy}>
+          Buy
+        </button>
       </div>
-      {!token ? <Notice>Connect a wallet to buy. Credits land in the wallet you sign in with.</Notice> : null}
-      {token && prepaid === 0 ? <Notice>{BETA_TOPUP}</Notice> : null}
-      {!chosen ? (
-        <span className="small muted">Pick a discount on the liquidity book to see the price.</span>
-      ) : (
-        <>
-          <div className="field">
-            <label htmlFor="buy-listing">Listing at {fmtDiscount(chosen.discountBps)} off</label>
-            {open.loading && !open.data ? (
-              <Skeleton w="100%" h="38px" />
-            ) : listings.length === 0 ? (
-              <span className="small muted">Nothing left at this discount that is not yours. Pick another row.</span>
-            ) : (
-              <select id="buy-listing" className="input" value={listingId} onChange={(e) => setListingId(e.target.value)}>
-                {listings.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {fmtUsd(l.remainingUsd)} left · listed {fmtAgo(l.created_at)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="buy-amount">Credit you want, USD face value</label>
-            <div className="market-amount">
-              <input id="buy-amount" className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="20" disabled={!listing} />
-              <button type="button" className="btn ghost sm" onClick={() => listing && setAmount(String(listing.remainingUsd))} disabled={!listing}>
-                All of it
-              </button>
-            </div>
-          </div>
-          {q && listing ? (
-            <div className="stack sm">
-              <Line label="Face value" value={fmtUsd(q.creditsUsd)} />
-              <Line label={`Price at ${fmtDiscount(chosen.discountBps)} off`} value={`${fmtUsd(q.pricePerUsd, 2)} per $1`} />
-              <Line label={`Fee ${feeBps / 100}% (paid by the seller)`} value={fmtUsd(q.feeUsd)} />
-              <Line label="You pay, from prepaid" value={fmtUsd(q.buyerPaysUsd)} strong />
-              <Line label="You receive, credits" value={fmtUsd(q.creditsUsd)} strong />
-              {tooSmall ? <Notice kind="bad">Minimum buy is {fmtUsd(minFill)} unless you take the whole remainder.</Notice> : null}
-              {tooBig ? <Notice kind="bad">Only {fmtUsd(listing.remainingUsd)} is left on this listing.</Notice> : null}
-              {cantAfford && prepaid !== 0 ? <Notice kind="bad">That is more than your prepaid balance ({fmtUsd(prepaid ?? 0)}).</Notice> : null}
-            </div>
-          ) : null}
-          <div className="row">
-            <button type="submit" className="btn primary" disabled={!token || !listing || !q || tooSmall || tooBig || cantAfford || busy}>
-              {busy ? <Spinner /> : 'Buy credits'}
+      <p className="small" style={{ color: 'var(--fg-2)' }}>
+        Yours to spend through a key, list on the book, or keep.
+      </p>
+
+      <hr className="mkt-div" />
+
+      <div className="row between">
+        <span className="eyebrow">Your prepaid balance</span>
+        {pending.length > 0 ? <span className="small muted num">{fmtUsd(pending.reduce((a, w) => a + w.amountUsd, 0))} pending</span> : null}
+      </div>
+      <div className="row between">
+        <span className="display d-s num">{loading && !mine ? <Skeleton w="5ch" h="0.9em" /> : fmtUsd(prepaid, 2)}</span>
+        <button type="button" className="btn secondary sm" onClick={() => setWdOpen((v) => !v)} disabled={!prepaid} aria-expanded={wdOpen}>
+          Withdraw
+        </button>
+      </div>
+      {wdOpen ? (
+        <form className="stack sm" onSubmit={withdraw} aria-label="Withdraw prepaid balance">
+          <div className="market-amount">
+            <input className="input sm" inputMode="decimal" value={wd} onChange={(e) => setWd(e.target.value)} placeholder="0.00" aria-label="Amount to withdraw, USD" autoFocus />
+            <button type="button" className="btn ghost sm" onClick={() => prepaid !== null && setWd(String(floor2(prepaid)))}>
+              Max
+            </button>
+            <button type="submit" className="btn primary sm" disabled={!wdOk || busy}>
+              {busy ? <Spinner /> : 'Request'}
             </button>
           </div>
-        </>
+          <p className="hint">The amount leaves your balance now; the team sends USDC to this wallet and marks it paid.</p>
+        </form>
+      ) : (
+        <p className="hint">Buys are paid from here, sales are paid into here. {BETA_TOPUP}</p>
       )}
-      <p className="hint">Credits arrive the moment the buy goes through and spend like any other credit, on any model.</p>
-    </form>
+
+      <hr className="mkt-div" />
+
+      <KeyBlock keys={keys.data} loading={keys.loading} creditsUsd={credits} />
+    </section>
   );
 }
 
-// ---------------------------------------------------------------- Sell ----------------------------------------------------------------
+// ---------------------------------------------------------------- Right: order book ----------------------------------------------------------------
 
-function SellPanel({ cfg, onChanged }: { cfg: MarketConfig | null; onChanged: () => void }) {
+function DepthLadder({ book, tier, mineTiers, onPick }: { book: Book | null; tier: number | null; mineTiers: Set<number>; onPick: (bps: number) => void }) {
+  const tiers = useMemo(() => [...(book?.tiers ?? [])].sort((a, b) => b.discountBps - a.discountBps), [book]);
+  const deepest = Math.max(1e-9, ...tiers.map((t) => t.availableUsd));
+  if (!book) {
+    return (
+      <div className="ladder" aria-busy="true">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} w="100%" h="42px" />
+        ))}
+      </div>
+    );
+  }
+  if (tiers.length === 0) return <Empty title="Nothing on the book">Sellers list credits at a discount; the first listing shows up here within seconds.</Empty>;
+  return (
+    <div className="ladder" role="listbox" aria-label="Order book by discount">
+      <div className="ladder-head small muted">
+        <span>Discount</span>
+        <span className="num">Available</span>
+      </div>
+      {tiers.map((t, i) => {
+        const on = tier === t.discountBps;
+        return (
+          <button
+            type="button"
+            key={t.discountBps}
+            role="option"
+            aria-selected={on}
+            className={`ladder-row${on ? ' on' : ''}${i === 0 ? ' best' : ''}`}
+            style={{ ['--w' as string]: `${Math.max(2, Math.round((t.availableUsd / deepest) * 100))}%` }}
+            onClick={() => onPick(t.discountBps)}
+            title={`${t.listings} listing${t.listings === 1 ? '' : 's'} · ${fmtUsd(t.pricePerUsd, 2)} per $1 of credit`}
+          >
+            <span className="ladder-fill" aria-hidden="true" />
+            <span className="ladder-disc">
+              <b className="num">{fmtDiscount(t.discountBps)} off</b>
+              <span className="small muted num">{fmtUsd(t.pricePerUsd, 2)} per $1</span>
+              {mineTiers.has(t.discountBps) ? <span className="ladder-mine">yours</span> : null}
+            </span>
+            <span className="ladder-amt num">{fmtUsd(t.availableUsd, 2)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Stepper({ value, onChange, min, max, step, id }: { value: number; onChange: (n: number) => void; min: number; max: number; step: number; id: string }) {
+  const clamp = (n: number) => Math.min(max, Math.max(min, Math.round(n / step) * step));
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const commit = () => {
+    const n = Number(text);
+    if (Number.isFinite(n)) onChange(clamp(n));
+    else setText(String(value));
+  };
+  return (
+    <div className="stepper" role="group" aria-label="Discount">
+      <button type="button" className="btn ghost sm" onClick={() => onChange(clamp(value - step))} disabled={value <= min} aria-label="Lower the discount">
+        −
+      </button>
+      <span className="stepper-val num">
+        <input id={id} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} aria-label="Discount, percent" />
+        <span aria-hidden="true">%</span>
+      </span>
+      <button type="button" className="btn ghost sm" onClick={() => onChange(clamp(value + step))} disabled={value >= max} aria-label="Raise the discount">
+        +
+      </button>
+    </div>
+  );
+}
+
+function SellForm({ cfg, mine, onChanged }: { cfg: MarketConfig; mine: MyMarket | null; onChanged: () => void }) {
   const { token } = useAuth();
   const toast = useToast();
-  const me = useMe(20_000);
   const [amount, setAmount] = useState('');
   const [discount, setDiscount] = useState(30);
   const [busy, setBusy] = useState(false);
-
-  const spendable = me.data?.balance.usd ?? null;
+  const spendable = mine?.creditBalanceUsd ?? null;
   const amt = Number(amount);
-  const feeBps = cfg?.feeBps ?? 250;
-  const maxDisc = (cfg?.maxDiscountBps ?? 7000) / 100;
-  const minList = cfg?.minListingUsd ?? 1;
-  const ttlDays = Math.round((cfg?.listingTtlHours ?? 168) / 24);
-  const q = Number.isFinite(amt) && amt > 0 ? quoteLocal(amt, discount * 100, feeBps, cfg?.feeToHoldersBps) : null;
-  const tooSmall = q !== null && amt < minList;
+  const maxDisc = cfg.maxDiscountBps / 100;
+  const q = Number.isFinite(amt) && amt > 0 ? quoteLocal(amt, Math.round(discount * 100), cfg.feeBps, cfg.feeToHoldersBps) : null;
+  const tooSmall = q !== null && amt < cfg.minListingUsd;
   const tooMuch = q !== null && spendable !== null && amt > spendable + 1e-9;
+  const ttlDays = Math.round(cfg.listingTtlHours / 24);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!token || !q || tooSmall || tooMuch) return;
     setBusy(true);
     try {
-      const l = await market.createListing(token, { amountUsd: amt, discountBps: discount * 100 });
+      const l = await market.createListing(token, { amountUsd: amt, discountBps: Math.round(discount * 100) });
       toast.ok(`Listed ${fmtUsd(l.amountUsd)} at ${fmtDiscount(l.discountBps)} off. You receive ${fmtUsd(l.ifFullySold.youReceiveUsd)} when it all sells.`);
       setAmount('');
-      void me.reload();
       onChanged();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -241,62 +304,139 @@ function SellPanel({ cfg, onChanged }: { cfg: MarketConfig | null; onChanged: ()
   };
 
   return (
-    <form className="panel" onSubmit={submit}>
-      <div className="row between">
-        <span className="eyebrow">Sell credits</span>
-        <span className="small muted num">{token ? spendable === null ? <Skeleton w="8ch" /> : `${fmtUsd(spendable, 2)} spendable` : ''}</span>
-      </div>
-      {!token ? <Notice>Connect a wallet to sell credits you will not use.</Notice> : null}
-      <div className="field">
-        <label htmlFor="sell-amount">Credit to sell, USD face value</label>
-        <div className="market-amount">
-          <input id="sell-amount" className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`at least ${minList}`} />
-          <button type="button" className="btn ghost sm" onClick={() => spendable !== null && setAmount((Math.floor(spendable * 100) / 100).toString())} disabled={spendable === null}>
-            All
-          </button>
+    <form className="stack" onSubmit={submit} aria-label="Sell credits">
+      <div className="mkt-form-grid">
+        <div className="field">
+          <label htmlFor="sell-amount">Amount to list, USD</label>
+          <div className="market-amount">
+            <input id="sell-amount" className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`at least ${fmtUsd(cfg.minListingUsd, 0)}`} />
+            <button type="button" className="btn ghost sm" onClick={() => spendable !== null && setAmount(String(floor2(spendable)))} disabled={!spendable}>
+              Max
+            </button>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="sell-discount">Discount</label>
+          <Stepper id="sell-discount" value={discount} onChange={setDiscount} min={0} max={maxDisc} step={0.5} />
         </div>
       </div>
-      <div className="field">
-        <label htmlFor="sell-discount">
-          Discount: <b className="num">{discount}% off</b>
-        </label>
-        <input id="sell-discount" type="range" min={0} max={maxDisc} step={1} value={discount} onChange={(e) => setDiscount(Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--accent)' }} />
-        <div className="row between small muted">
-          <span>0% · sells slowly</span>
-          <span>{maxDisc}% · sells fast</span>
-        </div>
-      </div>
-      {q ? (
-        <div className="stack sm">
-          <Line label="Face value listed" value={fmtUsd(q.creditsUsd)} />
-          <Line label="Buyer pays" value={fmtUsd(q.buyerPaysUsd)} />
-          <Line label={`Fee ${feeBps / 100}%`} value={`− ${fmtUsd(q.feeUsd)}`} />
-          <Line label="You receive, prepaid USD" value={fmtUsd(q.sellerReceivesUsd)} strong />
-          {tooSmall ? <Notice kind="bad">Listings start at {fmtUsd(minList, 0)}.</Notice> : null}
-          {tooMuch ? <Notice kind="bad">That is more than your spendable balance.</Notice> : null}
-        </div>
-      ) : (
-        <span className="small muted">Enter an amount to see what you would receive.</span>
-      )}
-      <div className="row">
-        <button type="submit" className="btn primary" disabled={!token || !q || tooSmall || tooMuch || busy}>
-          {busy ? <Spinner /> : 'List for sale'}
-        </button>
-      </div>
-      <p className="hint">
-        Listed credit is held in escrow until it sells, you cancel, or the listing expires after {ttlDays} days. Proceeds land in your prepaid balance and can be withdrawn below.
+      <p className="small num mkt-preview" data-testid="sell-preview" aria-live="polite">
+        {q ? (
+          <>
+            Buyer pays <b>{fmtUsd(q.buyerPaysUsd)}</b> · you receive <b>{fmtUsd(q.sellerReceivesUsd)}</b> after the {cfg.feePercent}% fee
+          </>
+        ) : (
+          <span className="muted">Enter an amount to see what a buyer pays and what you receive.</span>
+        )}
       </p>
+      {tooSmall ? <Notice kind="bad">Listings start at {fmtUsd(cfg.minListingUsd, 0)}.</Notice> : null}
+      {tooMuch ? <Notice kind="bad">That is more than your available credit ({fmtUsd(spendable ?? 0)}).</Notice> : null}
+      <div className="row between">
+        <button type="submit" className="btn primary" disabled={!token || !q || tooSmall || tooMuch || busy}>
+          {busy ? <Spinner /> : 'List on the book'}
+        </button>
+        <span className="hint">Held in escrow until it sells, you cancel, or {ttlDays} days pass.</span>
+      </div>
     </form>
   );
 }
 
-// ---------------------------------------------------------------- Mine ----------------------------------------------------------------
+function BuyForm({ cfg, book, tier, mine, onChanged }: { cfg: MarketConfig; book: Book | null; tier: number | null; mine: MyMarket | null; onChanged: () => void }) {
+  const { token } = useAuth();
+  const toast = useToast();
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const chosen: BookTier | null = useMemo(() => (book?.tiers ?? []).find((t) => t.discountBps === tier) ?? null, [book, tier]);
+  const open = useAsync(chosen ? () => market.getOpenListings({ discountBps: chosen.discountBps, limit: 50 }) : null, [chosen?.discountBps], 15_000);
+  const myIds = useMemo(() => new Set((mine?.listings ?? []).map((l) => l.id)), [mine]);
+  // Oldest first, never my own: a buy walks these in order until the amount is filled.
+  const listings = useMemo(() => (open.data?.listings ?? []).filter((l) => !myIds.has(l.id) && (!l.seller || l.seller !== mine?.wallet)).sort((a, b) => a.created_at - b.created_at), [open.data, myIds, mine?.wallet]);
+  const available = listings.reduce((a, l) => a + l.remainingUsd, 0);
+  const prepaid = mine?.prepaid.usd ?? null;
+  const amt = Number(amount);
+  const q = chosen && Number.isFinite(amt) && amt > 0 ? quoteLocal(amt, chosen.discountBps, cfg.feeBps, cfg.feeToHoldersBps) : null;
+  const tooSmall = q !== null && amt < cfg.minFillUsd && Math.abs(amt - available) > 1e-9;
+  const tooBig = q !== null && amt > available + 1e-9;
+  const cantAfford = q !== null && prepaid !== null && q.buyerPaysUsd > prepaid + 1e-9;
+  const maxFace = chosen ? Math.min(available, prepaid !== null ? prepaid / chosen.pricePerUsd : available) : 0;
 
-function MyListings({ mine, loading, onChanged }: { mine: MyMarket | null; loading: boolean; onChanged: () => void }) {
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !q || !chosen || tooSmall || tooBig || cantAfford) return;
+    setBusy(true);
+    let left = amt;
+    let got = 0;
+    let paid = 0;
+    try {
+      for (const l of listings) {
+        if (left <= 1e-9) break;
+        const take = Math.min(left, l.remainingUsd);
+        const r = await market.fill(token, { listingId: l.id, amountUsd: Number(take.toFixed(6)) });
+        got += r.creditsUsd;
+        paid += r.paidUsd;
+        left -= take;
+      }
+      toast.ok(`${fmtUsd(got)} of credit landed in your balance for ${fmtUsd(paid)}.`);
+      setAmount('');
+    } catch (err) {
+      toast.error(got > 0 ? `${fmtUsd(got)} bought, then: ${errorMessage(err)}` : errorMessage(err));
+    } finally {
+      setBusy(false);
+      onChanged();
+      void open.reload();
+    }
+  };
+
+  if (!chosen) return <p className="small muted">Pick a row on the book to buy at that discount.</p>;
+  return (
+    <form className="stack" onSubmit={submit} aria-label="Buy credits">
+      <div className="mkt-form-grid">
+        <div className="field">
+          <span className="lbl">Tier</span>
+          <div className="mkt-tier num">
+            <b>{fmtDiscount(chosen.discountBps)} off</b>
+            <span className="small muted">
+              {fmtUsd(chosen.pricePerUsd, 2)} per $1 · {open.loading && !open.data ? '…' : `${fmtUsd(available, 2)} available`}
+            </span>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="buy-amount">Credits to buy, USD</label>
+          <div className="market-amount">
+            <input id="buy-amount" className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="20" />
+            <button type="button" className="btn ghost sm" onClick={() => setAmount(String(floor2(maxFace)))} disabled={maxFace <= 0}>
+              Max
+            </button>
+          </div>
+        </div>
+      </div>
+      <p className="small num mkt-preview" data-testid="buy-preview" aria-live="polite">
+        {q ? (
+          <>
+            You pay <b>{fmtUsd(q.buyerPaysUsd)}</b> from prepaid · <b>{fmtUsd(q.creditsUsd)}</b> of credit lands in your balance
+          </>
+        ) : (
+          <span className="muted">Enter an amount. Credits arrive the moment the buy goes through.</span>
+        )}
+      </p>
+      {tooSmall ? <Notice kind="bad">Minimum buy is {fmtUsd(cfg.minFillUsd)} unless you take everything at this tier.</Notice> : null}
+      {tooBig ? <Notice kind="bad">Only {fmtUsd(available)} is on the book at this discount from other wallets.</Notice> : null}
+      {cantAfford ? <Notice kind="bad">That is more than your prepaid balance ({fmtUsd(prepaid ?? 0)}). {prepaid === 0 ? BETA_TOPUP : ''}</Notice> : null}
+      <div className="row between">
+        <button type="submit" className="btn primary" disabled={!token || !q || tooSmall || tooBig || cantAfford || busy || listings.length === 0}>
+          {busy ? <Spinner /> : 'Buy'}
+        </button>
+        <span className="hint num">Prepaid {prepaid === null ? '…' : fmtUsd(prepaid)}</span>
+      </div>
+    </form>
+  );
+}
+
+function MyOpenListings({ mine, onChanged }: { mine: MyMarket; onChanged: () => void }) {
   const { token } = useAuth();
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
-  const listings = mine?.listings ?? [];
+  const open = mine.listings.filter((l) => l.status === 'open');
   const cancel = async (l: Listing) => {
     if (!token) return;
     setBusy(l.id);
@@ -310,125 +450,77 @@ function MyListings({ mine, loading, onChanged }: { mine: MyMarket | null; loadi
       setBusy(null);
     }
   };
+  if (open.length === 0) return <p className="small muted mkt-yours">Nothing listed from this wallet.</p>;
   return (
-    <div className="stack sm">
+    <div className="mkt-yours" aria-label="Your listings">
+      <span className="small muted">
+        Your listings · {open.length} open · <span className="num">{fmtUsd(open.reduce((a, l) => a + l.remainingUsd, 0))}</span> left
+      </span>
+      <ul className="mkt-yours-list">
+        {open.map((l) => (
+          <li key={l.id} className="num">
+            <span>
+              <b>{fmtDiscount(l.discountBps)} off</b> · {fmtUsd(l.remainingUsd)} of {fmtUsd(l.amountUsd)} left · until {fmtDate(l.expires_at)}
+            </span>
+            <button type="button" className="btn ghost sm" onClick={() => cancel(l)} disabled={busy !== null}>
+              {busy === l.id ? <Spinner /> : 'Cancel'}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function OrderBookCard({ cfg, book, tier, mine, side, setSide, onPick, onChanged }: { cfg: MarketConfig | null; book: Book | null; tier: number | null; mine: MyMarket | null; side: 'sell' | 'buy'; setSide: (s: 'sell' | 'buy') => void; onPick: (bps: number) => void; onChanged: () => void }) {
+  const mineTiers = useMemo(() => new Set((mine?.listings ?? []).filter((l) => l.status === 'open').map((l) => l.discountBps)), [mine]);
+  return (
+    <section className="panel mkt-card mkt-book" aria-label="Order book">
       <div className="row between">
-        <span className="eyebrow">Your listings</span>
-        <span className="small muted">{listings.filter((l) => l.status === 'open').length} open</span>
+        <span className="eyebrow">Order book</span>
+        <span className="small num" style={{ color: 'var(--fg-2)' }} data-testid="book-total">
+          {book ? (
+            <>
+              <b>{fmtUsd(book.totalAvailableUsd, 0)}</b> credits available
+            </>
+          ) : (
+            <Skeleton w="12ch" />
+          )}
+        </span>
       </div>
-      {loading && !mine ? (
-        <Skeleton w="100%" h="72px" />
-      ) : listings.length === 0 ? (
-        <Empty title="No listings yet">List part of your balance above; it stays yours until someone buys it.</Empty>
-      ) : (
-        <div className="tblwrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Listed</th>
-                <th>Status</th>
-                <th className="num">Discount</th>
-                <th className="num">Listed</th>
-                <th className="num">Sold</th>
-                <th className="num">Left</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {listings.map((l) => (
-                <tr key={l.id}>
-                  <td className="date">{fmtDate(l.created_at)}</td>
-                  <td>
-                    {statusWord[l.status] ?? l.status}
-                    {l.status === 'open' ? <span className="small muted"> · until {fmtDate(l.expires_at)}</span> : null}
-                  </td>
-                  <td className="num">{fmtDiscount(l.discountBps)}</td>
-                  <td className="num">{fmtUsd(l.amountUsd)}</td>
-                  <td className={`num ${l.soldUsd > 0 ? 'pos' : ''}`}>{fmtUsd(l.soldUsd)}</td>
-                  <td className="num">{fmtUsd(l.remainingUsd)}</td>
-                  <td className="actions">
-                    {l.status === 'open' ? (
-                      <button type="button" className="btn ghost sm" onClick={() => cancel(l)} disabled={busy !== null}>
-                        {busy === l.id ? <Spinner /> : 'Cancel'}
-                      </button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      {mine ? <MyOpenListings mine={mine} onChanged={onChanged} /> : <Skeleton w="20ch" />}
+      <DepthLadder book={book} tier={tier} mineTiers={mineTiers} onPick={onPick} />
+
+      <div className="seg mkt-seg" role="tablist" aria-label="Side">
+        <button type="button" role="tab" aria-selected={side === 'sell'} className={side === 'sell' ? 'on' : ''} onClick={() => setSide('sell')}>
+          Sell credits
+        </button>
+        <button type="button" role="tab" aria-selected={side === 'buy'} className={side === 'buy' ? 'on' : ''} onClick={() => setSide('buy')}>
+          Buy credits
+        </button>
+      </div>
+      {!cfg ? <Skeleton w="100%" h="120px" /> : side === 'sell' ? <SellForm cfg={cfg} mine={mine} onChanged={onChanged} /> : <BuyForm cfg={cfg} book={book} tier={tier} mine={mine} onChanged={onChanged} />}
+    </section>
   );
 }
 
-function MyFills({ mine, loading }: { mine: MyMarket | null; loading: boolean }) {
-  const rows = useMemo(() => {
-    if (!mine) return [] as Array<Fill & { side: 'bought' | 'sold' }>;
-    return [...mine.fills.asBuyer.map((f) => ({ ...f, side: 'bought' as const })), ...mine.fills.asSeller.map((f) => ({ ...f, side: 'sold' as const }))].sort((a, b) => b.created_at - a.created_at).slice(0, 20);
-  }, [mine]);
-  return (
-    <div className="stack sm">
-      <span className="eyebrow">Your fills</span>
-      {loading && !mine ? (
-        <Skeleton w="100%" h="72px" />
-      ) : rows.length === 0 ? (
-        <Empty title="No fills yet">Every buy and every sale of yours shows up here with the exact fee.</Empty>
-      ) : (
-        <div className="tblwrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Side</th>
-                <th>Counterparty</th>
-                <th className="num">Credits</th>
-                <th className="num">Discount</th>
-                <th className="num">Price</th>
-                <th className="num">Fee</th>
-                <th className="num">Net to you</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((f) => (
-                <tr key={`${f.side}-${f.id}`}>
-                  <td className="date">{fmtAgo(f.created_at)}</td>
-                  <td>{f.side === 'bought' ? 'Bought' : 'Sold'}</td>
-                  <td className="small muted">{shortAddr(f.side === 'bought' ? f.seller : f.buyer, 6, 4)}</td>
-                  <td className="num">{fmtUsd(f.creditsUsd)}</td>
-                  <td className="num">{fmtDiscount(f.discountBps)}</td>
-                  <td className="num">{fmtUsd(f.paidUsd)}</td>
-                  <td className="num">{f.side === 'sold' ? fmtUsd(f.feeUsd) : '—'}</td>
-                  <td className={`num ${f.side === 'sold' ? 'pos' : ''}`}>{f.side === 'sold' ? `+${fmtUsd(f.sellerReceivedUsd)}` : `−${fmtUsd(f.paidUsd)}`}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
+// ---------------------------------------------------------------- Bottom: proceeds + history ----------------------------------------------------------------
 
-function PrepaidPanel({ mine, loading, onChanged }: { mine: MyMarket | null; loading: boolean; onChanged: () => void }) {
+function ProceedsCard({ mine, loading, onChanged }: { mine: MyMarket | null; loading: boolean; onChanged: () => void }) {
   const { token } = useAuth();
   const toast = useToast();
-  const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
-  const bal = mine?.prepaid.usd ?? null;
-  const amt = Number(amount);
-  const ok = Number.isFinite(amt) && amt > 0 && bal !== null && amt <= bal + 1e-9;
+  const prepaid = mine?.prepaid.usd ?? null;
+  const sold = mine?.fills.asSeller ?? [];
+  const earned = sold.reduce((a, f) => a + f.sellerReceivedUsd, 0);
   const pending = (mine?.withdrawals ?? []).filter((w) => w.status === 'pending');
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token || !ok) return;
+  const claim = async () => {
+    if (!token || !prepaid) return;
     setBusy(true);
     try {
-      const w = await market.withdraw(token, amt);
-      toast.ok(`Withdrawal of ${fmtUsd(w.amountUsd)} requested. The team pays it out and marks it done.`);
-      setAmount('');
+      const w = await market.withdraw(token, floor2(prepaid));
+      toast.ok(`Claim of ${fmtUsd(w.amountUsd)} requested. The team sends USDC to this wallet and marks it paid.`);
       onChanged();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -437,141 +529,154 @@ function PrepaidPanel({ mine, loading, onChanged }: { mine: MyMarket | null; loa
     }
   };
 
-  return (
-    <div className="panels">
-      <form className="panel" onSubmit={submit}>
-        <span className="eyebrow">Prepaid balance</span>
-        <span className="display d-m num">{loading && !mine ? <Skeleton w="6ch" h="1em" /> : fmtUsd(bal)}</span>
-        <span className="small" style={{ color: 'var(--fg-2)' }}>
-          Buys are paid from here; sales are paid into here. {BETA_TOPUP}
-        </span>
-        <div className="field">
-          <label htmlFor="wd-amount">Withdraw, USD</label>
-          <div className="market-amount">
-            <input id="wd-amount" className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" disabled={bal === null || bal === 0} />
-            <button type="button" className="btn ghost sm" onClick={() => bal !== null && setAmount((Math.floor(bal * 100) / 100).toString())} disabled={!bal}>
-              All
-            </button>
-          </div>
-        </div>
-        <div className="row">
-          <button type="submit" className="btn secondary" disabled={!token || !ok || busy}>
-            {busy ? <Spinner /> : 'Request withdrawal'}
-          </button>
-          {pending.length > 0 ? <span className="small muted num">{fmtUsd(pending.reduce((a, w) => a + w.amountUsd, 0))} pending</span> : null}
-        </div>
-        <p className="hint">The amount leaves your balance at once. The team sends USDC to this wallet and marks the request paid; it shows on the right.</p>
-      </form>
+  const rows = useMemo<HistoryRow[]>(() => {
+    if (!mine) return [];
+    const fills: HistoryRow[] = [...mine.fills.asBuyer.map((f) => ({ ...f, side: 'bought' as const })), ...mine.fills.asSeller.map((f) => ({ ...f, side: 'sold' as const }))].map((f: Fill & { side: 'bought' | 'sold' }) => ({
+      key: `${f.side}-${f.id}`,
+      at: f.created_at,
+      kind: f.side === 'bought' ? 'Bought' : 'Sold',
+      who: shortAddr(f.side === 'bought' ? f.seller : f.buyer, 6, 4),
+      credits: f.creditsUsd,
+      price: f.paidUsd,
+      fee: f.side === 'sold' ? f.feeUsd : null,
+      net: f.side === 'sold' ? f.sellerReceivedUsd : -f.paidUsd,
+    }));
+    const wds: HistoryRow[] = mine.withdrawals.map((w) => ({
+      key: `w-${w.id}`,
+      at: w.created_at,
+      kind: 'Withdrawal',
+      who: w.txRef ? shortAddr(w.txRef, 6, 6) : '—',
+      credits: null,
+      price: null,
+      fee: null,
+      net: -w.amountUsd,
+      status: statusWord[w.status] ?? w.status,
+    }));
+    return [...fills, ...wds].sort((a, b) => b.at - a.at).slice(0, 25);
+  }, [mine]);
 
-      <div className="panel">
-        <span className="eyebrow">Prepaid activity</span>
-        {loading && !mine ? (
-          <Skeleton w="100%" h="72px" />
-        ) : (mine?.withdrawals.length ?? 0) + (mine?.prepaid.ledger.length ?? 0) === 0 ? (
-          <p className="hint">Top-ups, buys, sales and withdrawals show up here.</p>
-        ) : (
-          <div className="tblwrap">
-            <table className="tbl">
-              <tbody>
-                {(mine?.withdrawals ?? []).slice(0, 4).map((w) => (
-                  <tr key={`w${w.id}`}>
-                    <td className="date">{fmtDate(w.created_at)}</td>
-                    <td>
-                      Withdrawal · {statusWord[w.status]}
-                      {w.txRef ? <span className="small muted"> · {shortAddr(w.txRef, 6, 6)}</span> : null}
-                    </td>
-                    <td className="num">−{fmtUsd(w.amountUsd)}</td>
-                  </tr>
-                ))}
-                {(mine?.prepaid.ledger ?? [])
-                  .filter((p) => p.kind !== 'withdrawal')
-                  .slice(0, 6)
-                  .map((p) => (
-                    <tr key={`p${p.id}`}>
-                      <td className="date">{fmtDate(p.created_at)}</td>
-                      <td>{prepaidWord[p.kind] ?? p.kind}</td>
-                      <td className={`num ${p.deltaUsd > 0 ? 'pos' : ''}`}>
-                        {p.deltaUsd > 0 ? '+' : '−'}
-                        {fmtUsd(Math.abs(p.deltaUsd))}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+  return (
+    <section className="panel mkt-card" aria-label="Claimable from sales">
+      <div className="mkt-claim">
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="eyebrow">Claimable from sales</span>
+          <span className="display d-m num">{loading && !mine ? <Skeleton w="5ch" h="0.9em" /> : fmtUsd(prepaid, 2)}</span>
+          <span className="small muted num">
+            {sold.length > 0 ? `${fmtUsd(earned)} earned from ${sold.length} sale${sold.length === 1 ? '' : 's'}, all time` : 'Proceeds from your listings land here as prepaid USD.'}
+            {pending.length > 0 ? ` · ${fmtUsd(pending.reduce((a, w) => a + w.amountUsd, 0))} being paid out` : ''}
+          </span>
+        </div>
+        <button type="button" className="btn secondary" onClick={() => void claim()} disabled={!prepaid || busy}>
+          {busy ? <Spinner /> : 'Claim'}
+        </button>
       </div>
-    </div>
+
+      <div className="row between" style={{ marginTop: 8 }}>
+        <span className="eyebrow">History</span>
+        <span className="small muted">{rows.length ? `${rows.length} most recent` : ''}</span>
+      </div>
+      {loading && !mine ? (
+        <Skeleton w="100%" h="72px" />
+      ) : rows.length === 0 ? (
+        <p className="hint">Every buy, sale and withdrawal of yours shows up here with the exact fee.</p>
+      ) : (
+        <div className="tblwrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Type</th>
+                <th>Counterparty</th>
+                <th className="num">Credits</th>
+                <th className="num">Price</th>
+                <th className="num">Fee</th>
+                <th className="num">Net to you</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td className="date">{fmtAgo(r.at)}</td>
+                  <td>
+                    {r.kind}
+                    {r.status ? <span className="small muted"> · {r.status}</span> : null}
+                  </td>
+                  <td className="small muted">{r.who}</td>
+                  <td className="num">{r.credits === null ? '—' : fmtUsd(r.credits)}</td>
+                  <td className="num">{r.price === null ? '—' : fmtUsd(r.price)}</td>
+                  <td className="num">{r.fee === null ? '—' : fmtUsd(r.fee)}</td>
+                  <td className={`num ${r.net > 0 ? 'pos' : ''}`}>{r.net > 0 ? `+${fmtUsd(r.net)}` : `−${fmtUsd(Math.abs(r.net))}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
 // ---------------------------------------------------------------- Page ----------------------------------------------------------------
 
+/** Public teaser under the gate's button: the best discount and the depth, from GET /market/book. */
+function BookTeaser() {
+  const { data, loading } = useAsync(market.getBook, [], 60_000);
+  if (loading && !data) return <Skeleton w="22ch" h="0.9em" />;
+  if (!data || data.bestDiscountBps === null) return <>Nothing listed right now. Be the first to sell.</>;
+  return (
+    <span className="num">
+      Best discount right now: <b>{fmtDiscount(data.bestDiscountBps)}</b> · {fmtUsd(data.totalAvailableUsd, 0)} available
+    </span>
+  );
+}
+
 export function Market() {
-  const { token } = useAuth();
+  const { session } = useAuth();
+  if (!session) {
+    return (
+      <WalletGate eyebrow="Credit market" title="Connect a wallet to see the book" teaser={<BookTeaser />}>
+        Holders sell credit they will not use; you buy it below face value and spend it on any model.
+      </WalletGate>
+    );
+  }
+  return <MarketInner wallet={session.wallet} chain={session.chain} />;
+}
+
+function MarketInner({ wallet, chain }: { wallet: string; chain: string }) {
   const cfgQ = useAsync(market.getMarketConfig, []);
   const book = useAsync(market.getBook, [], 15_000);
-  const stats = useAsync(market.getMarketStats, [], 30_000);
   const mine = useSessionAsync(market.myMarket, [], 20_000);
   const [tier, setTier] = useState<number | null>(null);
-  const cfg = cfgQ.data ?? book.data?.config ?? null;
-  const s = stats.data;
-  const skel = stats.loading && !s;
+  const [side, setSide] = useState<'sell' | 'buy'>('sell');
+  const cfg = cfgQ.data ?? book.data?.config ?? mine.data?.config ?? null;
   const tiers = book.data?.tiers;
   useEffect(() => {
-    if (tiers && tiers.length > 0 && !tiers.some((t) => t.discountBps === tier)) setTier(tiers[0].discountBps);
+    if (tiers && tiers.length > 0 && !tiers.some((t) => t.discountBps === tier)) setTier([...tiers].sort((a, b) => b.discountBps - a.discountBps)[0].discountBps);
   }, [tiers, tier]);
 
   const changed = () => {
     void book.reload();
-    void stats.reload();
     void mine.reload();
   };
-  const mineData = token ? mine.data : null;
+  const pick = (bps: number) => {
+    setTier(bps);
+    setSide('buy');
+  };
 
   return (
-    <>
-      <div className="row between">
-        <span className="display d-s">Credit market</span>
-        <span className="small muted">{cfg ? `${cfg.feePercent}% fee, paid by the seller · half of it back to holders` : ''}</span>
-      </div>
+    <div className="mkt">
+      <WalletStrip wallet={wallet} chain={chain} />
       {cfgQ.error && !cfg ? <Notice kind="bad">Could not reach the market: {cfgQ.error}</Notice> : null}
-
-      <div className="tiles dense">
-        <Tile label="Best discount" loading={skel} value={s?.bestDiscountBps != null ? `${fmtDiscount(s.bestDiscountBps)} off` : '—'} delta={s ? `${fmtUsd(s.openDepthUsd, 0)} on the book · ${s.openListings} listings` : ' '} deltaKind={s?.bestDiscountBps ? 'up' : ''} />
-        <Tile label="Traded, 24h" loading={skel} value={fmtUsd(s?.last24h.filledUsd ?? null, 0)} delta={s ? `${s.last24h.fills} fills · buyers paid ${fmtUsd(s.last24h.paidUsd, 0)}` : ' '} />
-        <Tile label="Traded, all time" loading={skel} value={fmtUsd(s?.allTime.filledUsd ?? null, 0)} delta={s ? `${s.allTime.fills} fills${s.avgDiscountBps != null ? ` · ${fmtDiscount(s.avgDiscountBps)} average discount` : ''}` : ' '} />
-        <Tile label="Fees to holders" loading={skel} value={fmtUsd(s?.allTime.feesToHoldersUsd ?? null)} delta={s ? `of ${fmtUsd(s.allTime.feesUsd)} in fees, all time` : ' '} deltaKind={s && s.allTime.feesToHoldersUsd > 0 ? 'up' : ''} />
+      {mine.error && !mine.data ? <Notice kind="bad">Could not load your market activity: {mine.error}</Notice> : null}
+      <div className="mkt-grid">
+        <BalanceCard mine={mine.data} loading={mine.loading} onBuy={() => setSide('buy')} onChanged={changed} />
+        <OrderBookCard cfg={cfg} book={book.data} tier={tier} mine={mine.data} side={side} setSide={setSide} onPick={pick} onChanged={changed} />
       </div>
-
-      <p className="small" style={{ color: 'var(--fg-2)', maxWidth: '72ch' }}>
-        Holders sell credit they will not use; anyone buys it below face value and spends it on any model. Credits move at face value, buyers pay from a prepaid USD balance, sellers are paid
-        into theirs, and Mesh keeps {cfg ? cfg.feePercent : 2.5}% of the price: half goes into the next hourly distribution, half to the treasury.
+      <ProceedsCard mine={mine.data} loading={mine.loading} onChanged={changed} />
+      <p className="hint">
+        Mesh keeps {cfg ? cfg.feePercent : TOKENOMICS.marketplace.feeBps / 100}% of each sale, paid by the seller: half goes into the next hourly holder distribution, half to the treasury. Credits are a licence to use the
+        gateway, not money; they only move between wallets here. <Link to="/docs#market">How the market works</Link>
       </p>
-
-      <LiquidityBook book={book.data} tier={tier} onPick={setTier} />
-
-      <div className="panels">
-        <BuyPanel cfg={cfg} book={book.data} tier={tier} mine={mineData} onChanged={changed} />
-        <SellPanel cfg={cfg} onChanged={changed} />
-      </div>
-
-      {token ? (
-        <>
-          {mine.error && !mine.data ? <Notice kind="bad">Could not load your market activity: {mine.error}</Notice> : null}
-          <MyListings mine={mineData} loading={mine.loading} onChanged={changed} />
-          <MyFills mine={mineData} loading={mine.loading} />
-          <PrepaidPanel mine={mineData} loading={mine.loading} onChanged={changed} />
-        </>
-      ) : (
-        <Notice>Sign in to see your listings, fills and prepaid balance.</Notice>
-      )}
-
-      <p className="hint" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-        How to sell, how to buy, the fee split and a worked example: <Link to="/docs#market">Docs → Marketplace</Link>; the ledger entries behind every trade are in docs/MARKETPLACE.md in the repo. Credits are a licence to
-        use the gateway, not money: they only move between wallets here, and the fee is not refunded. Escrowed credit cannot be spent until the listing closes; a listing expires after{' '}
-        {Math.round((cfg?.listingTtlHours ?? 168) / 24)} days and the remainder returns to the seller.
-      </p>
-    </>
+    </div>
   );
 }

@@ -1,3 +1,5 @@
+import deployRobinhood from '../../../config/deploy.robinhood.json';
+import deployRobinhoodTestnet from '../../../config/deploy.robinhood-testnet.json';
 import tokenomics from '../../../config/tokenomics.json';
 
 export type Chain = 'solana' | 'evm';
@@ -13,6 +15,22 @@ export const DEPLOY_NETWORK: string = String((tokenomics as { deployNetwork?: st
 /** Human label for the chain, for copy ("lives on Robinhood Chain"). */
 export const CHAIN_LABEL: string =
   DEFAULT_CHAIN === 'solana' ? 'Solana' : DEPLOY_NETWORK.startsWith('robinhood') ? `Robinhood Chain${DEPLOY_NETWORK.endsWith('testnet') ? ' testnet' : ''}` : DEPLOY_NETWORK.startsWith('base') ? 'Base' : 'an EVM chain';
+
+/** Block explorer for the configured network (config/deploy.<network>.json → explorer); Solana uses Solscan. */
+export const EXPLORER_URL: string | null =
+  DEFAULT_CHAIN === 'solana'
+    ? 'https://solscan.io'
+    : DEPLOY_NETWORK === 'robinhood-testnet'
+      ? String((deployRobinhoodTestnet as { explorer?: string }).explorer ?? '') || null
+      : DEPLOY_NETWORK === 'robinhood'
+        ? String((deployRobinhood as { explorer?: string }).explorer ?? '') || null
+        : null;
+
+/** Explorer page for a wallet, by the chain the session signed in with (null when no explorer is configured). */
+export function addressExplorerUrl(wallet: string, chain: string): string | null {
+  if (chain === 'solana') return `https://solscan.io/account/${wallet}`;
+  return EXPLORER_URL && EXPLORER_URL !== 'https://solscan.io' ? `${EXPLORER_URL}/address/${wallet}` : null;
+}
 
 export const TOKENOMICS = {
   name: tokenomics.name,

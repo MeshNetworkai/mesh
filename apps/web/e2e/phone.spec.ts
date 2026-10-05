@@ -31,9 +31,9 @@ test('chat at 390px: the rail is a drawer behind the Chats button, the composer 
   await expect(rail).not.toHaveClass(/open/);
 });
 
-test('no horizontal scroll at 390px when signed in: /app, /app/keys, /app/chat', async ({ page }) => {
+test('no horizontal scroll at 390px when signed in: /app, /app/keys, /app/chat, /app/market', async ({ page }) => {
   await signIn(page);
-  for (const path of ['/app', '/app/keys', '/app/chat']) {
+  for (const path of ['/app', '/app/keys', '/app/chat', '/app/market']) {
     await page.goto(path);
     await page.waitForLoadState('networkidle');
     const r = await noHorizontalScroll(page);

@@ -3501,6 +3501,349 @@ table.schema table.schema {
   flex: 0 0 auto;
 }
 
+/* ---------- credit market v2: wallet gate, strip, two cards, depth ladder, stepper ---------- */
+/* Gate (components/WalletGate.tsx): the only thing a page renders before the wallet is connected. */
+.gate {
+  display: flex;
+  justify-content: center;
+  padding: clamp(24px, 6vw, 72px) 0;
+}
+.gate-card {
+  width: min(100%, 520px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: clamp(24px, 4vw, 40px) clamp(20px, 4vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+}
+.gate-card .display {
+  text-wrap: balance;
+}
+.gate-copy {
+  color: var(--fg-2);
+  font-size: 15px;
+  max-width: 40ch;
+}
+.gate-card .btn {
+  margin-top: 4px;
+}
+.gate-teaser {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  width: 100%;
+}
+.gate-teaser b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.mkt {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.mkt-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+.mkt-wallet {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mkt-wallet .pill.mono {
+  font-size: 13px;
+}
+.mkt-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 5fr) minmax(0, 7fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .mkt-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.mkt-card {
+  gap: 14px;
+}
+.mkt-big {
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: clamp(40px, 4.4vw, 56px);
+  letter-spacing: -0.035em;
+  line-height: 1;
+  color: var(--fg);
+}
+.mkt-div {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 2px 0;
+  width: 100%;
+}
+.mkt-meter {
+  margin: 0;
+  height: 6px;
+  border-radius: 3px;
+}
+.mkt-meter i {
+  transition: none;
+}
+
+/* The ladder: one row per discount tier, bar width = share of the deepest tier. */
+.ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ladder-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.ladder-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  font: inherit;
+}
+.ladder-row:hover {
+  border-color: var(--line-2);
+}
+.ladder-row.best {
+  border-color: var(--accent);
+}
+.ladder-row.on {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--fg);
+  border-color: transparent;
+}
+.ladder-row.on.best {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ladder-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w, 0%);
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.ladder-row.on .ladder-fill {
+  background: var(--accent-soft);
+}
+.ladder-disc,
+.ladder-amt {
+  position: relative;
+  z-index: 1;
+}
+.ladder-disc {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.ladder-disc b {
+  font-weight: 600;
+  font-size: 15px;
+}
+.ladder-amt {
+  font-weight: 500;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.ladder-mine {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+  line-height: 16px;
+}
+.mkt-yours {
+  margin: -4px 0 0;
+}
+.mkt-yours-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mkt-yours-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--fg-2);
+  padding: 6px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: 8px;
+}
+.mkt-yours-list li b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mkt-seg {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.mkt-seg button {
+  padding: 7px 14px;
+}
+.mkt-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+@media (max-width: 520px) {
+  .mkt-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.mkt-preview {
+  color: var(--fg-2);
+  margin: -4px 0 0;
+}
+.mkt-preview b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mkt-tier {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  min-height: 46px;
+  justify-content: center;
+}
+.mkt-tier b {
+  font-weight: 600;
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  padding: 3px;
+  background: var(--bg);
+  height: 46px;
+}
+.stepper .btn {
+  padding: 6px 12px;
+  min-width: 36px;
+}
+.stepper-val {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 5.5ch;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 15px;
+}
+.stepper-val input {
+  width: 4ch;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+.stepper-val input:focus {
+  outline: none;
+}
+.mkt-claim {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+
+/* Chat rail: the key section (pages/Chat.tsx). */
+.chat-rail-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.chat-rail-keys .key-line {
+  font-size: 13px;
+  color: var(--fg-2);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.chat-rail-keys .key-line b {
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-rail-keys .key-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.chat-rail-keys .key-switch select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.key-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.key-paste .keybox .input {
+  font-size: 12px;
+  padding: 8px 10px;
+}
+.key-paste .err {
+  font-size: 12px;
+  color: var(--bad);
+}
+.chat-rail-keys .small a {
+  color: var(--fg-2);
+}
+
 /* ---------- v3 homepage: nav account menu, hero dot field, spend comparison, compact guest composer ---------- */
 
 /* Balance pill as a menu button (components/Nav.tsx BalanceMenu). */
@@ -3784,4 +4127,11 @@ table.schema table.schema {
   .mp-hint {
     display: none;
   }
+}
+
+/* Chat composer pill when a visitor chats on a pasted key (no wallet). */
+.pill.keyed b {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--fg-2);
 }

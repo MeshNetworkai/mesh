@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { GATEWAY_URL } from '../playwright.config';
-import { balanceUsd, parseUsd, signIn } from './helpers';
+import { balanceUsd, devLogin, parseUsd, signIn } from './helpers';
 
 test.describe('landing', () => {
   test('centred hero with the wide guest chat, two-engine diagram, four ways in, live numbers from the gateway', async ({ page }) => {
@@ -177,7 +177,7 @@ test.describe('chat without a wallet', () => {
     await expect(reply).toContainText('Hello from the Mesh mock upstream');
     await expect(reply.locator('.via')).toContainText('mesh/mock');
     await expect(reply.locator('.via')).not.toContainText('free');
-    await expect(page.locator('.chat-rail-foot')).toContainText('Using key Chat');
+    await expect(page.locator('.chat-rail-keys')).toContainText('Using key: Chat');
   });
 
   test('/app/chat works as a guest: welcome, free counter, a streamed reply, history in the rail, connect card when the free messages run out', async ({ page }) => {
@@ -225,6 +225,49 @@ test.describe('chat without a wallet', () => {
     await card.getByRole('button', { name: 'Connect wallet' }).click();
     await expect(page.getByRole('dialog')).toContainText('Sign in with a wallet');
   });
+
+  test('a pasted key alone lets a visitor chat on its credits: no wallet, no free counter, the rail says which key', async ({ page }) => {
+    // Mint a key for alice through the API; the visitor only ever has the key string.
+    const session = await devLogin();
+    const res = await fetch(`${GATEWAY_URL}/keys`, { method: 'POST', headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'visitor-paste' }) });
+    expect(res.ok).toBe(true);
+    const { key } = (await res.json()) as { key: string };
+    expect(key.startsWith('mesh_sk_')).toBe(true);
+
+    await page.goto('/app/chat');
+    const rail = page.locator('.chat-rail-keys');
+    await expect(rail).toContainText('Have a key? Paste it to chat on your credits.');
+    // Validation: the prefix is checked before anything is stored.
+    await page.locator('#paste-key').fill('sk-not-a-mesh-key');
+    await rail.getByRole('button', { name: 'Use' }).click();
+    await expect(rail.getByRole('alert')).toContainText('Mesh keys start with mesh_sk_');
+    expect(await page.evaluate(() => localStorage.getItem('mesh.chat.key.secrets'))).toBeNull();
+
+    await page.locator('#paste-key').fill(key);
+    await rail.getByRole('button', { name: 'Use' }).click();
+    await expect(rail).toContainText('Using key: Pasted · mesh_sk_');
+    await expect(rail).not.toContainText(key.slice(8, 24)); // only the mask is shown
+    // The composer no longer counts free messages; it names the key instead. No wallet session exists.
+    await expect(page.locator('.pill.counter')).toHaveCount(0);
+    await expect(page.locator('.pill.keyed')).toContainText('mesh_sk_');
+    expect(await page.evaluate(() => localStorage.getItem('mesh.session'))).toBeNull();
+    await expect(page.locator('#privacy')).toHaveCount(1);
+
+    const before = await balanceUsd(session.token);
+    await page.locator('#model').click();
+    await page.getByRole('option', { name: /Mesh mock/ }).click();
+    await page.locator('#prompt').fill('Billed to the pasted key');
+    await page.keyboard.press('Enter');
+    const reply = page.locator('.msg.ai').first();
+    await expect(reply).toContainText('Hello from the Mesh mock upstream');
+    await expect(reply.locator('.via')).toContainText('mesh/mock');
+    await expect(reply.locator('.via')).not.toContainText('free');
+    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before - 0.001, 5);
+    // Forget drops it and the free counter returns.
+    await rail.getByRole('button', { name: 'Forget' }).click();
+    await expect(rail).toContainText('Have a key?');
+    await expect(page.locator('.pill.counter')).toBeVisible();
+  });
 });
 
 test.describe('signed-in app', () => {
@@ -259,7 +302,7 @@ test.describe('signed-in app', () => {
 
     await page.goto('/app/chat');
     // The chat uses the newest key kept in this browser (the one just created); the rail says which.
-    await expect(page.locator('.chat-rail-foot')).toContainText('Using key e2e');
+    await expect(page.locator('.chat-rail-keys')).toContainText('Using key: e2e');
     await expect(page.getByRole('heading', { name: 'What do you want to ask?' })).toBeVisible();
     // The picker defaults to the network's Llama 3.1 8B; pick the offline mock so the reply is deterministic.
     const model = page.locator('#model');
@@ -298,6 +341,61 @@ test.describe('signed-in app', () => {
     await signIn(page);
     await page.goto('/app/node');
     await expect(page.getByText('Your nodes')).toBeVisible();
+  });
+
+  test('market: gate when signed out, then the wallet strip, balance card and the depth ladder; listing shows on the book and pre-fills Buy', async ({ page }) => {
+    await page.goto('/app/market');
+    const gate = page.getByRole('region', { name: 'Connect a wallet to see the book' });
+    await expect(gate).toBeVisible();
+    await expect(gate.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+    await expect(gate.locator('.gate-teaser')).toContainText(/Best discount right now|Nothing listed right now/);
+    await expect(page.locator('.mkt')).toHaveCount(0); // nothing else renders before the wallet
+
+    const session = await signIn(page);
+    await page.goto('/app/market');
+    await expect(page.locator('.mkt')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Connect a wallet to see the book' })).toHaveCount(0);
+    // Wallet strip: short address + chain label from config.
+    const strip = page.locator('.mkt-strip');
+    await expect(strip).toContainText('Credit market');
+    await expect(strip.locator('.pill.mono')).toContainText('mockwa');
+    await expect(strip).toContainText(/Robinhood Chain|Solana|Base/);
+    // Balance card matches GET /me; the key block offers the base URL and the Keys link.
+    const balance = await balanceUsd(session.token);
+    expect(balance).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => parseUsd(await page.getByTestId('credit-balance').textContent())).toBeCloseTo(balance, 2);
+    await expect(page.getByLabel('API base URL')).toHaveValue(/\/v1$/);
+    await expect(page.getByRole('link', { name: /Create a key|Manage keys/ })).toHaveAttribute('href', '/app/keys');
+
+    // Sell: the preview is live and uses the gateway's fee (2.5% → $1 at 30% off: buyer pays $0.70, seller gets $0.68).
+    const book = page.getByRole('region', { name: 'Order book' });
+    await expect(book).toContainText('Nothing listed from this wallet.');
+    await expect(book.getByRole('tab', { name: 'Sell credits' })).toHaveAttribute('aria-selected', 'true');
+    await page.locator('#sell-amount').fill('1');
+    await expect(page.locator('#sell-discount')).toHaveValue('30');
+    await expect(page.getByTestId('sell-preview')).toContainText('Buyer pays $0.70 · you receive $0.68 after the 2.5% fee');
+    await page.getByRole('button', { name: 'Raise the discount' }).click();
+    await expect(page.locator('#sell-discount')).toHaveValue('30.5');
+    await page.getByRole('button', { name: 'Lower the discount' }).click();
+    await page.getByRole('button', { name: 'List on the book' }).click();
+    await expect(book).toContainText('Your listings · 1 open · $1.00 left');
+    // Depth ladder: one row per tier, with the dollar depth; the best tier carries the accent border.
+    const rows = book.getByRole('option');
+    await expect(rows.first()).toContainText('30% off');
+    await expect(rows.first()).toContainText('$1.00');
+    await expect(rows.first()).toHaveClass(/best/);
+    await expect(rows.first().locator('.ladder-mine')).toHaveText('yours');
+    await expect(book.getByTestId('book-total')).toContainText('$1');
+    // Picking a row switches to Buy at that tier; my own listing is not for sale to me.
+    await rows.first().click();
+    await expect(book.getByRole('tab', { name: 'Buy credits' })).toHaveAttribute('aria-selected', 'true');
+    await expect(book.locator('.mkt-tier')).toContainText('30% off');
+    await expect(book.locator('.mkt-tier')).toContainText('$0.00 available');
+    await expect(book.getByRole('button', { name: 'Buy', exact: true })).toBeDisabled();
+    // Cancel returns the credit.
+    await book.getByRole('button', { name: 'Cancel' }).click();
+    await expect(book).toContainText('Nothing listed from this wallet.');
+    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(balance, 5);
   });
 
   test('cookie session: no JWT in localStorage, survives a reload without the hint, sign out clears the cookie', async ({ page }) => {
@@ -353,7 +451,8 @@ test.describe('signed-in app', () => {
     await expect(nav.getByRole('button', { name: 'Your credits' })).toHaveCount(0);
     await nav.getByRole('link', { name: 'Market' }).click();
     await expect(page).toHaveURL(/\/app\/market$/);
-    await expect(page.locator('span.display', { hasText: 'Credit market' })).toBeVisible();
+    // Signed out, the market is only its gate card (the public teaser reads GET /market/book).
+    await expect(page.getByRole('heading', { name: 'Connect a wallet to see the book' })).toBeVisible();
     await expect(page.getByText('Connect a wallet to see your credits')).toHaveCount(0);
     await nav.getByRole('link', { name: 'Run a node' }).click();
     await expect(page).toHaveURL(/\/app\/node$/);

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Empty } from '../components/ui';
+import { WalletGate } from '../components/WalletGate';
 import { useAuth } from '../lib/auth';
 import { pad2, shortAddr } from '../lib/format';
 import { useEpochCountdown, useStats } from '../lib/hooks';
@@ -19,7 +19,7 @@ export function NextEpochPill({ epochSeconds }: { epochSeconds?: number }) {
 }
 
 export function AppLayout() {
-  const { session, openModal, signOut } = useAuth();
+  const { session, signOut } = useAuth();
   const { data: stats } = useStats(60_000);
   const loc = useLocation();
   // The node explainer and the public liquidity book are readable without a wallet; their wallet-specific parts handle it.
@@ -67,16 +67,9 @@ export function AppLayout() {
         {session || publicRoute ? (
           <Outlet />
         ) : (
-          <Empty
-            title="Connect a wallet to see your credits"
-            action={
-              <button className="btn primary" onClick={openModal}>
-                Connect wallet
-              </button>
-            }
-          >
+          <WalletGate eyebrow="Your account" title="Connect a wallet to see your credits">
             Signing a message proves you hold the wallet. No transaction, no fee.
-          </Empty>
+          </WalletGate>
         )}
       </div>
     </div>

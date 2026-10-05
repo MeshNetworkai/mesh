@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Composer, MessageList, Suggestions, turnId, viaFromResult, type Turn } from '../components/ChatThread';
 import { ModelPicker } from '../components/ModelPicker';
@@ -10,7 +10,7 @@ import { useAuth } from '../lib/auth';
 import { GUEST_OWNER, loadHistory, migrateGuestHistory, newConversationId, saveHistory, titleFor, type Conversation } from '../lib/chatHistory';
 import { fmtUsd, shortAddr } from '../lib/format';
 import { useKeys, useLocalStorage, useMe, useStats } from '../lib/hooks';
-import { loadSecrets, rememberSecret } from '../lib/keystore';
+import { PASTED_ID, forgetPastedKey, isMeshKey, loadActiveKeyId, loadSecrets, maskKey, rememberPastedKey, rememberSecret, saveActiveKeyId } from '../lib/keystore';
 import { errorMessage, useToast } from '../lib/toast';
 import { PRIVACY_TIERS, PRIVACY_TIER_INFO, type CatalogueModel, type PrivacyTier } from '../lib/types';
 
@@ -27,6 +27,13 @@ const DEFAULT_MODEL = 'llama-3.1-8b';
 const PROMPTS = ['Explain how Mesh pays for AI', 'Write a tweet about privacy', 'Draft a polite follow-up email', 'Explain public-key cryptography simply'];
 const WELCOME = 'Answers come from Macs in the Mesh network or zero-data-retention providers. Nothing is stored after the reply.';
 
+interface KeyChoice {
+  /** Key id as a string, or PASTED_ID. */
+  id: string;
+  name: string;
+  key: string;
+}
+
 export function pickDefaultModel(ms: CatalogueModel[]): string {
   return (ms.find((m) => m.id === DEFAULT_MODEL) ?? ms.find((m) => m.served !== 'upstream') ?? ms[0])?.id ?? '';
 }
@@ -35,7 +42,6 @@ export function Chat() {
   const toast = useToast();
   const { session, token, openModal } = useAuth();
   const owner = session?.wallet ?? GUEST_OWNER;
-  const guest = !session;
   const keys = useKeys();
   const me = useMe(0);
   const stats = useStats(0);
@@ -154,19 +160,60 @@ export function Chat() {
     };
   }, []);
 
-  /* ---------- the wallet's key (created on first use) ---------- */
+  /* ---------- the key the chat sends with ---------- */
+  // Keys created in this browser (secret kept, see lib/keystore.ts) plus one pasted by hand. A pasted key
+  // alone is enough to chat on its credits without a wallet: the gateway accepts bearer keys on /v1.
   const [secrets, setSecrets] = useState<Record<string, string>>(() => loadSecrets());
   useEffect(() => setSecrets(loadSecrets()), [keys.data]);
-  const usable = useMemo(() => (keys.data ?? []).filter((k) => !k.revoked && secrets[String(k.id)]), [keys.data, secrets]);
-  const activeKey = usable[0] ?? null;
+  const [activeKeyId, setActiveKeyIdState] = useState<string | null>(() => loadActiveKeyId());
+  const setActiveKeyId = (id: string | null) => {
+    setActiveKeyIdState(id);
+    saveActiveKeyId(id);
+  };
+  const choices = useMemo<KeyChoice[]>(() => {
+    const kept = (session ? (keys.data ?? []) : [])
+      .filter((k) => !k.revoked && secrets[String(k.id)])
+      .sort((a, b) => b.created_at - a.created_at)
+      .map((k) => ({ id: String(k.id), name: k.name ?? k.masked, key: secrets[String(k.id)] }));
+    const pasted = secrets[PASTED_ID];
+    return pasted ? [...kept, { id: PASTED_ID, name: `Pasted · ${maskKey(pasted)}`, key: pasted }] : kept;
+  }, [keys.data, secrets, session]);
+  const activeKey: KeyChoice | null = choices.find((c) => c.id === activeKeyId) ?? choices[0] ?? null;
+  // Guest = no wallet AND no key. A visitor with a pasted key chats on that key's credits.
+  const guest = !session && !activeKey;
 
   const ensureKey = async (): Promise<string> => {
-    if (activeKey) return secrets[String(activeKey.id)];
-    if (!token) throw new Error('Connect a wallet first');
+    if (activeKey) return activeKey.key;
+    if (!token) throw new Error('Connect a wallet or paste a key first');
     const created = await api.createKey(token, { name: 'Chat' });
     rememberSecret(created.id, created.key);
+    setActiveKeyId(String(created.id));
     void keys.reload();
     return created.key;
+  };
+
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteErr, setPasteErr] = useState<string | null>(null);
+  const submitPaste = (e: FormEvent) => {
+    e.preventDefault();
+    const k = pasteText.trim();
+    if (!isMeshKey(k)) {
+      setPasteErr(k.startsWith('mesh_sk_') ? 'That key looks incomplete.' : 'Mesh keys start with mesh_sk_.');
+      return;
+    }
+    rememberPastedKey(k);
+    setSecrets(loadSecrets());
+    setActiveKeyId(PASTED_ID);
+    setPasteText('');
+    setPasteErr(null);
+    setPasteOpen(false);
+    toast.ok('Key saved in this browser. It is sent only as the Authorization header of your chats.');
+  };
+  const forgetPasted = () => {
+    forgetPastedKey();
+    setSecrets(loadSecrets());
+    if (activeKeyId === PASTED_ID) setActiveKeyId(null);
   };
 
   /* ---------- sending ---------- */
@@ -308,6 +355,10 @@ export function Chat() {
     <span className="pill sm num counter" aria-live="polite" title={`${limit} free messages a day, no sign-in`}>
       {remaining === null ? `${limit} free a day` : `${Math.max(0, remaining)} of ${limit} free today`}
     </span>
+  ) : !session && activeKey ? (
+    <span className="pill sm keyed" aria-live="polite" title="Chatting on a pasted key's credits">
+      Key <b className="mono">{maskKey(activeKey.key)}</b>
+    </span>
   ) : (
     <span className="pill sm balance num" aria-live="polite">
       Credits <b>{me.data ? fmtUsd(me.data.balance.usd, 3) : '…'}</b>
@@ -347,30 +398,99 @@ export function Chat() {
             </div>
           ))}
         </nav>
+        <div className="chat-rail-keys" aria-label="Keys">
+          <span className="eyebrow">Keys</span>
+          {activeKey ? (
+            <p className="key-line">
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Using key: <b title={activeKey.name}>{activeKey.name}</b>
+              </span>
+              {session || choices.length > 1 ? (
+                <label className="btn ghost sm key-switch" title="Switch key">
+                  Switch
+                  <select
+                    aria-label="Switch key"
+                    value={activeKey.id}
+                    onChange={(e) => {
+                      if (e.target.value === '__paste') setPasteOpen(true);
+                      else setActiveKeyId(e.target.value);
+                    }}
+                  >
+                    {choices.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                    <option value="__paste">Paste a key…</option>
+                  </select>
+                </label>
+              ) : (
+                <button type="button" className="btn ghost sm" onClick={forgetPasted}>
+                  Forget
+                </button>
+              )}
+            </p>
+          ) : session ? (
+            <p className="key-line">
+              <span className="muted">{keys.loading && !keys.data ? 'Loading keys…' : 'A key is created on your first message'}</span>
+              <button type="button" className="btn ghost sm" onClick={() => setPasteOpen((v) => !v)} aria-expanded={pasteOpen}>
+                Paste a key
+              </button>
+            </p>
+          ) : (
+            <p className="small muted">Have a key? Paste it to chat on your credits.</p>
+          )}
+          {pasteOpen || (!session && !activeKey) ? (
+            <form className="key-paste" onSubmit={submitPaste} aria-label="Paste an API key">
+              <div className="keybox">
+                <input
+                  id="paste-key"
+                  className="input sm mono"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="mesh_sk_…"
+                  aria-label="API key"
+                  value={pasteText}
+                  onChange={(e) => {
+                    setPasteText(e.target.value);
+                    if (pasteErr) setPasteErr(null);
+                  }}
+                />
+                <button type="submit" className="btn secondary sm" disabled={!pasteText.trim()}>
+                  Use
+                </button>
+              </div>
+              {pasteErr ? (
+                <span className="err" role="alert">
+                  {pasteErr}
+                </span>
+              ) : (
+                <span className="small muted" style={{ fontSize: 12 }}>
+                  Stays in this browser; sent only as the Authorization header.
+                </span>
+              )}
+            </form>
+          ) : null}
+          {activeKey?.id === PASTED_ID && (session || choices.length > 1) ? (
+            <button type="button" className="linkbtn small" onClick={forgetPasted} style={{ alignSelf: 'flex-start' }}>
+              Forget the pasted key
+            </button>
+          ) : null}
+          <p className="small">
+            <Link to="/app/keys">Create / manage keys →</Link>
+          </p>
+        </div>
         <div className="chat-rail-foot">
           {session ? (
-            <>
-              <div className="row" style={{ gap: 8 }}>
-                <span className="pill sm mono" title={session.wallet}>
-                  {shortAddr(session.wallet, 5, 4)}
-                </span>
-              </div>
-              <p className="small muted key-line">
-                {activeKey ? (
-                  <>
-                    Using key <b>{activeKey.name ?? 'untitled'}</b>
-                  </>
-                ) : keys.loading ? (
-                  'Loading keys…'
-                ) : (
-                  'A key is created on your first message'
-                )}{' '}
-                · <Link to="/app/keys">Keys</Link>
-              </p>
-            </>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="pill sm mono" title={session.wallet}>
+                {shortAddr(session.wallet, 5, 4)}
+              </span>
+            </div>
           ) : (
             <>
-              <p className="small muted">Sign in to save history and use frontier models.</p>
+              <p className="small muted">{activeKey ? 'Connect a wallet to save history across devices and manage keys.' : 'Sign in to save history and use frontier models.'}</p>
               <button type="button" className="btn secondary sm" onClick={openModal} style={{ alignSelf: 'flex-start' }}>
                 Connect wallet
               </button>
@@ -410,7 +530,7 @@ export function Chat() {
           />
           <p className="small muted composer-help">
             {guest
-              ? `Free messages run on network nodes or zero-data-retention providers. Frontier models need a wallet.`
+              ? `Free messages run on network nodes or zero-data-retention providers. Frontier models need a wallet or a key.`
               : `${PRIVACY_TIER_INFO[privacy].blurb} Whoever serves a reply sees the prompt while it runs; the gateway never stores it.`}{' '}
             <Link to="/docs#privacy">How the tiers work</Link>
           </p>
@@ -423,7 +543,7 @@ export function Chat() {
 function friendlyError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 402) return `Out of credits. ${err.message}`;
-    if (err.status === 401) return 'That API key was rejected. Create a new one under Keys.';
+    if (err.status === 401) return 'That API key was rejected. Switch key in the rail, paste another, or create one under Keys.';
     if (err.status === 403 && err.code === 'model_not_allowed_for_guests') return 'That model needs a wallet. Connect one to use it.';
     if (err.status === 429) return 'Rate limited. Wait a moment and try again.';
     return err.message;

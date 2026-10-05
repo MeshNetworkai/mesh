@@ -29,6 +29,57 @@ export function rememberSecret(id: number, key: string) {
   }
 }
 
+/**
+ * A key pasted by hand (pages/Chat.tsx rail). It is stored next to the created-here secrets under this
+ * pseudo-id, and only ever leaves the browser as the Authorization header of a chat request.
+ */
+export const PASTED_ID = 'pasted';
+const ACTIVE = `${STORAGE.chatKey}.active`;
+
+/** `mesh_sk_` + at least 16 url-safe characters (apps/gateway/src/auth.ts API_KEY_PREFIX). */
+export const isMeshKey = (s: string): boolean => /^mesh_sk_[A-Za-z0-9_-]{16,}$/.test(s.trim());
+
+/** `mesh_sk_7f3a2c…a8c4` for labels; never the whole key. */
+export const maskKey = (k: string): string => (k.length > 18 ? `${k.slice(0, 14)}…${k.slice(-4)}` : `${k.slice(0, 8)}…`);
+
+export function rememberPastedKey(key: string) {
+  try {
+    const all = loadSecrets();
+    all[PASTED_ID] = key.trim();
+    localStorage.setItem(KEY, JSON.stringify(all));
+  } catch {
+    /* storage blocked: the key lives in memory for this page only */
+  }
+}
+
+export function forgetPastedKey() {
+  try {
+    const all = loadSecrets();
+    delete all[PASTED_ID];
+    localStorage.setItem(KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Which kept key the chat sends with: a key id as a string, PASTED_ID, or null for "newest". */
+export function loadActiveKeyId(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE);
+  } catch {
+    return null;
+  }
+}
+
+export function saveActiveKeyId(id: string | null) {
+  try {
+    if (id) localStorage.setItem(ACTIVE, id);
+    else localStorage.removeItem(ACTIVE);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function forgetSecret(id: number) {
   try {
     const all = loadSecrets();
