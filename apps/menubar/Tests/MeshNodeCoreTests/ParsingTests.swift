@@ -209,9 +209,9 @@ final class ReleaseInfoTests: XCTestCase {
         let json = """
         {
           "version": "v0.2.0",
-          "bundleUrl": "https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node.js",
+          "bundleUrl": "https://github.com/MeshNetworkai/mesh/releases/download/v0.2.0/mesh-node.js",
           "bundleSha256": "3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855E",
-          "dmgUrl": "https://github.com/mesh-network/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg",
+          "dmgUrl": "https://github.com/MeshNetworkai/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg",
           "dmgSha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
           "publishedAt": "2026-10-03T12:00:00.000Z"
         }

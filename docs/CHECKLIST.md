@@ -113,7 +113,7 @@ Every step from design system to launch, grouped by session. Tick items as they 
 - [x] Open beta: Beta badge on nav and landing, invites OFF, waitlist and invite tooling kept in admin for pacing if ever needed, beta clause in terms
 - [x] Distribution without Apple: /download page (Terminal, Homebrew, unsigned .dmg with Open Anyway steps and SHA-256), Homebrew tap formula, `mesh-node update` with daily check, release workflow producing dmg + tarball + checksums + latest.json
 - [x] 242 gateway tests, 46 agent, 48 adapter, 18 browser tests passing
-- [ ] Create the GitHub repository and push (Oliver: a GitHub account and an org name, e.g. mesh-network; I do the rest) — needed for releases, CI and the Homebrew tap
+- [ ] Create the GitHub repository and push (Oliver: a GitHub account and an org name, e.g. MeshNetworkai; I do the rest) — needed for releases, CI and the Homebrew tap
 - [ ] Legal entity for the launch (company for domain, server, token; Apple account later if ever) — Oliver, with a quick legal read
 
 **Homepage rework (3 Oct):**

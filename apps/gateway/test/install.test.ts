@@ -8,11 +8,11 @@ import { ADMIN, testServer } from './helpers.js';
 const SHA = 'a'.repeat(64);
 const RELEASE = {
   version: '0.2.0',
-  bundleUrl: 'https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node.js',
+  bundleUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.2.0/mesh-node.js',
   bundleSha256: SHA,
-  tarballUrl: 'https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node-0.2.0-darwin-arm64.tar.gz',
+  tarballUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.2.0/mesh-node-0.2.0-darwin-arm64.tar.gz',
   tarballSha256: 'b'.repeat(64),
-  dmgUrl: 'https://github.com/mesh-network/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg',
+  dmgUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg',
   dmgSha256: 'c'.repeat(64),
   publishedAt: '2026-10-03T12:00:00.000Z',
 };

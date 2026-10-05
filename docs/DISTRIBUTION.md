@@ -16,7 +16,7 @@ notarisation are optional add-ons documented at the end and in `MENUBAR.md`.
    └ mesh-node-X.Y.Z-  (+ .sha256)             MeshNode-X.Y.Z-arm64.dmg (+.sha256)
      darwin-arm64.tar.gz                        SHA256SUMS.txt, latest.json
                                                + commit homebrew-tap/Formula/mesh-node.rb
-                                               + push it to mesh-network/homebrew-tap (token)
+                                               + push it to MeshNetworkai/homebrew-tap (token)
                         │
                         ▼
       latest.json  ──►  web host  /downloads/latest.json  ◄── /download page (version, hashes)
@@ -34,7 +34,7 @@ that explains all three to users is `/download` (`apps/web/src/pages/Download.ts
 | Channel | User runs | Gets the bundle from | Verifies | Updates with |
 | --- | --- | --- | --- | --- |
 | **Terminal one-liner** (default, what the Node tab shows) | `curl -fsSL <web>/install-node.sh \| sh -s -- --link <code> --gateway <gw> --web <web>` | `GET <gw>/install/mesh-node.js` (302 → release asset when the gateway has no local file), fallback `<web>/mesh-node.js` | content sniff only at install; `mesh-node update` verifies SHA-256 | `mesh-node update` (manual) · daily check in `mesh-node start` logs; `MESH_AUTO_UPDATE=1` installs |
-| **Homebrew** | `brew install mesh-network/tap/mesh-node` then the two mesh-node commands | release tarball pinned in the formula | brew checks the tarball sha256 | `brew upgrade mesh-node` (`mesh-node update` refuses and says so) |
+| **Homebrew** | `brew install meshnetworkai/tap/mesh-node` then the two mesh-node commands | release tarball pinned in the formula | brew checks the tarball sha256 | `brew upgrade mesh-node` (`mesh-node update` refuses and says so) |
 | **Menu-bar app** | download `MeshNode-X.Y.Z-arm64.dmg`, drag to Applications, Open Anyway | GitHub Release asset linked from `/download` | user compares the SHA-256 shown on `/download` (from `latest.json`) | "Check for updates" in the popover reads `latest.json` and opens `/download`; no self-update |
 | Tarball by hand | unpack `mesh-node-X.Y.Z-darwin-arm64.tar.gz`, `./install.sh` | release asset | `.sha256` next to it | re-run `install.sh` or `mesh-node update` |
 
@@ -53,7 +53,7 @@ mesh-node update --check    # exit 2 when a newer version exists, 0 when current
 ### Homebrew
 
 ```sh
-brew install mesh-network/tap/mesh-node     # formula: depends_on "node", arm64 + macOS only
+brew install meshnetworkai/tap/mesh-node     # formula: depends_on "node", arm64 + macOS only
 mesh-node setup --link K7QM2XDA --gateway https://<gateway-host>
 mesh-node service install
 brew upgrade mesh-node                      # new versions; the launchd service picks the new file up on restart
@@ -112,15 +112,15 @@ sh scripts/release/update-formula.sh 0.2.0 <tarball-url> <sha256>
 
 ### Homebrew tap
 
-Homebrew needs the formula in a repo named `homebrew-<tap>`; `brew install mesh-network/tap/mesh-node`
-resolves to `github.com/mesh-network/homebrew-tap/Formula/mesh-node.rb`. The source of truth is
+Homebrew needs the formula in a repo named `homebrew-<tap>`; `brew install meshnetworkai/tap/mesh-node`
+resolves to `github.com/MeshNetworkai/homebrew-tap/Formula/mesh-node.rb`. The source of truth is
 `homebrew-tap/Formula/mesh-node.rb` in this repo:
 
 - Job C runs `scripts/release/update-formula.sh` (rewrites `url` and `sha256`; the version is in the URL),
   commits the file to the default branch, and, when the `HOMEBREW_TAP_TOKEN` secret (a fine-grained PAT
   with contents:write on the tap repo) exists, clones the tap repo and pushes `Formula/mesh-node.rb`.
   `vars.HOMEBREW_TAP_REPO` overrides the repo name.
-- First time / by hand: create the empty repo `mesh-network/homebrew-tap`, then
+- First time / by hand: create the empty repo `MeshNetworkai/homebrew-tap`, then
   `cp homebrew-tap/Formula/mesh-node.rb <tap>/Formula/ && cp homebrew-tap/README.md <tap>/ && git push`.
 - Check: `brew install --build-from-source ./homebrew-tap/Formula/mesh-node.rb && brew test mesh-node && brew audit --strict mesh-node`.
 
@@ -208,7 +208,7 @@ Details and the manual path: `MENUBAR.md` §3–4.
 scripts/install-node.sh                 Terminal installer (served by the web app at /install-node.sh)
 scripts/release/make-tarball.sh         bundle + wrapper + install.sh -> tar.gz, prints sha256 / MESH_* vars
 scripts/release/update-formula.sh       rewrites url + sha256 in the formula
-homebrew-tap/Formula/mesh-node.rb       the formula (mirrored to mesh-network/homebrew-tap)
+homebrew-tap/Formula/mesh-node.rb       the formula (mirrored to MeshNetworkai/homebrew-tap)
 apps/node-agent/src/update.ts           mesh-node update + daily check
 apps/gateway/src/routes/install.ts      /install/latest.json, /install/mesh-node.js, /admin/release
 apps/web/src/pages/Download.tsx         /download

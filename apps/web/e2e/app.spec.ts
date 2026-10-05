@@ -204,7 +204,7 @@ test.describe('signed-in app', () => {
     await expect(page.getByRole('link', { name: /Download MeshNode-.*-arm64\.dmg/ })).toHaveAttribute('href', latest.dmgUrl);
     // Three options, each with its own steps.
     await expect(page.locator('#terminal pre.term')).toContainText('install-node.sh | sh -s -- --link <code>');
-    await expect(page.locator('#homebrew pre.term')).toContainText('brew install mesh-network/tap/mesh-node');
+    await expect(page.locator('#homebrew pre.term')).toContainText('brew install meshnetworkai/tap/mesh-node');
     await expect(page.locator('#homebrew pre.term')).toContainText('mesh-node setup --link <code>');
     const steps = page.getByLabel('Open Anyway walkthrough');
     await expect(steps.locator('li')).toHaveCount(5);

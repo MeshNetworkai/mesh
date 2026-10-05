@@ -4,7 +4,7 @@
 #   scripts/release/update-formula.sh <version> <tarball-url> <sha256> [formula-path]
 #
 # Used by .github/workflows/release.yml after the tarball is built; the result is committed to this
-# repo and pushed to the mesh-network/homebrew-tap repository (docs/DISTRIBUTION.md).
+# repo and pushed to the MeshNetworkai/homebrew-tap repository (docs/DISTRIBUTION.md).
 set -eu
 VERSION="${1:?version}"; VERSION="${VERSION#v}"
 URL="${2:?tarball url}"

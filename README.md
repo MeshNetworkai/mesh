@@ -229,7 +229,7 @@ packages/design-tokens  tokens.css
 apps/gateway       Fastify API, SQLite, distribution job, tests
 apps/node-agent    Ollama node agent: register, heartbeat, pull jobs, stream chunks, self-update (docs/NODE_PROTOCOL.md)
 apps/menubar       SwiftUI menu-bar app (status, pause, link, check for updates); unsigned DMG via make dmg (docs/MENUBAR.md)
-homebrew-tap/      Homebrew formula (mirrored to mesh-network/homebrew-tap by the release workflow)
+homebrew-tap/      Homebrew formula (mirrored to MeshNetworkai/homebrew-tap by the release workflow)
 scripts/release/   make-tarball.sh (bundle + wrapper -> tar.gz + sha256), update-formula.sh
 scripts/install-node.sh  Terminal one-liner installer served by the web app at /install-node.sh
 .github/workflows/release.yml  tag v* -> bundle, tarball, DMG, GitHub Release + latest.json (docs/DISTRIBUTION.md)
@@ -241,7 +241,7 @@ scripts/deploy-vps.md  production runbook (Docker + Caddy on Ubuntu 24.04)
 ## Running a node on a Mac
 
 Three channels, no Apple developer account needed (`docs/DISTRIBUTION.md`, web page `/download`):
-the Terminal one-liner (`install-node.sh`), Homebrew (`brew install mesh-network/tap/mesh-node`), or
+the Terminal one-liner (`install-node.sh`), Homebrew (`brew install meshnetworkai/tap/mesh-node`), or
 the unsigned menu-bar app DMG (opened through System Settings → Privacy & Security → Open Anyway).
 All install the same `mesh-node`; `mesh-node update` pulls the next release with a verified SHA-256.
 
