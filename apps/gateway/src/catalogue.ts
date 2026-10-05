@@ -60,8 +60,14 @@ export function guestModelAllowed(ctx: Pick<AppContext, 'config' | 'prices' | 'p
   return tier !== undefined && ctx.config.guest.allowedTiers.includes(tier);
 }
 
-export function catalogueModels(ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'>, now = nowSec()): CatalogueModel[] {
+export function catalogueModels(ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'> & { env?: { NODE_ENV?: string } }, now = nowSec()): CatalogueModel[] {
   const { policy, prices, config } = ctx;
+  // The offline mock model is a dev/test convenience; it never belongs in a production picker.
+  const hideMock = ctx.env?.NODE_ENV === 'production';
+  // A network model is listed once per Ollama tag: the short alias ("llama-3.1-8b") is the row, the
+  // upstream-style sibling ("meta-llama/llama-3.1-8b-instruct") stays accepted as a model name for API
+  // clients but would be a duplicate line in the picker.
+  const listedTags = new Set<string>();
   const pricing = config.requestPricing;
   const online = ctx.broker ? ctx.broker.onlineNodes(now) : onlineNodes(ctx.db, now);
   const onlineFor = (tag: string | null) => (tag ? online.filter((n) => nodeModels(n).includes(tag)).length : 0);
@@ -71,7 +77,12 @@ export function catalogueModels(ctx: Pick<AppContext, 'config' | 'prices' | 'pol
   const rows = new Map<string, CatalogueModel>();
   const push = (id: string, entry: { tier?: ModelTier; vendor?: string; displayName?: string } | undefined) => {
     if (rows.has(id) || !isModelAllowed(policy, id)) return;
+    if (hideMock && id.startsWith('mesh/')) return;
     const tag = networkTagFor(policy, id);
+    if (tag) {
+      if (listedTags.has(tag)) return;
+      listedTags.add(tag);
+    }
     const list = listPriceForModel(prices, policy, id);
     const upstreamId = upstreamModelFor(policy, id);
     // A network model can also go upstream when it resolves to a real upstream id (contains "/", not a mesh/* mock).

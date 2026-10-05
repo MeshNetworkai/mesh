@@ -1,9 +1,11 @@
 import { catalogueEntries, loadModelPrices, meshPricePerM, parseModelPolicy, parseTokenomics, upstreamBilledMicros, type TokenomicsConfig } from '@mesh/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyOpenRouterPrices, formatPrices, perMillion } from '../../../scripts/refresh-model-prices.mjs';
-import { guestModelAllowed } from '../src/catalogue.js';
+import { catalogueModels, guestModelAllowed } from '../src/catalogue.js';
 import { MOCK_COST_USD } from '../src/upstream.js';
-import { ADMIN, testConfig, testServer } from './helpers.js';
+import { MockAdapter } from '@mesh/chain-adapter';
+import { createContext } from '../src/server.js';
+import { ADMIN, TEST_ENV, memDb, testConfig, testServer } from './helpers.js';
 
 type App = Awaited<ReturnType<typeof testServer>>['app'];
 const apps: App[] = [];
@@ -45,7 +47,8 @@ describe('model catalogue: config', () => {
     const prices = loadModelPrices();
     const entries = catalogueEntries(prices);
     const ids = entries.map((e) => e.id);
-    for (const id of CURATED) expect(ids).toContain(id);
+    // every curated model is listed, except an upstream id that is also a network alias's sibling (one row per tag)
+    for (const id of CURATED.filter((c) => c !== 'meta-llama/llama-3.1-8b-instruct')) expect(ids).toContain(id);
     for (const e of entries) {
       expect(['frontier', 'fast', 'open']).toContain(e.tier);
       expect(e.vendor.length).toBeGreaterThan(0);
@@ -93,7 +96,8 @@ describe('GET /v1/models', () => {
     expect(body.object).toBe('list');
     expect(body.pricing).toEqual({ networkPricePerMTokens: 0.02, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: ['open', 'fast'] });
     const ids: string[] = body.data.map((m: { id: string }) => m.id);
-    for (const id of CURATED) expect(ids).toContain(id);
+    // every curated model is listed, except an upstream id that is also a network alias's sibling (one row per tag)
+    for (const id of CURATED.filter((c) => c !== 'meta-llama/llama-3.1-8b-instruct')) expect(ids).toContain(id);
     expect(ids).toContain('llama-3.1-8b');
     expect(ids).toContain('mesh/mock');
     // network models (policy order) come first, then frontier, fast, open
@@ -157,7 +161,9 @@ describe('GET /v1/models', () => {
     expect(opus.listPrice).toEqual({ promptUsdPerM: 15, completionUsdPerM: 75 });
     expect(opus.meshPrice).toEqual({ promptUsdPerM: 12, completionUsdPerM: 60 });
     expect(body.data.find((m: { id: string }) => m.id === 'llama-3.1-8b').online).toBe(1);
-    expect(body.data.find((m: { id: string }) => m.id === 'meta-llama/llama-3.1-8b-instruct').online).toBe(1);
+    // one row per Ollama tag: the upstream-style sibling is accepted as a model name but not listed twice
+    expect(body.data.find((m: { id: string }) => m.id === 'meta-llama/llama-3.1-8b-instruct')).toBeUndefined();
+    expect(body.data.filter((m: { mesh_network: boolean }) => m.mesh_network).map((m: { id: string }) => m.id)).toEqual(['llama-3.1-8b', 'qwen-2.5-7b', 'mesh/mock']);
     expect(body.data.find((m: { id: string }) => m.id === 'qwen-2.5-7b').online).toBe(0);
 
     const g = await app.inject({ method: 'GET', url: '/v1/models?guest=1' });
@@ -270,5 +276,14 @@ describe('scripts/refresh-model-prices.mjs', () => {
     const current = loadModelPrices();
     expect(() => applyOpenRouterPrices(current, { error: 'down' }, '2026-10-05')).toThrow(/data/);
     expect(() => applyOpenRouterPrices(current, { data: [{ id: 'some/other-model', pricing: { prompt: '0.1', completion: '0.1' } }] }, '2026-10-05')).toThrow(/none of the curated/);
+  });
+  it('hides the mock model in production and lists one row per Ollama tag', () => {
+    const ctx = createContext({ env: TEST_ENV as never, context: { db: memDb(), adapter: new MockAdapter({ chain: 'solana' }), config: testConfig } });
+    const dev = catalogueModels(ctx).map((m) => m.id);
+    expect(dev).toContain('mesh/mock');
+    expect(dev.filter((id) => id === 'llama-3.1-8b' || id === 'meta-llama/llama-3.1-8b-instruct')).toEqual(['llama-3.1-8b']);
+    const prod = catalogueModels({ ...ctx, env: { NODE_ENV: 'production' } }).map((m) => m.id);
+    expect(prod).not.toContain('mesh/mock');
+    expect(prod).toContain('llama-3.1-8b');
   });
 });
