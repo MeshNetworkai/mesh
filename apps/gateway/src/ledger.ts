@@ -1,7 +1,8 @@
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
 
-export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter';
+/** `market_*`: credit marketplace (market.ts) — escrow out of the seller's spendable balance, refund on cancel/expiry, buy into the buyer. */
+export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter' | 'market_escrow' | 'market_refund' | 'market_buy';
 
 export interface LedgerRow {
   id: number;
@@ -126,7 +127,8 @@ export function nodeRewardsTotal(db: Db, where: { wallet?: string; nodeId?: stri
 // ---------------- treasury ledger (what the treasury share received and what it owes) ----------------
 
 /** `guest_chat`: what a free guest message (routes/guest.ts) cost the treasury when the upstream served it. */
-export type TreasuryKind = 'fee_share' | 'node_reward_accrual' | 'buyback' | 'ops' | 'other' | 'guest_chat';
+/** `market_fee`: the treasury's share of a credit-marketplace fee (market.ts). */
+export type TreasuryKind = 'fee_share' | 'node_reward_accrual' | 'buyback' | 'ops' | 'other' | 'guest_chat' | 'market_fee';
 
 export interface TreasuryRow {
   id: number;
@@ -162,7 +164,7 @@ export function treasuryBalanceMicros(db: Db): number {
 }
 
 export function treasuryTotalsByKind(db: Db, sinceSec = 0): Record<TreasuryKind, number> {
-  const out: Record<TreasuryKind, number> = { fee_share: 0, node_reward_accrual: 0, buyback: 0, ops: 0, other: 0, guest_chat: 0 };
+  const out: Record<TreasuryKind, number> = { fee_share: 0, node_reward_accrual: 0, buyback: 0, ops: 0, other: 0, guest_chat: 0, market_fee: 0 };
   const rows = db
     .prepare(`SELECT kind, COALESCE(SUM(usd_micros), 0) AS v FROM treasury_ledger WHERE created_at >= ? GROUP BY kind`)
     .all(sinceSec) as Array<{ kind: TreasuryKind; v: number }>;

@@ -91,6 +91,14 @@
     "referralShareBps": 1000,
     "dailyCapPerWallet": 50000
   },
+  "marketplace": {
+    "enabled": true,
+    "feeBps": 250,
+    "feeToHoldersBps": 5000,
+    "minListingUsd": 1,
+    "maxDiscountBps": 7000,
+    "listingTtlHours": 168
+  },
   "meta": {
     "description": "Trading fees buy AI inference for holders, every hour.",
     "website": "https://mesh.local"

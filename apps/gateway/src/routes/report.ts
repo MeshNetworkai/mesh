@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { nowSec } from '../db.js';
 import { treasuryBalanceMicros, treasuryTotalsByKind } from '../ledger.js';
+import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
 import { publicEpochView, type EpochRow } from './stats.js';
 
@@ -166,9 +167,28 @@ export const REPORT_METHOD = {
   treasury:
     'treasuryBalanceUsd = treasury share received − node rewards accrued − buybacks − ops, from the treasury ledger. Node rewards accrue in USD when a Mesh node completes a job and are paid from the treasury share.',
   network: 'servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period (requests_log).',
+  marketplace:
+    'Credit marketplace (docs/MARKETPLACE.md): listed = face value of every listing ever created; filled = face value that changed hands; buyers paid the discounted price from a prepaid balance. Mesh keeps 2.5% of the price: feesToHolders joins the next hourly holder pool, feesToTreasury is a market_fee treasury row. openDepth = credit on the book right now.',
   guestChat:
     'Free guest messages (POST /v1/guest/chat) are paid by the treasury: upstreamCostUsd is what the upstream charged for guest messages it served (guest_chat treasury rows); nodeRewardsUsd is what Mesh nodes earned serving guest messages (already inside node rewards accrued). Requests are counted in requests_log under the guest wallet.',
 };
+
+/** Credit marketplace totals (market.ts): what was listed, what changed hands and where the fee went. */
+export function marketplaceTotals(ctx: AppContext) {
+  const t = marketTotals(ctx.db);
+  return {
+    listed: microsToUsd(t.listedMicros),
+    filled: microsToUsd(t.filledMicros),
+    paid: microsToUsd(t.paidMicros),
+    fills: t.fills,
+    feesToHolders: microsToUsd(t.feesToHoldersMicros),
+    feesToTreasury: microsToUsd(t.feesToTreasuryMicros),
+    openDepth: microsToUsd(t.openDepthMicros),
+    openListings: t.openListings,
+    bestDiscountBps: t.bestDiscountBps,
+    avgDiscountBps: t.avgDiscountBps,
+  };
+}
 
 /** What free guest chat has cost so far (routes/guest.ts). */
 export function guestChatTotals(ctx: AppContext) {
@@ -218,9 +238,11 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
         opsUsd: microsToUsd(treasury.ops),
         otherUsd: microsToUsd(treasury.other),
         guestChatUsd: microsToUsd(treasury.guest_chat),
+        marketFeeUsd: microsToUsd(treasury.market_fee),
         balanceUsd: microsToUsd(treasuryBalanceMicros(db)),
       },
       guestChat: guestChatTotals(ctx),
+      marketplace: marketplaceTotals(ctx),
     },
     last7d,
     last30d,

@@ -220,6 +220,27 @@ export const TokenomicsSchema = z
         dailyCapPerWallet: z.number().int().min(0).default(50_000),
       })
       .default({}),
+    /**
+     * Credit marketplace (apps/gateway/src/market.ts, docs/MARKETPLACE.md): holders list unused credits
+     * at a discount; buyers pay the discounted price from a prepaid USD balance and receive the credits
+     * at face value. Mesh keeps `feeBps` of the price; `feeToHoldersBps` of that fee joins the next
+     * hourly holder pool, the rest is booked to the treasury.
+     */
+    marketplace: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Mesh fee on the discounted price (250 = 2.5%). */
+        feeBps: bps.default(250),
+        /** Share of the fee that joins the next epoch's holder pool (5000 = half); the rest is treasury. */
+        feeToHoldersBps: bps.default(5000),
+        /** Smallest listing a seller may create, USD of credit at face value. */
+        minListingUsd: z.number().positive().default(1),
+        /** Largest discount a seller may offer (7000 = 70% off face). */
+        maxDiscountBps: bps.default(7000),
+        /** Open listings expire (escrow returns to the seller) after this many hours. */
+        listingTtlHours: z.number().int().positive().default(168),
+      })
+      .default({}),
     meta: z
       .object({
         website: z.string().url().optional(),

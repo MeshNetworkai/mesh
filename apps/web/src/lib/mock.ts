@@ -1159,3 +1159,15 @@ export const mockMyStake = async (): Promise<MyStake> => {
     epoch: Math.floor(Date.now() / 1000 / E) * E,
   };
 };
+
+/** Mock wallet state shared with feature mocks (lib/mockMarket.ts) so a listing or a buy moves the same balance /me shows. */
+export const mockAccount = {
+  wallet: MOCK_WALLET,
+  get balanceMicros() {
+    return state.balanceMicros;
+  },
+  adjust(deltaMicros: number, kind: string, ref: string) {
+    state.balanceMicros += deltaMicros;
+    state.ledger.push({ id: 9000 + state.ledger.length, kind, deltaUsd: deltaMicros / 1e6, deltaUsdMicros: deltaMicros, ref, created_at: now() });
+  },
+};

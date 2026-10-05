@@ -40,6 +40,8 @@ tags:
     description: OpenAI-compatible endpoints. Point any OpenAI SDK at `/v1`.
   - name: Nodes
     description: The Mac network. Registration, link codes, and the job protocol used by `mesh-node`.
+  - name: Market
+    description: Credit marketplace. Holders sell unused credits at a discount; buyers pay the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps 2.5% of the price, half to the next hourly distribution, half to the treasury. See docs/MARKETPLACE.md.
 security: []
 paths:
   /health:
@@ -1245,6 +1247,223 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /market/config:
+    get:
+      tags: [Market]
+      summary: Fee schedule and limits
+      operationId: getMarketConfig
+      responses:
+        '200':
+          description: The `marketplace` block of `config/tokenomics.json`. Settlement is `prepaid` in this version.
+          content:
+            application/json:
+              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: prepaid }
+        '404': { description: 'The marketplace is disabled (`marketplace.enabled: false`).' }
+  /market/book:
+    get:
+      tags: [Market]
+      summary: Liquidity book
+      description: Open depth aggregated by discount tier, deepest discount first, plus the best discount and the total available. Public; expired listings are swept first.
+      operationId: getMarketBook
+      responses:
+        '200':
+          content:
+            application/json:
+              example:
+                tiers: [{ discountBps: 3000, pricePerUsd: 0.7, availableUsd: 240, listings: 2 }, { discountBps: 2000, pricePerUsd: 0.8, availableUsd: 390, listings: 1 }]
+                bestDiscountBps: 3000
+                totalAvailableUsd: 630
+                listings: 3
+                generatedAt: 1760000000
+  /market/listings:
+    get:
+      tags: [Market]
+      summary: Open listings, paginated
+      operationId: listMarketListings
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: discountBps, in: query, schema: { type: integer, minimum: 0, maximum: 10000 }, description: 'Only this tier.' }
+      responses:
+        '200':
+          description: Deepest discount first, then oldest first. Seller addresses are not exposed.
+          content:
+            application/json:
+              example: { listings: [{ id: lst_6f1c2b3a4d5e6f708192, amountUsd: 100, remainingUsd: 60, soldUsd: 40, discountBps: 3000, pricePerUsd: 0.7, status: open, created_at: 1760000000, expires_at: 1760604800, closed_at: null }], total: 1, limit: 50, offset: 0 }
+    post:
+      tags: [Market]
+      summary: List credits for sale
+      description: Escrows `amountUsd` of the caller's spendable credits (ledger kind `market_escrow`) into a new listing. 30 writes a minute per IP.
+      operationId: createMarketListing
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountUsd, discountBps]
+              properties:
+                amountUsd: { type: number, minimum: 1, description: 'Face value of credit to sell.' }
+                discountBps: { type: integer, minimum: 0, maximum: 7000 }
+      responses:
+        '201':
+          description: The listing plus what the seller receives if it all sells.
+          content:
+            application/json:
+              example: { id: lst_6f1c2b3a4d5e6f708192, seller: '9xQe…', amountUsd: 100, remainingUsd: 100, soldUsd: 0, discountBps: 3000, pricePerUsd: 0.7, status: open, created_at: 1760000000, expires_at: 1760604800, closed_at: null, ifFullySold: { buyerPaysUsd: 70, feeUsd: 1.75, youReceiveUsd: 68.25 } }
+        '400': { description: '`below_minimum`, `discount_too_deep`, or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_credits`: spendable balance is smaller than the amount.' }
+  /market/listings/{id}:
+    delete:
+      tags: [Market]
+      summary: Cancel a listing
+      description: Owner only. What is left returns to the spendable balance (`market_refund`). Idempotent for a closed listing.
+      operationId: cancelMarketListing
+      security: [{ session: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The listing, now `cancelled`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'No such listing for this wallet.' }
+  /market/fills:
+    post:
+      tags: [Market]
+      summary: Buy (part of) a listing
+      description: Pays the discounted price from the caller's prepaid balance and credits the face value at once. Partial fills down to $0.01 (or the whole remainder). One transaction; the fee is split between the next holder pool and the treasury.
+      operationId: fillMarketListing
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listingId, amountUsd]
+              properties:
+                listingId: { type: string }
+                amountUsd: { type: number, description: 'Face value of credit to buy.' }
+      responses:
+        '201':
+          content:
+            application/json:
+              example: { id: fill_2b3a4d5e6f708192a3b4, listingId: lst_6f1c2b3a4d5e6f708192, buyer: '3pQ9…', seller: '9xQe…', creditsUsd: 40, paidUsd: 28, feeUsd: 0.7, feeToHoldersUsd: 0.35, feeToTreasuryUsd: 0.35, sellerReceivedUsd: 27.3, discountBps: 3000, settlement: prepaid, settlementRef: null, created_at: 1760000100, creditBalanceUsd: 40, prepaidBalanceUsd: 22 }
+        '400': { description: '`below_minimum` or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`.' }
+        '404': { description: 'No such listing.' }
+        '409': { description: '`own_listing`, `listing_closed` or `insufficient_depth`.' }
+  /market/stats:
+    get:
+      tags: [Market]
+      summary: Public totals
+      operationId: getMarketStats
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { openListings: 3, openDepthUsd: 630, bestDiscountBps: 3000, avgDiscountBps: 2650, allTime: { filledUsd: 1840, paidUsd: 1352.4, feesUsd: 33.81, feesToHoldersUsd: 16.9, fills: 61 }, last24h: { filledUsd: 95, paidUsd: 68.4, feesUsd: 1.71, fills: 4 }, feeBps: 250, generatedAt: 1760000000 }
+  /market/quote:
+    get:
+      tags: [Market]
+      summary: Exact fee math for a hypothetical trade
+      operationId: getMarketQuote
+      parameters:
+        - { name: amountUsd, in: query, required: true, schema: { type: number } }
+        - { name: discountBps, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { creditsUsd: 100, discountBps: 3000, pricePerUsd: 0.7, buyerPaysUsd: 70, feeUsd: 1.75, feeToHoldersUsd: 0.875, feeToTreasuryUsd: 0.875, sellerReceivesUsd: 68.25 }
+  /me/market:
+    get:
+      tags: [Market]
+      summary: My market activity
+      description: Listings, fills as buyer and as seller, prepaid balance with its recent ledger, and withdrawal requests.
+      operationId: getMyMarket
+      security: [{ session: [] }]
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { wallet: '9xQe…', creditBalanceUsd: 10, prepaid: { usd: 68.25, usdMicros: 68250000, ledger: [{ id: 3, kind: market_sale, deltaUsd: 40.95, ref: 'fill:fill_…', created_at: 1760000200 }] }, listings: [], fills: { asBuyer: [], asSeller: [] }, withdrawals: [] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/market/withdraw:
+    post:
+      tags: [Market]
+      summary: Request a payout of prepaid USD
+      description: The amount leaves the prepaid balance at once (`withdrawal` row); an operator pays it and marks the request paid.
+      operationId: requestMarketWithdrawal
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [amountUsd], properties: { amountUsd: { type: number } } }
+      responses:
+        '201': { description: '`{ id, wallet, amountUsd, status: pending, created_at, prepaidBalanceUsd }`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`.' }
+  /admin/prepaid:
+    post:
+      tags: [Market]
+      summary: Credit a wallet's prepaid balance
+      description: 'Admin (`x-admin-token`). Records an off-chain (or hand-sent USDC) payment as prepaid balance. `ref` makes a re-post of the same payment a no-op (200, `duplicate: true`). Audited with the note.'
+      operationId: adminPrepaidTopUp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet, amountUsd, note]
+              properties:
+                wallet: { type: string }
+                amountUsd: { type: number }
+                note: { type: string, description: 'Where the money came from (bank ref, tx).' }
+                ref: { type: string, description: "Idempotency key, e.g. the payment's own id." }
+      responses:
+        '201': { description: '`{ wallet, amountUsd, ref, ledgerId, duplicate: false, prepaidBalanceUsd }`.' }
+        '200': { description: 'Same shape with `duplicate: true`; nothing was written.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/market/withdrawals/{id}/paid:
+    post:
+      tags: [Market]
+      summary: Mark a withdrawal paid
+      description: Admin (`x-admin-token`). Idempotent. Audited with the payout reference.
+      operationId: adminMarketWithdrawalPaid
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { txRef: { type: string }, note: { type: string } } }
+      responses:
+        '200': { description: 'The request, now `paid`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'No such request.' }
+  /admin/market:
+    get:
+      tags: [Market]
+      summary: Operator overview
+      description: 'Admin (`x-admin-token`). Totals, last 24h, the open book, prepaid outstanding, the pending holder pool and every pending withdrawal.'
+      operationId: adminMarketOverview
+      responses:
+        '200': { description: '`{ totals, last24h, book, prepaid, poolExtra, withdrawals: { pendingUsd, paidUsd, pending: [...] }, config }`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/market/reap:
+    post:
+      tags: [Market]
+      summary: Expire old listings now
+      description: Admin (`x-admin-token`). Runs anyway once a minute and on every read of the book.
+      operationId: adminMarketReap
+      responses:
+        '200': { description: '`{ listingsExpired }`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
   securitySchemes:

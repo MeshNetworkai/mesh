@@ -382,6 +382,117 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS jobs_node_status ON jobs(node_id, status);
     `,
   },
+  {
+    // Credit marketplace (market.ts, routes/market.ts, docs/MARKETPLACE.md). A listing escrows credits out
+    // of the seller's spendable balance (credits_ledger kind market_escrow; market_refund on cancel/expiry;
+    // the buyer receives a market_buy row). Buyers pay from a prepaid USD balance (prepaid_ledger: topped
+    // up by an admin today, by a USDC settlement adapter later); sellers are paid into the same balance
+    // and withdraw through withdrawal_requests. The holders' share of each fee waits in pool_extra_micros
+    // until the next epoch; the treasury share is a `market_fee` treasury row. SQLite cannot alter a
+    // CHECK, so both ledgers are rebuilt in place (migration 12 pattern).
+    id: 14,
+    sql: `
+    CREATE TABLE credits_ledger_v14 (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet           TEXT NOT NULL,
+      delta_usd_micros INTEGER NOT NULL,
+      kind             TEXT NOT NULL CHECK (kind IN ('distribution','usage','adjustment','starter','market_escrow','market_refund','market_buy')),
+      ref              TEXT,
+      created_at       INTEGER NOT NULL
+    );
+    INSERT INTO credits_ledger_v14 (id, wallet, delta_usd_micros, kind, ref, created_at)
+      SELECT id, wallet, delta_usd_micros, kind, ref, created_at FROM credits_ledger;
+    DROP TABLE credits_ledger;
+    ALTER TABLE credits_ledger_v14 RENAME TO credits_ledger;
+    CREATE INDEX IF NOT EXISTS ledger_wallet ON credits_ledger(wallet, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ledger_distribution_unique ON credits_ledger(wallet, ref) WHERE kind = 'distribution';
+    CREATE INDEX IF NOT EXISTS ledger_kind_created ON credits_ledger(kind, created_at);
+
+    CREATE TABLE treasury_ledger_v14 (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind        TEXT NOT NULL CHECK (kind IN ('fee_share','node_reward_accrual','buyback','ops','other','guest_chat','market_fee')),
+      usd_micros  INTEGER NOT NULL,
+      ref         TEXT,
+      created_at  INTEGER NOT NULL
+    );
+    INSERT INTO treasury_ledger_v14 (id, kind, usd_micros, ref, created_at)
+      SELECT id, kind, usd_micros, ref, created_at FROM treasury_ledger;
+    DROP TABLE treasury_ledger;
+    ALTER TABLE treasury_ledger_v14 RENAME TO treasury_ledger;
+    CREATE INDEX IF NOT EXISTS treasury_created ON treasury_ledger(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS treasury_kind_ref ON treasury_ledger(kind, ref) WHERE ref IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS market_listings (
+      id                    TEXT PRIMARY KEY,
+      seller_wallet         TEXT NOT NULL,
+      amount_micros         INTEGER NOT NULL,
+      remaining_micros      INTEGER NOT NULL,
+      discount_bps          INTEGER NOT NULL,
+      price_micros_per_usd  INTEGER NOT NULL,
+      status                TEXT NOT NULL CHECK (status IN ('open','filled','cancelled','expired')),
+      created_at            INTEGER NOT NULL,
+      expires_at            INTEGER NOT NULL,
+      closed_at             INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS market_listings_seller ON market_listings(seller_wallet, created_at);
+    CREATE INDEX IF NOT EXISTS market_listings_book ON market_listings(status, discount_bps, created_at);
+    CREATE INDEX IF NOT EXISTS market_listings_expiry ON market_listings(status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS market_fills (
+      id                      TEXT PRIMARY KEY,
+      listing_id              TEXT NOT NULL REFERENCES market_listings(id),
+      buyer_wallet            TEXT NOT NULL,
+      seller_wallet           TEXT NOT NULL,
+      credits_micros          INTEGER NOT NULL,
+      paid_micros             INTEGER NOT NULL,
+      fee_micros              INTEGER NOT NULL,
+      fee_to_holders_micros   INTEGER NOT NULL,
+      fee_to_treasury_micros  INTEGER NOT NULL,
+      discount_bps            INTEGER NOT NULL,
+      settlement              TEXT NOT NULL CHECK (settlement IN ('prepaid','external')),
+      settlement_ref          TEXT,
+      created_at              INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS market_fills_buyer ON market_fills(buyer_wallet, created_at);
+    CREATE INDEX IF NOT EXISTS market_fills_seller ON market_fills(seller_wallet, created_at);
+    CREATE INDEX IF NOT EXISTS market_fills_listing ON market_fills(listing_id);
+    CREATE INDEX IF NOT EXISTS market_fills_created ON market_fills(created_at);
+
+    CREATE TABLE IF NOT EXISTS prepaid_ledger (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet        TEXT NOT NULL,
+      delta_micros  INTEGER NOT NULL,
+      kind          TEXT NOT NULL CHECK (kind IN ('topup','market_buy','market_sale','withdrawal','withdrawal_refund','adjustment')),
+      ref           TEXT,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS prepaid_wallet ON prepaid_ledger(wallet, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS prepaid_kind_ref ON prepaid_ledger(kind, ref) WHERE ref IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS withdrawal_requests (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet         TEXT NOT NULL,
+      amount_micros  INTEGER NOT NULL,
+      status         TEXT NOT NULL CHECK (status IN ('pending','paid')),
+      note           TEXT,
+      tx_ref         TEXT,
+      created_at     INTEGER NOT NULL,
+      paid_at        INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS withdrawal_wallet ON withdrawal_requests(wallet, created_at);
+    CREATE INDEX IF NOT EXISTS withdrawal_status ON withdrawal_requests(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS pool_extra_micros (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      source       TEXT NOT NULL,
+      usd_micros   INTEGER NOT NULL,
+      ref          TEXT NOT NULL UNIQUE,
+      epoch_start  INTEGER,
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pool_extra_epoch ON pool_extra_micros(epoch_start);
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

@@ -19,6 +19,7 @@ import { authRoutes } from './routes/auth.js';
 import { guestRoutes } from './routes/guest.js';
 import { installRoutes, type InstallOptions } from './routes/install.js';
 import { keyRoutes } from './routes/keys.js';
+import { marketRoutes } from './routes/market.js';
 import { meRoutes } from './routes/me.js';
 import { nodeRoutes } from './routes/nodes.js';
 import { openapiRoutes } from './routes/openapi.js';
@@ -212,6 +213,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(keyRoutes, ctx);
   await app.register(meRoutes, ctx);
   await app.register(stakeRoutes, ctx);
+  await app.register(marketRoutes, ctx);
   await app.register(v1Routes, ctx);
   await app.register(guestRoutes, ctx);
   await app.register(adminRoutes, ctx);

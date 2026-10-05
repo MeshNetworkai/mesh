@@ -542,3 +542,6 @@ export async function streamGuestChat(
   }
   return streamChat({ apiKey: '', model: opts.model ?? 'llama-3.1-8b', messages: opts.messages, signal: opts.signal, upstreamName: opts.upstreamName, guest: true }, onDelta);
 }
+
+// Shared request helpers for feature modules that keep their own endpoint bindings (lib/market.ts).
+export { request as rawRequest, sessionRequest as rawSessionRequest };

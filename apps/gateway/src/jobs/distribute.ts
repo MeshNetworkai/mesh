@@ -3,6 +3,7 @@ import type { TokenomicsConfig } from '@mesh/config';
 import type { Db } from '../db.js';
 import { nowSec } from '../db.js';
 import { addTreasuryEntry, ensureWallet } from '../ledger.js';
+import { claimPoolExtra, pendingPoolExtra } from '../market.js';
 import { bpsOf, splitProRata, usdToMicros } from '../money.js';
 import { syncPoints } from '../points.js';
 
@@ -167,7 +168,9 @@ async function runEpochUnlocked(
   // 2. split holder / treasury, apply credit conversion rate
   const holderPoolRaw = bpsOf(feesUsdMicros, config.holderShareBps);
   const treasuryUsdMicros = feesUsdMicros - holderPoolRaw;
-  const holderPoolUsdMicros = Math.floor(holderPoolRaw * config.creditUsdPerFeeUsd);
+  // Extra pool money (pool_extra_micros): the holders' share of credit-marketplace fees since the last epoch (market.ts).
+  const extra = pendingPoolExtra(db);
+  const holderPoolUsdMicros = Math.floor(holderPoolRaw * config.creditUsdPerFeeUsd) + extra.usdMicros;
 
   // 3. eligible holders (time-weighted over the window, >= minHoldTokens)
   const balances = await adapter.getHolderBalances({ from: epochStart, to: epochEnd });
@@ -188,7 +191,7 @@ async function runEpochUnlocked(
     .map((b, i) => ({ wallet: b.wallet, usdMicros: shares[i], multiplier: multipliers[i] }))
     .filter((d) => d.usdMicros > 0);
 
-  const status: 'complete' | 'empty' = feesUsdMicros > 0 && distributed.length > 0 ? 'complete' : 'empty';
+  const status: 'complete' | 'empty' = feesUsdMicros + extra.usdMicros > 0 && distributed.length > 0 ? 'complete' : 'empty';
   const ref = `epoch:${epochStart}`;
 
   // 5. write ledger + epoch row atomically; re-check inside the transaction
@@ -203,6 +206,8 @@ async function runEpochUnlocked(
       ins.run(d.wallet, d.usdMicros, ref, ts);
     }
     if (treasuryUsdMicros > 0) addTreasuryEntry(db, { kind: 'fee_share', usdMicros: treasuryUsdMicros, ref }, ts);
+    // No eligible holder this epoch → the extra stays pending for the next one.
+    if (extra.usdMicros > 0 && distributed.length > 0) claimPoolExtra(db, epochStart, extra.maxId);
     db.prepare(
       `INSERT INTO epochs (epoch_start, epoch_end, fees_usd_micros, holder_pool_usd_micros, treasury_usd_micros,
                            eligible_holders, fee_tx_id, status, created_at)

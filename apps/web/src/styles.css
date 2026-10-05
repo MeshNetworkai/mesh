@@ -2711,3 +2711,19 @@ table.schema table.schema {
   border-top: 1px solid var(--line);
   padding-top: 16px;
 }
+
+/* ---------- credit market (pages/Market.tsx) ---------- */
+/* Amount input with its "All" button on one line; the book's depth bar fills its cell. */
+.market-amount {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: center;
+}
+.market-amount .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.market-amount .btn {
+  flex: 0 0 auto;
+}

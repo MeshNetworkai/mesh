@@ -301,6 +301,19 @@ export function Dashboard() {
         </Link>
       </div>
 
+      {/* Credit marketplace: sell what you will not use, or buy below face value (pages/Market.tsx). */}
+      <div className="row between panel" style={{ flexWrap: 'wrap' }}>
+        <div className="stack" style={{ gap: 2 }}>
+          <span className="eyebrow">Credit market</span>
+          <span className="small" style={{ color: 'var(--fg-2)' }}>
+            Sell credits you will not use at a discount, or buy them below face value. Mesh keeps 2.5% of the price, half of it back to holders.
+          </span>
+        </div>
+        <Link className="btn secondary" to="/app/market">
+          Open market
+        </Link>
+      </div>
+
       <div className="stack sm">
         <div className="row between">
           <span className="eyebrow">Ledger · last {rows.length || 20}</span>

@@ -12,6 +12,7 @@ import { Docs } from './pages/Docs';
 import { DownloadPage } from './pages/Download';
 import { Keys } from './pages/Keys';
 import { Landing } from './pages/Landing';
+import { Market } from './pages/Market';
 import { LeaderboardPage } from './pages/Leaderboard';
 import { Privacy, Risk, Terms } from './pages/Legal';
 import { NodePage } from './pages/Node';
@@ -89,6 +90,7 @@ export function App() {
               <Route path="stats" element={<StatsPage />} />
               <Route path="node" element={<NodePage />} />
               <Route path="stake" element={<Stake />} />
+              <Route path="market" element={<Market />} />
             </Route>
             <Route path="/404" element={<NotFound />} />
             <Route path="*" element={<NotFound />} />
