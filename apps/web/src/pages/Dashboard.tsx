@@ -217,8 +217,8 @@ export function Dashboard() {
         <Tile
           label="Eligible holders"
           loading={st.loading && !stats}
-          value={fmtInt(stats?.holdersEligibleLastEpoch ?? null)}
-          delta={stats?.lastEpoch ? `epoch ${fmtDate(stats.lastEpoch.epochStart)}` : '—'}
+          value={stats?.tokenLive === false ? '—' : fmtInt(stats?.holdersEligibleLastEpoch ?? null)}
+          delta={stats?.tokenLive === false ? 'counts start at the token launch' : stats?.lastEpoch ? `epoch ${fmtDate(stats.lastEpoch.epochStart)}` : '—'}
         />
         <Tile
           label={feesThisEpoch !== null ? 'Fees this epoch' : 'Fees last epoch'}

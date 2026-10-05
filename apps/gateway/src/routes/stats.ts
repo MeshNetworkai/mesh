@@ -181,6 +181,9 @@ export function computeStats(ctx: AppContext) {
     series24h: hourlySeries(ctx, now),
     epochSeconds: ctx.config.epochSeconds,
     upstream: ctx.upstream.name,
+    /** False while the gateway runs the mock treasury (before the token launch): staking, trusted-tier pledges
+     *  and holder distributions are not live yet, and the web app says so instead of inviting people to stake. */
+    tokenLive: !(ctx.adapterStatus ?? 'mock').startsWith('mock'),
     generatedAt: now,
   };
 }

@@ -6,7 +6,7 @@ import { brewSteps } from './Download';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtAgo, fmtCompact, fmtCost, fmtDate, fmtInt, shortAddr } from '../lib/format';
-import { useCopy, useMyNodes, useNodes } from '../lib/hooks';
+import { useCopy, useMyNodes, useNodes, useStats } from '../lib/hooks';
 import { errorMessage, useToast } from '../lib/toast';
 import type { LinkCode, NodePledge, NodeView, PledgeText } from '../lib/types';
 
@@ -234,6 +234,7 @@ function statusOf(n: NodeView): 'online' | 'busy' | 'offline' {
 function PledgeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
   const { token, signMessage } = useAuth();
   const toast = useToast();
+  const { data: stats } = useStats(60_000);
   const [text, setText] = useState<PledgeText | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<'idle' | 'loading' | 'signing' | 'saving'>('idle');
@@ -276,6 +277,18 @@ function PledgeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
   };
 
   const pillCls = summary.tone === 'ok' ? 'pill sm' : summary.tone === 'warn' ? 'pill sm warn' : 'pill sm off';
+  // Before the token launch there is nothing to stake, so the trusted tier cannot be reached yet: say so
+  // in one line and show no call to action. Allowlisted operators (already trusted) still see their state.
+  if (stats && stats.tokenLive === false && !pledge?.trusted) {
+    return (
+      <div className="row between small muted" aria-label="Operator pledge" style={{ alignItems: 'center', gap: 8 }}>
+        <span>
+          <span className="dot dot-live" aria-hidden="true" style={{ display: 'inline-block', marginRight: 8, verticalAlign: 'middle' }} />
+          Serving network requests and your own. The trusted tier opens with staking once {TOKENOMICS.ticker} is live.
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="stack sm" aria-label="Operator pledge">
       <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
@@ -347,9 +360,9 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
       </div>
       <div className="nodecard-id">
         <span className="display d-s">{chip ?? 'Unknown chip'}</span>
-        <span className="mono small muted" title={n.nodeId}>
+        <span className="small muted num" title={n.nodeId}>
           {ram !== null ? `${fmtInt(ram)} GB` : '— GB'} · {shortAddr(n.nodeId, 9, 4)}
-          {n.agentVersion ? ` · v${n.agentVersion}` : ''}
+          {n.agentVersion ? ` · agent ${n.agentVersion}` : ''}
         </span>
       </div>
       <div className="row" aria-label="Models">

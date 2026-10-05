@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
-import { Empty, Notice, Skeleton, Spinner, Tile } from '../components/ui';
+import { Notice, Skeleton, Spinner, Tile } from '../components/ui';
 import { MOCK, TOKENOMICS } from '../config';
 import { useAuth } from '../lib/auth';
 import { fmtDate, fmtInt } from '../lib/format';
@@ -320,15 +320,24 @@ export function Stake() {
         by the gateway. Staking does not change the holder pool.
       </p>
 
+      {!live ? (
+        <Notice kind="ok">
+          Staking opens with the token launch. The contract is written and tested; your tier appears here the moment {TICKER} is live on Robinhood Chain. Until
+          then every node earns the standard rate.
+        </Notice>
+      ) : null}
+
       {mine.error && !mine.data ? <Notice kind="bad">Could not load your position: {mine.error}</Notice> : null}
       {tiers.error && !tiers.data ? <Notice kind="bad">Could not load tiers: {tiers.error}</Notice> : null}
 
-      <div className="tiles">
-        <Tile label="Your tier" loading={loading} value={mine.data ? cap(mine.data.tier.name) : '—'} delta={mine.data?.nextTier ? `${fmtInt(mine.data.nextTier.needStake)} ${TICKER} more${mine.data.nextTier.lockDays > mine.data.lockDays ? ` + ${mine.data.nextTier.lockDays}d lock` : ''} → ${cap(mine.data.nextTier.name)}` : mine.data ? 'Top tier' : '—'} deltaKind={mine.data?.nextTier ? '' : 'up'} />
-        <Tile label="Staked" loading={loading} value={mine.data ? `${fmtInt(mine.data.staked)} ${TICKER}` : '—'} delta={mine.data?.lockDays ? `${mine.data.lockDays}-day lock committed` : 'No lock'} />
-        <Tile label="Node rewards" loading={loading} value={mine.data ? fmtMult(mine.data.multiplier) : '—'} delta={mine.data && mine.data.multiplier > 1 ? 'applied to every job your nodes serve' : 'standard rate'} deltaKind={mine.data && mine.data.multiplier > 1 ? 'up' : ''} />
-        <Tile label="Lock ends" loading={loading} value={mine.data?.lockEndsAt ? fmtDate(mine.data.lockEndsAt) : '—'} delta={mine.data?.lockEndsAt && mine.data.lockEndsAt > Date.now() / 1000 ? 'unstake after this' : 'nothing locked'} />
-      </div>
+      {live ? (
+        <div className="tiles">
+          <Tile label="Your tier" loading={loading} value={mine.data ? cap(mine.data.tier.name) : '—'} delta={mine.data?.nextTier ? `${fmtInt(mine.data.nextTier.needStake)} ${TICKER} more${mine.data.nextTier.lockDays > mine.data.lockDays ? ` + ${mine.data.nextTier.lockDays}d lock` : ''} → ${cap(mine.data.nextTier.name)}` : mine.data ? 'Top tier' : '—'} deltaKind={mine.data?.nextTier ? '' : 'up'} />
+          <Tile label="Staked" loading={loading} value={mine.data ? `${fmtInt(mine.data.staked)} ${TICKER}` : '—'} delta={mine.data?.lockDays ? `${mine.data.lockDays}-day lock committed` : 'No lock'} />
+          <Tile label="Node rewards" loading={loading} value={mine.data ? fmtMult(mine.data.multiplier) : '—'} delta={mine.data && mine.data.multiplier > 1 ? 'applied to every job your nodes serve' : 'standard rate'} deltaKind={mine.data && mine.data.multiplier > 1 ? 'up' : ''} />
+          <Tile label="Lock ends" loading={loading} value={mine.data?.lockEndsAt ? fmtDate(mine.data.lockEndsAt) : '—'} delta={mine.data?.lockEndsAt && mine.data.lockEndsAt > Date.now() / 1000 ? 'unstake after this' : 'nothing locked'} />
+        </div>
+      ) : null}
 
       <div className="stack sm">
         <div className="row between">
@@ -338,12 +347,7 @@ export function Stake() {
         <TiersTable tiers={list} current={current} loading={tiers.loading} />
       </div>
 
-      {!live ? (
-        <Empty title="Staking opens with the token launch">
-          The staking contract is written and tested; it goes live when the team launches {TICKER} on Robinhood Chain on launch day. Your tier shows here the moment
-          the contract address lands in the deploy config.
-        </Empty>
-      ) : MOCK ? (
+      {!live ? null : MOCK ? (
         <MockStakeForm />
       ) : !sessionIsEvm ? (
         <Notice kind="warn">Staking lives on {STAKING_TARGET!.chain.name}. Sign in with an EVM wallet to stake from this page.</Notice>

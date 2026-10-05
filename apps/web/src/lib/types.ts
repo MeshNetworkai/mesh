@@ -47,6 +47,8 @@ export interface TokenMeta {
 }
 
 export interface Stats {
+  /** False before the token launch (mock treasury adapter): staking and trusted-tier pledges are not live. */
+  tokenLive?: boolean;
   token: TokenMeta;
   totalFeesUsd: number;
   creditsDistributedUsd: number;

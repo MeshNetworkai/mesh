@@ -229,6 +229,7 @@ export const mockStats = async (): Promise<Stats> => {
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
+    tokenLive: true,
     generatedAt: now(),
   };
 };
