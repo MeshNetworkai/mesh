@@ -108,7 +108,7 @@ Run a Mesh inference node on an Apple Silicon Mac. Needs Node 18+ and Ollama.
     mesh-node service install                      # background service (launchd), starts at login
     mesh-node status | pause | resume | logs | update
 
-Homebrew users: brew install mesh-network/tap/mesh-node (brew upgrade for new versions).
+Homebrew users: brew install meshnetworkai/tap/mesh-node (brew upgrade for new versions).
 Docs: docs/DISTRIBUTION.md and apps/node-agent/README.md in the repository.
 EOF
 [ -f LICENSE ] && cp LICENSE "$STAGE/LICENSE"

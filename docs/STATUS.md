@@ -38,7 +38,7 @@ One page: what is in the repo after sessions 1–8, how it is tested, what is sw
 | Live chain adapters | implemented and tested offline; `MESH_ADAPTER=mock` in dev; no `config/deploy.<network>.json` committed | needs a deployed token (below) |
 | Node reward payout | rewards accrue in USD in `node_rewards`; no on-chain payout | `transferTokens` path exists; product decision on cadence |
 | Menu-bar app | Swift source complete (incl. "Check for updates"), never compiled; `release.yml` job B runs `swift build`/`make dmg` on `macos-latest`, so the first tag is also the first compile | first `swift build` on a Mac or the first tag (`docs/MENUBAR.md`) |
-| Mac distribution | unsigned DMG + Homebrew tap + `mesh-node update` built; `latest.json` on the web is the sample file; the tap repo `mesh-network/homebrew-tap` does not exist yet; formula sha256 is a placeholder until the first release | push a `v*` tag; create the tap repo + `HOMEBREW_TAP_TOKEN`; deploy `latest.json` to `/downloads/` (`docs/DISTRIBUTION.md` §2) |
+| Mac distribution | unsigned DMG + Homebrew tap + `mesh-node update` built; `latest.json` on the web is the sample file; the tap repo `MeshNetworkai/homebrew-tap` does not exist yet; formula sha256 is a placeholder until the first release | push a `v*` tag; create the tap repo + `HOMEBREW_TAP_TOKEN`; deploy `latest.json` to `/downloads/` (`docs/DISTRIBUTION.md` §2) |
 | App signing / notarisation | not configured; the Open Anyway path is documented and shown on `/download` | add the `MACOS_*` / `NOTARY_*` secrets when the developer account exists (`docs/DISTRIBUTION.md` §5) |
 | Upstream inference | `MockUpstream` when `OPENROUTER_API_KEY` is unset | set the key |
 | Multi-instance | rate limits, relays, stats cache, alert state are per process | one VPS is the plan; `docs/ARCHITECTURE.md` §9 |
@@ -54,7 +54,7 @@ One page: what is in the repo after sessions 1–8, how it is tested, what is sw
 4. **Secrets and hosts** on the VPS: `JWT_SECRET`, `ADMIN_TOKEN`, `KEY_PEPPER`, `OPENROUTER_API_KEY`, RPC / Helius key, signer keypair, `AUTH_DOMAIN`, `CORS_ORIGINS`, `ADMIN_IP_ALLOWLIST`, `TRUSTED_PROXY_CIDRS`; replace the placeholder hosts and social URLs. Follow `docs/RUNBOOK.md` §0–§7 and its pre-flight checks.
 5. **Decisions**: session TTL (7 d today), node payout cadence, whether holding-age weighting is on at launch, `geoBlock` list (AE, US, GB today), and whether the points programme ever comes back (it is a one-line flag).
 6. **Hardware**: a Mac with Xcode to compile the menu-bar app locally (CI does it on `macos-latest` too); a few friends' Macs for the first node batch (`docs/LAUNCH_COPY.md` §4). Notarisation only when the developer account exists.
-8. **First release**: create `github.com/mesh-network/homebrew-tap` (empty) and the `HOMEBREW_TAP_TOKEN` secret, push `v0.1.0`, deploy `latest.json` to the web host (`docs/DISTRIBUTION.md` §2), try the DMG on a clean Mac through Open Anyway.
+8. **First release**: create `github.com/MeshNetworkai/homebrew-tap` (empty) and the `HOMEBREW_TAP_TOKEN` secret, push `v0.1.0`, deploy `latest.json` to the web host (`docs/DISTRIBUTION.md` §2), try the DMG on a clean Mac through Open Anyway.
 7. **Legal review** of `/terms`, `/privacy`, `/risk` before the token is tradeable.
 
 ## Exact commands

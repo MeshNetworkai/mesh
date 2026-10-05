@@ -6,7 +6,7 @@ name: Release (node agent + menu-bar app)
 #               signing secrets exist (CODESIGN_IDENTITY / NOTARY_PROFILE are optional, see docs/MENUBAR.md)
 #   C  ubuntu   GitHub Release with every artifact + latest.json; commits the updated Homebrew formula
 #               (homebrew-tap/Formula/mesh-node.rb) back to the default branch and, when HOMEBREW_TAP_TOKEN
-#               is set, pushes it to the mesh-network/homebrew-tap repository.
+#               is set, pushes it to the MeshNetworkai/homebrew-tap repository.
 # Full story: docs/DISTRIBUTION.md. The gateway image is built by docker.yml on the same tag.
 
 on:
@@ -272,7 +272,7 @@ jobs:
             System Settings > Privacy & Security > Open Anyway. Verify downloads against `SHA256SUMS.txt`.
 
             - Terminal: `curl -fsSL https://<web-host>/install-node.sh | sh -s -- --link <code> --gateway <gateway>`
-            - Homebrew: `brew install mesh-network/tap/mesh-node`
+            - Homebrew: `brew install meshnetworkai/tap/mesh-node`
             - Menu-bar app: `MeshNode-${{ env.VERSION }}-arm64.dmg`
             - Existing installs: `mesh-node update` (or `brew upgrade mesh-node`)
 
@@ -293,7 +293,7 @@ jobs:
         if: ${{ needs.version.outputs.is_release == 'true' && secrets.HOMEBREW_TAP_TOKEN != '' }}
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || 'mesh-network/homebrew-tap' }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || 'MeshNetworkai/homebrew-tap' }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap

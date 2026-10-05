@@ -8,7 +8,7 @@ import { installOneLiner } from './Node';
 /**
  * /download: the three ways to run a node on a Mac without an App Store or a Developer ID.
  *   1. Terminal one-liner (install-node.sh; what the Node tab shows)
- *   2. Homebrew tap (brew install mesh-network/tap/mesh-node)
+ *   2. Homebrew tap (brew install meshnetworkai/tap/mesh-node)
  *   3. Menu-bar app DMG, unsigned beta: walkthrough for System Settings > Privacy & Security > Open Anyway
  * Version, URLs and SHA-256 come from /downloads/latest.json: a sample file in apps/web/public in dev,
  * the real document written by the release workflow in production (docs/DISTRIBUTION.md).
@@ -32,7 +32,7 @@ export interface LatestRelease {
 }
 
 export const LATEST_PATH = '/downloads/latest.json';
-export const TAP = 'mesh-network/tap';
+export const TAP = 'meshnetworkai/tap';
 export const BREW_INSTALL = `brew install ${TAP}/mesh-node`;
 
 export async function fetchLatest(path = LATEST_PATH): Promise<LatestRelease> {

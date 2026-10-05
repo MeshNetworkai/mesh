@@ -198,7 +198,7 @@ async function cmdUpdate(flags: Args['flags']) {
     return;
   }
   if (installChannel() === 'brew') {
-    out.warn('this copy was installed with Homebrew; upgrade it with: brew upgrade mesh-network/tap/mesh-node');
+    out.warn('this copy was installed with Homebrew; upgrade it with: brew upgrade meshnetworkai/tap/mesh-node');
     process.exitCode = 2;
     return;
   }

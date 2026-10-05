@@ -1,9 +1,9 @@
 # Homebrew formula for the Mesh node agent.
 #
 # This file lives in the main repo at homebrew-tap/Formula/mesh-node.rb and is mirrored to the
-# `mesh-network/homebrew-tap` repository (Formula/mesh-node.rb) by the release workflow, so that
+# `MeshNetworkai/homebrew-tap` repository (Formula/mesh-node.rb) by the release workflow, so that
 #
-#   brew install mesh-network/tap/mesh-node
+#   brew install meshnetworkai/tap/mesh-node
 #   mesh-node setup --link <code> --gateway https://<gateway-host>
 #   mesh-node service install
 #
@@ -12,8 +12,8 @@
 # See docs/DISTRIBUTION.md.
 class MeshNode < Formula
   desc "Run a Mesh inference node on your Mac: serve AI replies from Ollama and earn for them"
-  homepage "https://github.com/mesh-network/mesh"
-  url "https://github.com/mesh-network/mesh/releases/download/v0.1.0/mesh-node-0.1.0-darwin-arm64.tar.gz"
+  homepage "https://github.com/MeshNetworkai/mesh"
+  url "https://github.com/MeshNetworkai/mesh/releases/download/v0.1.0/mesh-node-0.1.0-darwin-arm64.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
 

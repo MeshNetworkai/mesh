@@ -104,7 +104,7 @@ Env: `GATEWAY_URL` (default for `setup --gateway`), `MESH_LINK_CODE` (default fo
 
 ## Other ways to install
 
-`brew install mesh-network/tap/mesh-node` (formula in `homebrew-tap/Formula/mesh-node.rb`, built from
+`brew install meshnetworkai/tap/mesh-node` (formula in `homebrew-tap/Formula/mesh-node.rb`, built from
 the release tarball `scripts/release/make-tarball.sh` produces) or the menu-bar app DMG; the web
 `/download` page lists all three with checksums. `docs/DISTRIBUTION.md` has the release workflow.
 
