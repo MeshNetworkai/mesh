@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { TOKENOMICS } from '../config';
-import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamGuestChat, type ChatMessage } from '../lib/api';
+import { ApiError, getCatalogue, getGuestQuota, onGuestRemaining, streamChat, streamGuestChat, type ChatMessage } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { ensureChatKey } from '../lib/chatkey';
+import { useMe } from '../lib/hooks';
+import { fmtCost } from '../lib/format';
 import type { CatalogueModel } from '../lib/types';
 import { Composer, MessageList, Suggestions, turnId, viaFromResult, type Turn } from './ChatThread';
 import { ModelPicker } from './ModelPicker';
@@ -16,6 +20,11 @@ const DEFAULT_GUEST_MODEL = 'llama-3.1-8b';
  * so the hero and the app read as one product. The app page picks the conversation up with more room.
  */
 export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
+  // Signed in: the widget spends the wallet's credits through its chat key (same key as /app/chat) and
+  // the free-message counter does not apply. Signed out: the guest endpoint, a few messages a day.
+  const { session, token } = useAuth();
+  const signedIn = Boolean(session && token);
+  const me = useMe(signedIn ? 30_000 : 0);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -67,7 +76,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
-      if (!content || streaming || exhausted) return;
+      if (!content || streaming || (exhausted && !signedIn)) return;
       setError(null);
       setInput('');
       const history: ChatMessage[] = [...turns.filter((t) => t.role !== 'error').map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content })), { role: 'user', content }];
@@ -78,13 +87,21 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
       abortRef.current = ac;
       const patch = (fn: (t: Turn) => Turn) => setTurns((prev) => prev.map((t) => (t.id === aiId ? fn(t) : t)));
       try {
-        const result = await streamGuestChat({ messages: history, model, signal: ac.signal }, (delta) => patch((t) => ({ ...t, content: t.content + delta })));
-        patch((t) => ({ ...t, streaming: false, via: viaFromResult(result, true) }));
+        const onDelta = (delta: string) => patch((t) => ({ ...t, content: t.content + delta }));
+        let result;
+        if (signedIn && token) {
+          const apiKey = await ensureChatKey(token);
+          result = await streamChat({ apiKey, model, messages: history, signal: ac.signal }, onDelta);
+          void me.reload();
+        } else {
+          result = await streamGuestChat({ messages: history, model, signal: ac.signal }, onDelta);
+        }
+        patch((t) => ({ ...t, streaming: false, via: viaFromResult(result, !signedIn) }));
       } catch (err) {
         // keep what streamed, drop an empty reply
         setTurns((prev) => prev.map((t) => (t.id === aiId ? { ...t, streaming: false } : t)).filter((t) => !(t.id === aiId && !t.content)));
         if ((err as Error).name === 'AbortError') return;
-        if (err instanceof ApiError && (err.code === 'guest_quota_exhausted' || err.status === 429)) {
+        if (!signedIn && err instanceof ApiError && (err.code === 'guest_quota_exhausted' || err.status === 429)) {
           setExhausted(true);
           setRemaining(0);
         } else {
@@ -95,11 +112,11 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
         abortRef.current = null;
       }
     },
-    [turns, streaming, exhausted, model],
+    [turns, streaming, exhausted, model, signedIn, token, me],
   );
 
   const stop = () => abortRef.current?.abort();
-  const locked = exhausted || !enabled;
+  const locked = signedIn ? false : exhausted || !enabled;
 
   const empty = (
     <div className="guestchat-empty">
@@ -112,7 +129,7 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
 
   const after = (
     <>
-      {exhausted ? (
+      {exhausted && !signedIn ? (
         <Notice kind="ok">
           You have used your free messages. <Link to="/app/chat">Connect a wallet</Link> to keep going.
         </Notice>
@@ -142,12 +159,18 @@ export function GuestChat({ id = 'guest-chat' }: { id?: string }) {
           onStop={stop}
           busy={streaming}
           disabled={locked}
-          placeholder={exhausted ? 'Free messages used for today' : 'Ask the network…'}
+          placeholder={locked ? 'Free messages used for today' : 'Ask the network…'}
           tools={<ModelPicker id={`${id}-model`} variant="pill" label="Model" models={models} value={model} onChange={setModel} disabled={locked} />}
           status={
-            <span className="counter num" aria-live="polite" title={`${limit ?? TOKENOMICS.guest.messagesPerDay} free messages a day, no sign-in`}>
-              {remaining === null ? `${limit ?? TOKENOMICS.guest.messagesPerDay} free a day` : `${Math.max(0, remaining)} of ${limit ?? TOKENOMICS.guest.messagesPerDay} free today`}
-            </span>
+            signedIn ? (
+              <span className="counter num" title="Signed in: replies are paid from your credits">
+                {me.data ? `${fmtCost(me.data.balance.usd)} credits` : 'Your credits'}
+              </span>
+            ) : (
+              <span className="counter num" aria-live="polite" title={`${limit ?? TOKENOMICS.guest.messagesPerDay} free messages a day, no sign-in`}>
+                {remaining === null ? `${limit ?? TOKENOMICS.guest.messagesPerDay} free a day` : `${Math.max(0, remaining)} of ${limit ?? TOKENOMICS.guest.messagesPerDay} free today`}
+              </span>
+            )
           }
         />
         <p className="small muted composer-help">

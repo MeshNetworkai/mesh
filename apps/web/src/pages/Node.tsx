@@ -41,16 +41,18 @@ export const FLOW_STEPS: Array<{ title: string; body: string }> = [
   { title: 'Run the install command on the Mac', body: 'Paste the one-liner below in Terminal. It carries the gateway URL and your link code already filled in.' },
 ];
 
-export type FlowStep = 1 | 2 | 3;
+/** 4 = every step done: a Mac registered with the code that is on screen. */
+export type FlowStep = 1 | 2 | 3 | 4;
 
-export function flowStep(signedIn: boolean, hasCode: boolean): FlowStep {
+export function flowStep(signedIn: boolean, hasCode: boolean, linked = false): FlowStep {
   if (!signedIn) return 1;
+  if (linked) return 4;
   return hasCode ? 3 : 2;
 }
 
 function FlowPanel({ current }: { current: FlowStep }) {
   return (
-    <ol className="flowsteps" aria-label="How to link a Mac">
+    <ol className="flowsteps" aria-label="How to link a Mac" data-done={current === 4 ? '1' : undefined}>
       {FLOW_STEPS.map((st, i) => {
         const n = (i + 1) as FlowStep;
         const state = n < current ? 'done' : n === current ? 'current' : 'todo';
@@ -66,6 +68,17 @@ function FlowPanel({ current }: { current: FlowStep }) {
           </li>
         );
       })}
+      {current === 4 ? (
+        <li className="done linked" aria-live="polite">
+          <span className="n" aria-hidden="true">
+            ✓
+          </span>
+          <span className="t">
+            <b>Linked. Your Mac is on the network.</b>
+            <span className="muted">It appears under “Your nodes” below and starts taking jobs as soon as its models are ready.</span>
+          </span>
+        </li>
+      ) : null}
     </ol>
   );
 }
@@ -400,11 +413,28 @@ function NodeCard({ n, onChanged }: { n: NodeView; onChanged: () => void }) {
 export function NodePage() {
   const { session, openModal } = useAuth();
   const [code, setCode] = useState<string | null>(null);
-  const onCode = useCallback((c: string | null) => setCode(c), []);
-  const current = flowStep(Boolean(session), code !== null);
-  const mine = useMyNodes(15_000);
+  // While a link code is on screen the Mac is about to register, so poll every 3 s instead of 15 and
+  // flip the flow to "linked" the moment a new node appears — no manual refresh.
+  const [baseline, setBaseline] = useState<number | null>(null);
+  const [linked, setLinked] = useState(false);
+  const mine = useMyNodes(code && !linked ? 3_000 : 15_000);
   const net = useNodes(60_000);
   const nodes = mine.data ?? [];
+  const onCode = useCallback((c: string | null) => {
+    setCode(c);
+    if (c) setLinked(false);
+  }, []);
+  useEffect(() => {
+    if (code && baseline === null && mine.data) setBaseline(mine.data.length);
+    if (!code) setBaseline(null);
+  }, [code, baseline, mine.data]);
+  useEffect(() => {
+    if (code && baseline !== null && nodes.length > baseline && !linked) {
+      setLinked(true);
+      document.getElementById('your-nodes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [code, baseline, nodes.length, linked]);
+  const current = flowStep(Boolean(session), code !== null, linked);
   const online = nodes.filter((n) => statusOf(n) !== 'offline').length;
   const earned24h = nodes.reduce((a, n) => a + (n.stats?.earnedUsd24h ?? 0), 0);
 
@@ -452,7 +482,7 @@ export function NodePage() {
         </ol>
       </div>
 
-      <div className="row between">
+      <div className="row between" id="your-nodes">
         <span className="display d-s">Your nodes</span>
         {session && nodes.length ? (
           <span className="small muted">
