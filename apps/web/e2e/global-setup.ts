@@ -13,5 +13,8 @@ export default async function globalSetup() {
   };
   await post('/admin/fake-fees', { amountUsd: 100 });
   const epoch = await post('/admin/run-epoch', {});
-  if (epoch.status !== 'complete') throw new Error(`seed epoch not complete: ${JSON.stringify(epoch)}`);
+  // The gateway may run the same epoch itself right after boot (cron catch-up); the admin call then loses the
+  // per-DB lock and answers `skipped` with the stored figures. Seeded either way as long as holders were paid.
+  const seeded = epoch.status === 'complete' || (epoch.status === 'skipped' && Number(epoch.eligibleHolders) > 0 && Number(epoch.holderPoolUsdMicros) > 0);
+  if (!seeded) throw new Error(`seed epoch not complete: ${JSON.stringify(epoch)}`);
 }

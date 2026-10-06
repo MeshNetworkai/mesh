@@ -110,7 +110,7 @@ paths:
                 servedByNetwork24h: 3645
                 jobs24h: 3702
                 networkTokens24h: 18200000
-                networkPricePerMTokens: 0.02
+                networkPricePerMTokens: 0.08
                 networkSavingsUsd24h: 9.87
                 showSavings: true
                 pointsEnabled: false
@@ -639,9 +639,9 @@ paths:
               example:
                 object: list
                 data:
-                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: Llama 3.1 8B, displayName: Llama 3.1 8B, vendor: Meta, tier: open, served: both, listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 }, meshPrice: { promptUsdPerM: 0.02, completionUsdPerM: 0.02 }, privacy: network, online: 3, guestAllowed: true, mesh_network: true }
+                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: Llama 3.1 8B, displayName: Llama 3.1 8B, vendor: Meta, tier: open, served: both, listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 }, meshPrice: { promptUsdPerM: 0.08, completionUsdPerM: 0.08 }, privacy: network, online: 3, guestAllowed: true, mesh_network: true }
                   - { id: anthropic/claude-sonnet-4.5, object: model, created: 0, owned_by: anthropic, name: Claude Sonnet 4.5, displayName: Claude Sonnet 4.5, vendor: Anthropic, tier: frontier, served: upstream, listPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, meshPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, privacy: upstream_zdr, online: 0, guestAllowed: false, mesh_network: false }
-                pricing: { networkPricePerMTokens: 0.02, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: [open, fast] }
+                pricing: { networkPricePerMTokens: 0.08, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: [open, fast] }
         '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
         '429': { $ref: '#/components/responses/OpenAIRateLimited' }
         '502': { $ref: '#/components/responses/OpenAIUpstream' }

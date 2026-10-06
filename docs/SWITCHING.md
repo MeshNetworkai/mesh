@@ -180,7 +180,7 @@ An optional request header, `X-Mesh-Privacy: trusted | network | upstream_zdr`, 
 
 Two prices, both read from config and reported per model by `GET /v1/models`:
 
-* **Network models** (the open models Mesh nodes run) bill a flat `requestPricing.networkPricePerMTokens` per million tokens, prompt and reply together, whatever the model: $0.02/M as shipped. The reply says what list would have cost and what you saved.
+* **Network models** (the open models Mesh nodes run) bill a flat `requestPricing.networkPricePerMTokens` per million tokens, prompt and reply together, whatever the model: $0.08/M as shipped. The reply says what list would have cost and what you saved.
 * **Frontier and fast models** go to the upstream and bill OpenRouter list × (1 − `requestPricing.upstreamDiscountBps` / 10000), or × (1 + `upstreamMarkupBps` / 10000); exactly one of the two may be set, and both are 0 as shipped, so you pay exactly list with no markup. The discount gap, when configured, is treasury-funded ([PRICING.md](PRICING.md)).
 
 Credits are US dollars: one credit dollar buys one dollar of inference. They arrive hourly from trading fees if you hold `minHoldTokens` $MESH, from the credit marketplace, or from the starter grant on first connect.

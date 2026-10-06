@@ -16,7 +16,7 @@
     "mode": "passthrough",
     "upstreamMarkupBps": 0,
     "upstreamDiscountBps": 0,
-    "networkPricePerMTokens": 0.02,
+    "networkPricePerMTokens": 0.08,
     "showSavings": true
   },
   "nodeRewards": {
@@ -115,8 +115,8 @@
     }
   },
   "usageShare": {
-    "_comment": "Holders earn from paid usage (docs/PRICING.md, engine 2). Off by default. Suggested when on: network price 0.08/M (node cost 0.06), holderBps 3000.",
-    "enabled": false,
+    "_comment": "Holders earn from paid usage (docs/PRICING.md, engine 2). On from launch: network price 0.08/M, node cost 0.06/M, so 0.02/M of margin of which holderBps joins the hourly pool; frontier requests bill at list (no margin) by design.",
+    "enabled": true,
     "holderBps": 3000,
     "treasuryBps": 7000,
     "sources": { "network": true, "upstream": true, "marketplaceFee": true }

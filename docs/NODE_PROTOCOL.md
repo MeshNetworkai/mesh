@@ -16,7 +16,7 @@ node                                        gateway                             
  │◄──────────── 200 {jobId, model, messages…} ─│  (job queued → claimed atomically)      │
  │ POST .../jobs/:jobId/chunk {seq, delta} ───►│───── SSE data: {delta} ────────────────►│
  │ POST .../jobs/:jobId/done {tokens…} ───────►│───── SSE final chunk {usage, mesh} ────►│
- │                                             │  bill user $0.02/M · credit node $0.06/M│
+ │                                             │  bill user $0.08/M · credit node $0.06/M│
 ```
 
 ## 1. Registration
@@ -288,7 +288,7 @@ failures to `scored`; a quarantined node is excluded regardless of its rate.
 
 ## 7. Money
 
-- **User price** for a network-served request: `requestPricing.networkPricePerMTokens` ($0.02) per 1M
+- **User price** for a network-served request: `requestPricing.networkPricePerMTokens` ($0.08) per 1M
   total tokens (prompt + completion), debited from the user's credits as `kind='usage'`.
 - **Node reward**: `nodeRewards.usdPerMTokens` ($0.06) per 1M total tokens per completed job, written to
   the `node_rewards` ledger (`wallet, node_id, job_id, kind='node_reward', tokens, usd_micros, status`). Rewards

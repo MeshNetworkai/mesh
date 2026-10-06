@@ -48,7 +48,7 @@ export const TokenomicsSchema = z
         upstreamMarkupBps: bps.default(0),
         upstreamDiscountBps: bps.default(0),
         /** USD per 1M total tokens charged to the user when a Mesh node serves the request. */
-        networkPricePerMTokens: z.number().min(0).default(0.02),
+        networkPricePerMTokens: z.number().min(0).default(0.08),
         /**
          * "Network credits": when a Mesh node serves a request the user is billed the flat network
          * price above instead of the model's list price (config/model-prices.json). With showSavings

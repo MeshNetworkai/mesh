@@ -58,21 +58,21 @@ Never say:
 - "/numbers", "/report" as page names; the public page is `/stats`
 - anything with an exclamation mark, rockets, emojis, "to the moon"
 
-Numbers come from config and are written in full: "1.5 % fee", "$0.02 per million tokens", "1,000 MESH".
+Numbers come from config and are written in full: "1.5 % fee", "$0.08 per million tokens", "1,000 MESH".
 Every claim about privacy says what is kept: model, token counts, cost and latency, never the prompt.
 
 ## Hero copy (chosen)
 
 The homepage v2 hero is live on the landing page and the OG image (`pages/Landing.tsx`, `scripts/og.mjs`):
 
-> **Trades fund it. Macs serve it. Holders use it.**
+> **Trades fund it. Macs serve it. Holders earn it.**
 >
 > Hold 1,000 $MESH and AI credits land in your wallet every hour, paid from the 1.5 % trading fee. Spend
 > them on open models answered by Macs in the network or on frontier models at list price through
 > zero-data-retention providers, and sell the credits you do not use on the marketplace.
 
-When the gateway reports `usageShareEnabled: true` the middle line becomes "Usage funds it." and the lede
-adds "and a share of what paid requests earn". The earlier hero ("Trading pays for private AI.") is retired;
+The headline is the same in both engine states; when the gateway reports `usageShareEnabled: true`
+(the shipped config) the lede adds "and a share of paid usage" and the engine-2 arrow is solid. The earlier hero ("Trading pays for private AI.") is retired;
 its variants are kept in the internal docs repo for ads.
 
 Landing section copy that was changed from the first build:
@@ -88,7 +88,7 @@ Landing section copy that was changed from the first build:
 
 | Route | Purpose | File |
 | --- | --- | --- |
-| `/` | Hero ("Trades fund it. Macs serve it. Holders use it.") with the free guest chat and key figures, "How the money moves" two-engine diagram, four ways in (use, sell, run, hold), why it's different, switch strip, privacy tiers, live numbers, final CTA | `apps/web/src/pages/Landing.tsx` (chat: `components/GuestChat.tsx`, diagram: `components/Engines.tsx`) |
+| `/` | Hero ("Trades fund it. Macs serve it. Holders earn it.") with the free guest chat and key figures, "How the money moves" two-engine diagram, four ways in (use, sell, run, hold), why it's different, switch strip, privacy tiers, live numbers, final CTA | `apps/web/src/pages/Landing.tsx` (chat: `components/GuestChat.tsx`, diagram: `components/Engines.tsx`) |
 | `/docs` | Prose docs: what Mesh is, credits (two engines, time-weighting, starter credits), using credits, live model catalogue, marketplace, running a Mac, privacy tiers, verification, staking, the stats page, FAQ, risk, roadmap | `apps/web/src/pages/Docs.tsx`, roadmap data `src/content/roadmap.ts` (mirrored in `docs/ROADMAP.md`) |
 | `/api` | "Switch in a minute" plus the API reference rendered from `apps/gateway/openapi.yaml` (grouped, examples, curl, copy) | `apps/web/src/pages/ApiDocs.tsx` |
 | `/stats` | Public stats: live network, every epoch, weekly report, treasury, marketplace, usage share (`/numbers` and `/report` redirect here) | `apps/web/src/pages/StatsPage.tsx` |
@@ -114,7 +114,7 @@ geo-restriction clause renders only when `geoBlock` is non-empty (it is empty as
 | Mark (five dots, third accent) | inline `.nodes` in `Nav.tsx`, `Footer.tsx`, design system | Horizontal row in the wordmark |
 | Favicon | `apps/web/public/favicon.svg` | Same five dots as a quincunx (2-1-2) so it reads at 16 px; centre dot accent; dark-mode colours via `prefers-color-scheme` |
 | Touch icon | `apps/web/public/apple-touch-icon.png` (180×180) | Ink square, five light dots, centre accent |
-| OG / Twitter image | `apps/web/public/og.png` (1200×630) | v2 hero left ("Trades fund it. Macs serve it. Holders use it."), key-figures card right with every number from config, footer line "Credits are a share of fees, not a promise." |
+| OG / Twitter image | `apps/web/public/og.png` (1200×630), rendered from `apps/web/scripts/og-card.html` by `og-card.mjs` | Dark card in the site type: headline ("Trades fund it. Macs serve it. Holders earn it."), dots mark, three monoliths, one line of lede |
 | OG generator | `apps/web/scripts/og.mjs` → `pnpm --filter web og` | SVG rasterised with `@resvg/resvg-js`; uses the shipped Onest/Inter files (WOFF → TTF in-script) |
 | Web manifest | `apps/web/public/site.webmanifest` | |
 | robots / sitemap | `apps/web/public/robots.txt`, `sitemap.xml` | `/app` and `/admin` disallowed; replace host |

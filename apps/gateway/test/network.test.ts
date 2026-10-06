@@ -178,7 +178,7 @@ describe('node protocol: end to end', () => {
     const reward = rewardMicros(100);
     expect(cost).toBe(100 * NETWORK_PRICE_PER_M);
     expect(reward).toBe(100 * NODE_REWARD_PER_M);
-    expect(reward).toBeGreaterThan(cost); // node reward exceeds the user price by design (treasury-funded gap)
+    expect(cost).toBeGreaterThan(reward); // the user price covers the node reward; the difference is the engine-2 margin
     expect(last.usage).toMatchObject({ prompt_tokens: 40, completion_tokens: 60, total_tokens: 100, cost: usd(cost) });
     expect(last.mesh).toMatchObject({ route: 'node', nodeId: 'mac-1', chip: 'M3 Max', jobId: job.jobId });
     expect(res.body.trim().endsWith('data: [DONE]')).toBe(true);
@@ -508,7 +508,7 @@ describe('config + helpers', () => {
     // schema defaults match the shipped config, so a missing key cannot silently reprice the network
     expect(c.requestPricing.networkPricePerMTokens).toBe(testConfig.requestPricing.networkPricePerMTokens);
     expect(c.nodeRewards.usdPerMTokens).toBe(testConfig.nodeRewards.usdPerMTokens);
-    expect(c.requestPricing.networkPricePerMTokens).toBe(0.02);
+    expect(c.requestPricing.networkPricePerMTokens).toBe(0.08);
     expect(c.nodeRewards.usdPerMTokens).toBe(0.06);
     expect(c.routing).toEqual({ preferNetwork: true, firstTokenTimeoutMs: 8000, stallTimeoutMs: 6000, jobTimeoutMs: 120_000, defaultMaxTokens: 1024, minSuccessRate: 0.8, reputationMinJobs: 5, queueWaitMs: 6000, maxQueueDepthPerNode: 3, maxParallelPerNode: 4 });
     expect(() => parseTokenomics({ ...raw, nodeRewards: { usdPerMTokens: -1 } })).toThrow();

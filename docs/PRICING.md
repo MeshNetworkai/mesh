@@ -54,7 +54,7 @@ alone; `--dry-run` prints the diff). The file records `_refreshedAt`.
 | `qwen-2.5-14b` (network only; what 32 GB+ Macs pull) | open | 0.06 | 0.18 | network |
 | `llama-3.1-70b` (network only; `--with-70b` on 64 GB Macs) | open | 0.10 | 0.32 | network |
 
-Network models bill the flat network price instead: **$0.02 per 1M total tokens** (`networkPricePerMTokens`),
+Network models bill the flat network price instead: **$0.08 per 1M total tokens** (`networkPricePerMTokens`),
 for any model a node serves.
 
 ## 2. How a request is billed
@@ -63,12 +63,12 @@ Credits are USD. A request is billed in micro-USD and debited from the wallet's 
 
 | served by | the user pays | it costs Mesh | treasury funds |
 | --- | --- | --- | --- |
-| a Mesh node | `tokens × networkPricePerMTokens` ($0.02/M) | the node reward, `tokens × nodeRewards.usdPerMTokens` ($0.06/M), accrued against the treasury | the **network gap**: $0.04/M at the shipped values |
+| a Mesh node | `tokens × networkPricePerMTokens` ($0.08/M) | the node reward, `tokens × nodeRewards.usdPerMTokens` ($0.06/M), accrued against the treasury | nothing — the $0.02/M **network margin** feeds engine 2 (§3) |
 | the upstream | `list × (1 − upstreamDiscountBps/10000)` or `list × (1 + upstreamMarkupBps/10000)` | `list` (what OpenRouter charged, `usage.cost`; fallback: `model-prices.json`) | the **discount gap**: `list × discount` (a markup is margin instead) |
 
 `upstreamMarkupBps` and `upstreamDiscountBps` are exclusive: the config refuses both non-zero. The
 legacy `markupBps` key is still read and folded into `upstreamMarkupBps`. Shipped values:
-`upstreamDiscountBps: 0`, `upstreamMarkupBps: 0`, `networkPricePerMTokens: 0.02`.
+`upstreamDiscountBps: 0`, `upstreamMarkupBps: 0`, `networkPricePerMTokens: 0.08`.
 
 Every reply reports `usage.cost` (what was billed) and, on network-served replies, `mesh.listCostUsd`
 and `mesh.savedUsd`. `requests_log` keeps `cost_usd_micros`, `list_cost_usd_micros` and
@@ -106,9 +106,9 @@ when the upstream invoice arrives; it is not booked per request):
 | 30 % | $700 | $300 | $0.00735 | $0.00438 | $0.00109 |
 | 40 % | $600 | $400 | $0.00630 | $0.00375 | $0.00093 |
 
-Compare the network gap on the same $1,000 of spend at $0.02/M: 50M tokens served, node rewards
-$3,000, treasury funds $2,000. The discount is the cheaper subsidy per dollar of usage; the network
-is the one that builds supply. Keep the sum of the two gaps under the treasury share of fees
+The network leg carries no gap at the shipped $0.08/M (nodes get $0.06, the $0.02 margin is engine 2);
+it only becomes a subsidy if the price is dropped below the node reward (at $0.02/M, $1,000 of spend
+is 50M tokens, $3,000 of node rewards and a $2,000 gap). Keep the sum of any gaps under the treasury share of fees
 (`treasuryShareBps`, 50 % of a 1.5 % trade fee) over a rolling week; `GET /report`
 (`totals.treasury`, `byWeek`) is the dashboard for that.
 
@@ -129,12 +129,12 @@ node rewards, the network gap, the discount gap, guest chat and ops.
 
 Worked hour: $100,000 traded → $1,500 fees → $750 of credits to holders, $750 to the treasury.
 
-### Engine 2: usage-revenue share (ships off)
+### Engine 2: usage-revenue share (on from launch)
 
 ```jsonc
 // config/tokenomics.json
 "usageShare": {
-  "enabled": false,
+  "enabled": true,
   "holderBps": 3000,
   "treasuryBps": 7000,
   "sources": { "network": true, "upstream": true, "marketplaceFee": true }
@@ -161,9 +161,10 @@ treasuryBps` must equal 10000.
 only decides whether it is **counted** in the usage-share report. That was the simpler choice and it
 is how it ships.
 
-**Turning it on.** At the shipped network price ($0.02/M) every network request runs at a loss and
-contributes nothing, and with no markup every upstream request has a zero margin. Engine 2 needs a
-margin to share, so the suggested combination is:
+**Why the network price is $0.08.** Engine 2 needs a margin to share. Below the node reward ($0.06/M)
+every network request runs at a loss and contributes nothing, and with no markup every upstream
+request has a zero margin by design (price-matched to OpenRouter is the frontier hook). The shipped
+combination is:
 
 ```jsonc
 "requestPricing": { "mode": "passthrough", "upstreamMarkupBps": 0, "upstreamDiscountBps": 0, "networkPricePerMTokens": 0.08, "showSavings": true },
@@ -174,9 +175,11 @@ margin to share, so the suggested combination is:
 Worked numbers at those values, per 1M network tokens: user pays $0.08, node earns $0.06, margin
 $0.02 → **$0.006 to holders, $0.014 to the treasury**. A 1,500-token chat (1k in, 500 out) pays
 $0.000120, the node gets $0.000090, holders get $0.000009. At 10B network tokens a month that is
-$60,000 to holders on top of fee credits, with Llama 3.1 8B still 50 % below OpenRouter's $0.05 /
-$0.08 list on the pricing page. Pair it with an upstream markup (not a discount) if the upstream leg
-should contribute too: `upstreamMarkupBps: 1000` on $100,000 of monthly upstream list usage is a
+$60,000 to holders on top of fee credits. Note what the flat price does to the savings line: Qwen 2.5 14B
+(list $0.06 / $0.18) and Llama 3.1 70B ($0.10 / $0.32) are still well below list on the network, but
+Llama 3.1 8B (list $0.05 / $0.08) is now at or slightly above OpenRouter for prompt tokens — `savedUsd`
+clamps at zero, so the pitch for the 8B model is privacy (the request never leaves the Mac network),
+not price. Pair it with an upstream markup (not a discount) if the upstream leg should contribute too: `upstreamMarkupBps: 1000` on $100,000 of monthly upstream list usage is a
 $10,000 margin → $3,000 to holders.
 
 Where to see it: `GET /report` → `totals.usageShare { enabled, holderBps, treasuryBps, marginUsd,
@@ -194,7 +197,6 @@ not spend a free message. The treasury pays for guest traffic and it never feeds
 > **Frontier models at a discount, open models on Macs, and a token that earns from both.**
 > Mesh gives you Claude, GPT-5, Gemini, Grok and DeepSeek through one OpenAI-compatible key at or
 > below list price, routed only to zero-data-retention providers, and runs Llama and Qwen on a
-> network of Macs for a flat $0.02 per million tokens. Your credits come from trading fees every
-> hour, and when the usage-revenue share is switched on, a share of the margin on every paid
-> request flows back into the next hour's pool. Holders earn when people use the network, not only
+> network of Macs for a flat $0.08 per million tokens. Your credits come from trading fees every
+> hour, and a share of the margin on every paid request flows back into the next hour's pool. Holders earn when people use the network, not only
 > when they trade it.

@@ -114,7 +114,7 @@ function ogSvg() {
   <g font-family="Onest Light" font-size="80" letter-spacing="-2.8" fill="${C.fg}">
     <text x="68" y="230">Trades fund it.</text>
     <text x="68" y="314">Macs serve it.</text>
-    <text x="68" y="398" fill="${C.accent}">Holders use it.</text>
+    <text x="68" y="398" fill="${C.accent}">Holders earn it.</text>
   </g>
   <text x="72" y="444" font-family="Inter Medium" font-size="14" fill="${C.muted}">Use it · Sell it · Run it · Hold it</text>
   <text x="72" y="486" font-family="Inter" font-size="21" fill="${C.fg2}">Hold ${esc(minHold)} $${esc(tokenomics.ticker)} and AI credits land every hour from the ${esc(feePct)} trading fee.</text>
@@ -166,5 +166,6 @@ function render(svg, width, file) {
 }
 
 mkdirSync(outDir, { recursive: true });
-render(ogSvg(), 1200, resolve(outDir, 'og.png'));
+// og.png is rendered from scripts/og-card.html by og-card.mjs (the current card); the SVG version below is kept for reference.
+if (process.env.OG_SVG === '1') render(ogSvg(), 1200, resolve(outDir, 'og.png'));
 render(touchIconSvg(), 180, resolve(outDir, 'apple-touch-icon.png'));

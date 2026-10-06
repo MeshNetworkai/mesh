@@ -98,7 +98,7 @@ describe('usage-revenue share: gateway', () => {
     const { serveNetwork, serveUpstream, pool, poolRows, logRows, app } = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.08, upstreamMarkupBps: 2000 } }));
     const { res, jobId } = await serveNetwork();
     expect(res.json().usage.cost).toBe(NET_BILLED / 1e6);
-    expect(networkMicros(TOKENS)).not.toBe(NET_BILLED); // this test runs its own price, not the shipped 0.02
+    expect(networkMicros(TOKENS)).toBe(NET_BILLED); // 0.08/M is also the shipped price
     expect(rewardMicros(TOKENS)).toBe(NET_REWARD);
     expect(poolRows()).toEqual([{ source: 'usage', usd_micros: NET_HOLDERS, ref: `usage:job:${jobId}` }]);
     expect(logRows()[0]).toMatchObject({ source: 'network', wallet: 'alice', model: 'llama-3.1-8b', billed_micros: NET_BILLED, cost_micros: NET_REWARD, margin_micros: NET_MARGIN, holder_micros: NET_HOLDERS, treasury_micros: NET_MARGIN - NET_HOLDERS });
@@ -133,7 +133,7 @@ describe('usage-revenue share: gateway', () => {
     expect(stats.usageShareEnabled).toBe(true);
   });
 
-  it('disabled (the shipped default): paid requests write nothing', async () => {
+  it('disabled: paid requests write nothing', async () => {
     const { serveNetwork, serveUpstream, pool, logRows, app } = await boot(cfg({}, { enabled: false }));
     await serveNetwork();
     await serveUpstream();
@@ -142,7 +142,7 @@ describe('usage-revenue share: gateway', () => {
     const report = (await app.inject({ method: 'GET', url: '/report' })).json();
     expect(report.totals.usageShare).toMatchObject({ enabled: false, marginUsd: 0, toHoldersUsd: 0, toTreasuryUsd: 0 });
     expect((await app.inject({ method: 'GET', url: '/stats' })).json().usageShareToHolders24hUsd).toBe(0);
-    expect(testConfig.usageShare.enabled).toBe(false);
+    expect(testConfig.usageShare.enabled).toBe(true); // shipped on
   });
 
   it('negative margin contributes nothing: an upstream discount (billed < list) and a network price below the node reward', async () => {

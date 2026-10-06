@@ -83,7 +83,7 @@ const CHAT_ID = 'guest-chat';
 export function Landing() {
   const { data: stats, error } = useStats();
   // Engine 2 (docs/PRICING.md): the gateway says whether the usage-revenue share is on. Off until it confirms.
-  const usageOn = stats?.usageShareEnabled === true;
+  const usageOn = stats?.usageShareEnabled ?? TOKENOMICS.usageShare.enabled; // the gateway's live flag; the shipped config until it answers
   const discountBps = stats?.upstreamDiscountBps ?? T.upstreamDiscountBps;
   const frontierPhrase = discountBps > 0 ? `frontier models ${discountBps / 100}% below list` : 'frontier models through zero-data-retention providers';
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
@@ -144,23 +144,11 @@ export function Landing() {
             <BetaPill />
           </p>
           <h1 className="display home-h1" id="hero-h1">
-            {usageOn ? (
-              <>
-                Trades fund it.
-                <br />
-                Usage funds it.
-                <br />
-                <em>Macs serve it.</em>
-              </>
-            ) : (
-              <>
-                Trades fund it.
-                <br />
-                Macs serve it.
-                <br />
-                <em>Holders use it.</em>
-              </>
-            )}
+            Trades fund it.
+            <br />
+            Macs serve it.
+            <br />
+            <em>Holders earn it.</em>
           </h1>
           <p className="lede">
             Hold {minHold} and AI credits land in your wallet every {epochWord}, paid from the {feePct} trading fee
@@ -217,7 +205,7 @@ export function Landing() {
             </h2>
             <p className="sub">
               Trading pays a {feePct} fee; {holderPct} becomes credits for holders every {epochWord}, {treasuryPct} goes to the treasury. Paid requests and marketplace sales leave a
-              margin{usageOn ? ', and a share of it joins the same pool' : '; the holder share of it is built and switches on with the pricing decision'}. The treasury pays the Macs.
+              margin{usageOn ? ', and a share of it joins the same pool' : '; the holder share of it switches on with the token launch'}. The treasury pays the Macs.
             </p>
           </div>
         </div>

@@ -8,14 +8,15 @@ test.describe('landing', () => {
     const h1 = page.getByRole('heading', { level: 1 });
     await expect(h1).toContainText('Trades fund it.');
     await expect(h1).toContainText('Macs serve it.');
-    // config/tokenomics.json ships usageShare.enabled=false → the third line is the holders one, and the
-    // engine-2 arrow into the pool is dashed with a "coming" label (never claimed live).
-    await expect(h1).toContainText('Holders use it.');
-    await expect(h1).not.toContainText('Usage funds it.');
+    // config/tokenomics.json ships usageShare.enabled=true → the engine-2 arrow into the pool is solid
+    // and the lede names the usage share; the gateway's live flag can still switch it off.
+    await expect(h1).toContainText('Holders earn it.');
     const engines = page.locator('.engines');
-    await expect(engines).toHaveAttribute('data-usage-share', 'off');
+    await expect(engines).toHaveAttribute('data-usage-share', 'on');
     await expect(engines.locator('svg.wide')).toBeVisible();
-    await expect(engines.locator('svg.wide')).toContainText('30% share · coming');
+    await expect(engines.locator('svg.wide')).toContainText('30% share');
+    await expect(engines.locator('svg.wide')).not.toContainText('coming');
+    await expect(page.locator('.home-hero .lede')).toContainText('share of paid usage');
     await expect(engines.locator('svg.wide')).toContainText('1.5% fee');
     await expect(page.getByText('Nothing is minted to pay anyone.')).toBeVisible();
     // Lede names the four things the product does.
@@ -560,7 +561,7 @@ test.describe('signed-in app', () => {
     await expect(page.locator('#treasury')).toContainText('Treasury ledger');
     await expect(page.locator('#treasury')).toContainText('Credit marketplace');
     await expect(page.locator('#treasury')).toContainText('Usage-revenue share');
-    await expect(page.locator('#treasury .pill', { hasText: 'off' })).toBeVisible(); // usageShare ships disabled
+    await expect(page.locator('#treasury .pill', { hasText: /^on$/ })).toBeVisible(); // usageShare ships enabled
     await expect(page.locator('main')).not.toContainText('Something broke');
     // Old addresses redirect and keep their hash.
     await page.goto('/report#treasury');

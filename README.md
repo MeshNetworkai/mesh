@@ -16,7 +16,7 @@ across wallets holding at least 1,000 $MESH, time-weighted over the hour (`confi
    never "live". `docs/PRICING.md` §3.
 
 **What credits buy.** One OpenAI-compatible key (`/v1/chat/completions`, `/v1/models`). Open models the
-network runs (Llama, Qwen) go to an idle, reputable Mac first at a flat $0.02 per million tokens, with
+network runs (Llama, Qwen) go to an idle, reputable Mac first at a flat $0.08 per million tokens, with
 upstream fallback; the Mac is paid $0.06 per million from the treasury. Frontier and fast models
 (Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Mistral and more) go to OpenRouter restricted to
 zero-data-retention providers at list minus the configured discount (0 as shipped). `GET /v1/models`
@@ -195,7 +195,7 @@ chunk within `routing.firstTokenTimeoutMs` (8s) or a gap over `stallTimeoutMs` (
 re-queued once to another node, else the same client request falls back to OpenRouter transparently
 (`x-mesh-fallback: <reason>`). Once partial output has reached the client there is no fallback; the
 error is surfaced in-stream (`node_stream_failed`) and nothing is charged. Network-served requests cost
-the user `requestPricing.networkPricePerMTokens` ($0.02/M total tokens); the node's wallet accrues
+the user `requestPricing.networkPricePerMTokens` ($0.08/M total tokens); the node's wallet accrues
 `nodeRewards.usdPerMTokens` ($0.06/M) in the `node_rewards` ledger (the reward deliberately exceeds the
 price; the gap is funded by the treasury share of trade fees, see `docs/STATUS.md` → Pricing economics). Nodes with < 80% success over
 their last 100 jobs (min 5) are excluded from routing. Jobs persist in the `jobs` table
@@ -244,7 +244,7 @@ get `451 region_blocked`. Off in dev. CORS is open. Logs are pino JSON.
 - `minHoldTokens` 1000 — time-weighted balance needed to be eligible
 - `epochSeconds` 3600 — distribution cadence
 - `creditUsdPerFeeUsd` 1.0 — how many credit-USD each fee-USD mints
-- `requestPricing` — `networkPricePerMTokens` (0.02) flat USD per 1M total tokens when a Mesh node serves; `upstreamDiscountBps` / `upstreamMarkupBps` (exactly one may be non-zero, both 0 as shipped) applied to OpenRouter list for upstream-served requests; `showSavings` (`docs/PRICING.md`)
+- `requestPricing` — `networkPricePerMTokens` (0.08) flat USD per 1M total tokens when a Mesh node serves; `upstreamDiscountBps` / `upstreamMarkupBps` (exactly one may be non-zero, both 0 as shipped) applied to OpenRouter list for upstream-served requests; `showSavings` (`docs/PRICING.md`)
 - `nodeRewards.usdPerMTokens` 0.06 — accrued to the node wallet per 1M total tokens of completed jobs (above the user price by design; treasury share covers the gap)
 - `usageShare` — engine 2: `enabled` (false as shipped), `holderBps` 3000 / `treasuryBps` 7000 of the margin on paid requests, `sources` {network, upstream, marketplaceFee}
 - `marketplace` — `enabled`, `feeBps` 250, `feeToHoldersBps` 5000, `minListingUsd` 1, `maxDiscountBps` 7000, `listingTtlHours` 168 (`docs/MARKETPLACE.md`)

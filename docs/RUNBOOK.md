@@ -397,7 +397,7 @@ is because of bad ledger writes, see §11e (DB restore) **first**, then roll the
 
 1. Confirm: `curl -s $G/nodes | jq '{online,total,models}'` and `jq '.nodes | map({nodeId, online, lastSeen})'` on the overview.
 2. Requests fall back to OpenRouter automatically (`x-mesh-route: openrouter`, `x-mesh-fallback`);
-   cost per request rises from `$0.02/M` to passthrough. No action needed for users.
+   cost per request rises from `$0.08/M` to passthrough. No action needed for users.
 3. If **all** nodes dropped at once the gateway side is the suspect: a deploy that changed the node
    token hashing, `NODES_REQUIRE_SIGNATURE` flipped, or Caddy rejecting long-polls (`read_timeout`).
    Check `docker compose logs --since 30m gateway | grep -E 'unauthorized|node'`.

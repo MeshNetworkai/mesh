@@ -117,7 +117,7 @@ client (OpenAI SDK)            gateway (routes/v1.ts)                           
   │◄── SSE chunk {delta} ────────│   then each chunk within stallTimeoutMs (6 s)                  │ Ollama
   │   x-mesh-route: node:<id>    │                              POST …/jobs/:jobId/chunk {seq,δ} ◄┤
   │        …                     │                              POST …/jobs/:jobId/done {tokens}  ◄┤
-  │◄── final chunk {usage, mesh} │10 price = tokens × networkPricePerMTokens ($0.02/M)
+  │◄── final chunk {usage, mesh} │10 price = tokens × networkPricePerMTokens ($0.08/M)
   │◄── data: [DONE]              │   reward = tokens × nodeRewards.usdPerMTokens ($0.06/M)
   │                              │   one transaction: requests_log, credits_ledger(usage, −price),
   │                              │   api_keys.spent, node_rewards(+reward), treasury_ledger(−reward)

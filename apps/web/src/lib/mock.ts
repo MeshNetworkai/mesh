@@ -185,7 +185,8 @@ const state = {
 })();
 
 /** Engine 2 (usage-revenue share) in mock mode: `VITE_MOCK_USAGE_SHARE=1` previews the "on" state of the homepage diagram and the report. */
-const MOCK_USAGE_SHARE_ON = import.meta.env.VITE_MOCK_USAGE_SHARE === '1';
+// Mirrors config/tokenomics.json unless VITE_MOCK_USAGE_SHARE=0/1 forces it for a screenshot.
+const MOCK_USAGE_SHARE_ON = import.meta.env.VITE_MOCK_USAGE_SHARE ? import.meta.env.VITE_MOCK_USAGE_SHARE === '1' : TOKENOMICS.usageShare.enabled;
 
 export const mockStats = async (): Promise<Stats> => {
   await sleep(350);
@@ -223,7 +224,7 @@ export const mockStats = async (): Promise<Stats> => {
     beta: MOCK_BETA,
     verificationEnabled: true,
     starterGrants: { enabled: mockStarter.enabled, amountUsd: TOKENOMICS.starterCredits.amountUsd, granted: mockStarter.grants.length, remaining: Math.max(0, TOKENOMICS.starterCredits.maxWallets - mockStarter.grants.length) },
-    usageShareEnabled: MOCK_USAGE_SHARE_ON, // mirrors config/tokenomics.json: built, off by default
+    usageShareEnabled: MOCK_USAGE_SHARE_ON,
     usageShareToHolders24hUsd: MOCK_USAGE_SHARE_ON ? 61.2 : 0,
     upstreamDiscountBps: TOKENOMICS.upstreamDiscountBps,
     upstreamMarkupBps: TOKENOMICS.upstreamMarkupBps,

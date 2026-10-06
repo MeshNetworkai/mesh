@@ -60,8 +60,8 @@ describe('model catalogue: config', () => {
     expect(prices.models['anthropic/claude-sonnet-4.5']).toMatchObject({ promptUsdPerM: 3, completionUsdPerM: 15, tier: 'frontier' });
   });
 
-  it('requestPricing: markup and discount are exclusive; legacy markupBps folds into upstreamMarkupBps; defaults ship at 0 / 0.02', () => {
-    expect(testConfig.requestPricing).toMatchObject({ upstreamMarkupBps: 0, upstreamDiscountBps: 0, networkPricePerMTokens: 0.02 });
+  it('requestPricing: markup and discount are exclusive; legacy markupBps folds into upstreamMarkupBps; defaults ship at 0 / 0.08', () => {
+    expect(testConfig.requestPricing).toMatchObject({ upstreamMarkupBps: 0, upstreamDiscountBps: 0, networkPricePerMTokens: 0.08 });
     const legacy = parseTokenomics({ ...testConfig, requestPricing: { mode: 'passthrough', markupBps: 500 } });
     expect(legacy.requestPricing.upstreamMarkupBps).toBe(500);
     expect(() => parseTokenomics({ ...testConfig, requestPricing: { mode: 'passthrough', upstreamMarkupBps: 500, upstreamDiscountBps: 1000 } })).toThrow(/exclusive/);
@@ -78,9 +78,9 @@ describe('model catalogue: config', () => {
     expect(meshPricePerM(15, { upstreamMarkupBps: 1000, upstreamDiscountBps: 0 })).toBe(16.5);
   });
 
-  it('guest.allowedTiers defaults to open + fast; usageShare ships disabled with 3000/7000 and validates the split', () => {
+  it('guest.allowedTiers defaults to open + fast; usageShare ships enabled with 3000/7000 and validates the split', () => {
     expect(testConfig.guest.allowedTiers).toEqual(['open', 'fast']);
-    expect(testConfig.usageShare).toEqual({ enabled: false, holderBps: 3000, treasuryBps: 7000, sources: { network: true, upstream: true, marketplaceFee: true } });
+    expect(testConfig.usageShare).toEqual({ enabled: true, holderBps: 3000, treasuryBps: 7000, sources: { network: true, upstream: true, marketplaceFee: true } });
     expect(() => parseTokenomics({ ...testConfig, usageShare: { enabled: true, holderBps: 3000, treasuryBps: 6000 } })).toThrow(/10000/);
     const minimal = parseTokenomics({ ...testConfig, usageShare: undefined });
     expect(minimal.usageShare.enabled).toBe(false);
@@ -94,7 +94,7 @@ describe('GET /v1/models', () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.object).toBe('list');
-    expect(body.pricing).toEqual({ networkPricePerMTokens: 0.02, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: ['open', 'fast'] });
+    expect(body.pricing).toEqual({ networkPricePerMTokens: 0.08, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: ['open', 'fast'] });
     const ids: string[] = body.data.map((m: { id: string }) => m.id);
     // every curated model is listed, except an upstream id that is also a network alias's sibling (one row per tag)
     for (const id of CURATED.filter((c) => c !== 'meta-llama/llama-3.1-8b-instruct')) expect(ids).toContain(id);
@@ -116,7 +116,7 @@ describe('GET /v1/models', () => {
       tier: 'open',
       served: 'both',
       listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 },
-      meshPrice: { promptUsdPerM: 0.02, completionUsdPerM: 0.02 },
+      meshPrice: { promptUsdPerM: 0.08, completionUsdPerM: 0.08 },
       privacy: 'network',
       online: 0,
       guestAllowed: true,
