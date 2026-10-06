@@ -509,8 +509,9 @@ ALERTS_ENABLED=false
 # TELEGRAM_BOT_TOKEN=
 # TELEGRAM_CHAT_ID=
 
-# ---- node distribution: the deploy copies the release latest.json to /opt/mesh/web/downloads/latest.json ----
-# UPDATE_LATEST_URL=${PUBLIC_WEB_URL}/downloads/latest.json
+# ---- node distribution: the deploy copies the release latest.json to /opt/mesh/web/downloads/latest.json;
+# the gateway proxies it at /install/latest.json (what `mesh-node update` reads) ----
+UPDATE_LATEST_URL=${PUBLIC_WEB_URL}/downloads/latest.json
 EOF
     )
     ok "generated .env with fresh JWT_SECRET / ADMIN_TOKEN / KEY_PEPPER"
@@ -519,6 +520,7 @@ EOF
     set_env_kv "$ENV_FILE" AUTH_URI "$AUTH_URI"
     set_env_kv "$ENV_FILE" CORS_ORIGINS "$CORS_ORIGINS"
     set_env_kv "$ENV_FILE" PUBLIC_WEB_URL "$PUBLIC_WEB_URL"
+    set_env_kv "$ENV_FILE" UPDATE_LATEST_URL "${PUBLIC_WEB_URL}/downloads/latest.json"
     ok ".env exists: secrets kept, domain lines updated (AUTH_DOMAIN=${AUTH_DOMAIN})"
   fi
   chown "$MESH_USER:$MESH_USER" "$ENV_FILE"; chmod 600 "$ENV_FILE"
