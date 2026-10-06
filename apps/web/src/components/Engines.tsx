@@ -43,6 +43,8 @@ interface Layout {
   edges: (on: boolean) => Edge[];
   /** "Engine 1 · Trading" / "Engine 2 · Usage" captions */
   tags: Array<{ text: string; x: number; y: number }>;
+  /** Re-wrapped sub-lines for boxes that are narrower in this layout; same words, more lines. */
+  wrap?: (copy: ReturnType<typeof engineCopy>) => Partial<Record<BoxId, string[]>>;
 }
 
 export function engineCopy(opts: { usageShareOn: boolean; upstreamDiscountBps: number; holderBps: number }) {
@@ -50,7 +52,7 @@ export function engineCopy(opts: { usageShareOn: boolean; upstreamDiscountBps: n
   const share = `${opts.holderBps / 100}%`;
   return {
     trading: { title: 'Trading', sub: [`every $${T.ticker} swap`] },
-    fee: { title: `${feePct} fee`, sub: ['on each trade, swept hourly'] },
+    fee: { title: `${feePct} fee`, sub: ['per trade, swept hourly'] },
     pool: { title: 'Hourly credits', sub: ['to every wallet holding', `at least ${minHold}`] },
     treasury: { title: 'Treasury', sub: ['funds the network'] },
     requests: { title: 'Paid requests', sub: [`network ${netPrice}/M tokens`, `frontier at ${discount}`] },
@@ -102,17 +104,23 @@ const STACKED: Layout = {
     fee: { x: 20, y: 124, w: 320, h: 60 },
     pool: { x: 20, y: 244, w: 150, h: 72 },
     treasury: { x: 190, y: 244, w: 150, h: 72 },
-    macs: { x: 190, y: 356, w: 150, h: 60 },
-    requests: { x: 20, y: 476, w: 150, h: 84 },
+    macs: { x: 190, y: 356, w: 150, h: 72 },
+    requests: { x: 20, y: 476, w: 150, h: 90 },
     market: { x: 190, y: 476, w: 150, h: 72 },
     margin: { x: 20, y: 600, w: 320, h: 60 },
   },
+  // The two narrow columns re-wrap three sub-lines so nothing runs past a box edge at 360 wide.
+  wrap: (copy) => ({
+    pool: ['to every wallet', `holding ${minHold}`],
+    macs: [`paid ${nodePay}`, 'per M tokens'],
+    requests: [`network ${netPrice}`, 'per M tokens', copy.requests.sub[1]],
+  }),
   edges: (on) => [
     { d: 'M180 84 V124' },
     { d: 'M95 184 V244', accent: true, label: { text: holderPct, x: 103, y: 220, anchor: 'start' } },
     { d: 'M265 184 V244', label: { text: treasuryPct, x: 273, y: 220, anchor: 'start' } },
     { d: 'M265 316 V356' },
-    { d: 'M95 560 V600' },
+    { d: 'M95 566 V600' },
     { d: 'M265 548 V600' },
     { d: 'M95 660 V690', accent: true, dashed: !on, label: { text: '', x: 95, y: 712, anchor: 'middle' } },
     { d: 'M265 660 V690', label: { text: 'the rest → treasury', x: 265, y: 712, anchor: 'middle' } },
@@ -129,6 +137,7 @@ function Diagram({ layout, on, copy, className }: { layout: Layout; on: boolean;
   const mAccent = `${uid}-accent`;
   const share = className === 'stacked' ? copy.shareLabelShort : copy.shareLabel;
   const edges = layout.edges(on).map((e) => (e.label && e.label.text === '' ? { ...e, label: { ...e.label, text: share } } : e));
+  const wrapped = layout.wrap?.(copy) ?? {};
   return (
     <svg className={`engines-svg ${className}`} viewBox={`0 0 ${layout.w} ${layout.h}`} role="img" aria-labelledby={`${uid}-title`} focusable="false">
       <title id={`${uid}-title`}>
@@ -163,7 +172,7 @@ function Diagram({ layout, on, copy, className }: { layout: Layout; on: boolean;
       <g className="engines-boxes">
         {(Object.keys(layout.boxes) as BoxId[]).map((id) => {
           const b = layout.boxes[id];
-          const c = copy[id];
+          const c = { title: copy[id].title, sub: wrapped[id] ?? copy[id].sub };
           const holder = id === 'pool';
           return (
             <g key={id} className={`engines-box${holder ? ' holder' : ''}`}>
