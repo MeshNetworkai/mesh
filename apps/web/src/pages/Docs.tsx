@@ -756,7 +756,7 @@ export function Docs() {
               What is live, what is next. <span className="muted">No dates.</span>
             </h2>
             <p>
-              Four phases. Items move between them as work lands; nothing below is a promise, and the token launch is the one event most of it waits for.
+              Three phases. Items move between them as work lands; nothing below is a promise, and the token launch is the one event most of it waits for.
             </p>
             <div className="roadmap">
               {ROADMAP.map((phase) => (
