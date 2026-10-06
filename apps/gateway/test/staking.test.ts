@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { nodeRewardMicros } from '../src/ledger.js';
 import { eligibleNodes } from '../src/routing.js';
 import { StakeResolver, applyMultiplier, nextTierFor, tierForPosition } from '../src/staking.js';
-import { ADMIN, memDb, rewardMicros, testConfig, testServer } from './helpers.js';
+import { ADMIN, memDb, networkMicros, rewardMicros, testConfig, testServer } from './helpers.js';
+
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
 
 const E = testConfig.epochSeconds;
 const stakedConfig: TokenomicsConfig = {
@@ -201,17 +204,21 @@ describe('rewards and routing use the tier', () => {
     await app.inject({ method: 'POST', url: '/admin/starter-credit', headers: ADMIN, payload: { wallet: 'user', amountUsd: 1 } });
     const jwt = await login('user');
     const key = (await app.inject({ method: 'POST', url: '/keys', headers: { authorization: `Bearer ${jwt}` } })).json().key as string;
-    const chat = () => app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { model: 'llama-3.1-8b', messages: [{ role: 'user', content: 'hi' }] } });
+    const chat = () => app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { model: 'llama-3.1-8b', messages: [{ role: 'user', content: `hi${PAD}` }] } });
 
     const gold = await fakeNode(app, { nodeId: 'gold-mac', wallet: 'mockwallet_alice' });
     let client = chat();
     let job = (await gold.pull()).json();
-    await gold.chunk(job.jobId, 0, 'A');
+    await gold.chunk(job.jobId, 0, `A${PAD}`);
     await gold.done(job.jobId, { promptTokens: 100, completionTokens: 100, finishReason: 'stop' });
     expect((await client).statusCode).toBe(200);
     const base = rewardMicros(200);
     expect(base).toBeGreaterThan(0);
-    expect((await gold.stats()).json().earnedUsdTotal).toBe((2 * base) / 1_000_000);
+    // 2× the base reward, but never more than the job was billed (relay.ts): at the shipped prices gold is held at the network price.
+    const goldReward = Math.min(2 * base, networkMicros(200));
+    expect(goldReward).toBeGreaterThan(base);
+    expect(goldReward).toBeLessThanOrEqual(networkMicros(200));
+    expect((await gold.stats()).json().earnedUsdTotal).toBe(goldReward / 1_000_000);
 
     // The gold node is busy=0 again but a plain node must still get the job when it is the only one polling:
     // close the gold node's eligibility by marking it busy, then serve from carol.
@@ -219,14 +226,14 @@ describe('rewards and routing use the tier', () => {
     const plain = await fakeNode(app, { nodeId: 'plain-mac', wallet: 'mockwallet_carol' });
     client = chat();
     job = (await plain.pull()).json();
-    await plain.chunk(job.jobId, 0, 'B');
+    await plain.chunk(job.jobId, 0, `B${PAD}`);
     await plain.done(job.jobId, { promptTokens: 100, completionTokens: 100, finishReason: 'stop' });
     expect((await client).statusCode).toBe(200);
     expect((await plain.stats()).json().earnedUsdTotal).toBe(base / 1_000_000);
 
     const rows = app.ctx.db.prepare(`SELECT wallet, usd_micros FROM node_rewards WHERE kind = 'node_reward' ORDER BY id`).all() as Array<{ wallet: string; usd_micros: number }>;
     expect(rows).toEqual([
-      { wallet: 'mockwallet_alice', usd_micros: 2 * base },
+      { wallet: 'mockwallet_alice', usd_micros: goldReward },
       { wallet: 'mockwallet_carol', usd_micros: base },
     ]);
   });

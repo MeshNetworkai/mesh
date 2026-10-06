@@ -2,6 +2,9 @@ import type { TokenomicsConfig } from '@mesh/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rewardMicros, testConfig, testServer, usd } from './helpers.js';
 
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
+
 /** Guest chat on, 3 free messages, small caps; node timeouts generous so the node-served test cannot flake. */
 const guestConfig: TokenomicsConfig = {
   ...testConfig,
@@ -152,6 +155,7 @@ describe('guest chat', () => {
     expect(job.messages).toEqual([{ role: 'user', content: 'hello node' }]);
     await app.inject({ method: 'POST', url: `/nodes/mac-g/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 0, delta: 'Hi ' } });
     await app.inject({ method: 'POST', url: `/nodes/mac-g/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 1, delta: 'guest' } });
+    await app.inject({ method: 'POST', url: `/nodes/mac-g/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 2, delta: PAD } });
     await app.inject({ method: 'POST', url: `/nodes/mac-g/jobs/${job.jobId}/done`, headers: h, payload: { promptTokens: 40, completionTokens: 60, finishReason: 'stop' } });
 
     const r = await client;
@@ -160,7 +164,7 @@ describe('guest chat', () => {
     expect(r.headers['x-mesh-privacy']).toBe('network');
     expect(r.headers['x-guest-remaining']).toBe('2');
     const chunks = sse(r.body);
-    expect(chunks.map((c) => c.choices[0]?.delta?.content ?? '').join('')).toBe('Hi guest');
+    expect(chunks.map((c) => c.choices[0]?.delta?.content ?? '').join('')).toBe(`Hi guest${PAD}`);
     const last = chunks.at(-1)!;
     expect(last.mesh).toMatchObject({ route: 'node', nodeId: 'mac-g', privacy: 'network', servedBy: 'network node' });
     expect(last.usage).toMatchObject({ prompt_tokens: 40, completion_tokens: 60, total_tokens: 100, cost: 0 }); // free to the guest

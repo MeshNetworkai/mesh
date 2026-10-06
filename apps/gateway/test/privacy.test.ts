@@ -7,6 +7,9 @@ import { decideRoute, isTrustedNode, resolvePrivacy, trustedVia, type NodeRow } 
 import { OpenRouterUpstream, upstreamBody } from '../src/upstream.js';
 import { ADMIN, memDb, testConfig, testServer } from './helpers.js';
 
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
+
 /**
  * Privacy tiers (docs/PRIVACY.md): what a node is sent, how a request picks a tier, that `trusted`
  * never silently becomes `network`, the operator pledge, and the ZDR flag on upstream calls.
@@ -265,7 +268,7 @@ describe('trusted tier never silently degrades to network', () => {
     const got = await trusted.pull(1500);
     expect(got.statusCode).toBe(200);
     const job = got.json();
-    await trusted.chunk(job.jobId, 0, 'ok');
+    await trusted.chunk(job.jobId, 0, `ok${PAD}`);
     await trusted.done(job.jobId);
     const res = await client;
     expect((await plainPoll).statusCode).toBe(204); // the plain node's long-poll ran out empty

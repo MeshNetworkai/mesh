@@ -5,6 +5,9 @@ import { networkCostMicros } from '../src/routes/v1.js';
 import { effectiveMultiplier, listCostMicros, networkSavingsUsd24h, savedMicros, walletSavings } from '../src/savings.js';
 import { ADMIN, memDb, NETWORK_PRICE_PER_M, networkMicros, testConfig, testServer, usd } from './helpers.js';
 
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
+
 const prices: ModelPrices = {
   default: { promptUsdPerM: 1, completionUsdPerM: 3 },
   models: {
@@ -128,9 +131,9 @@ async function bootWithNode(config = calmConfig, extraPolicy: Record<string, str
   expect(reg.statusCode).toBe(200);
   const h = { authorization: `Bearer ${reg.json().nodeToken as string}` };
   const serve = async (payload: Record<string, unknown>, usage = { promptTokens: 1000, completionTokens: 500, finishReason: 'stop' }) => {
-    const client = app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload });
+    const client = app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { ...payload, messages: [...(payload.messages as unknown[]), { role: 'user', content: PAD }] } });
     const job = (await app.inject({ method: 'GET', url: `/nodes/mac-s/jobs/next?wait=2000`, headers: h })).json();
-    await app.inject({ method: 'POST', url: `/nodes/mac-s/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 0, delta: 'ok' } });
+    await app.inject({ method: 'POST', url: `/nodes/mac-s/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 0, delta: `ok${PAD}` } });
     await app.inject({ method: 'POST', url: `/nodes/mac-s/jobs/${job.jobId}/done`, headers: h, payload: usage });
     return client;
   };

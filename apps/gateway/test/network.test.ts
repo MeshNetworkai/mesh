@@ -7,6 +7,9 @@ import { networkCostMicros } from '../src/routes/v1.js';
 import { nodeRewardMicros } from '../src/ledger.js';
 import { ADMIN, memDb, NETWORK_PRICE_PER_M, NODE_REWARD_PER_M, networkMicros, rewardMicros, testConfig, testServer, usd } from './helpers.js';
 
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
+
 /** Short timeouts so failure paths run in milliseconds. */
 const fastConfig: TokenomicsConfig = {
   ...testConfig,
@@ -161,6 +164,7 @@ describe('node protocol: end to end', () => {
     expect((await n.chunk(job.jobId, 2, '!')).statusCode).toBe(200); // arrives early
     expect((await n.chunk(job.jobId, 1, ' world')).statusCode).toBe(200);
     expect((await n.chunk(job.jobId, 1, ' world')).statusCode).toBe(200); // duplicate ignored
+    expect((await n.chunk(job.jobId, 3, PAD)).statusCode).toBe(200);
     expect((await n.done(job.jobId, { promptTokens: 40, completionTokens: 60, finishReason: 'stop' })).statusCode).toBe(200);
 
     const res = await client;
@@ -169,7 +173,7 @@ describe('node protocol: end to end', () => {
     expect(res.headers['x-mesh-route']).toBe('node:mac-1');
     const events = sse(res.body);
     const text = events.map((e) => e.choices?.[0]?.delta?.content ?? '').join('');
-    expect(text).toBe('Hello world!');
+    expect(text).toBe(`Hello world!${PAD}`);
     expect(events[0].choices[0].delta.role).toBe('assistant');
     const last = events[events.length - 1];
     expect(last.choices[0].finish_reason).toBe('stop');
@@ -221,10 +225,11 @@ describe('node protocol: end to end', () => {
     const { app, chat, balance } = await boot(calmConfig);
     const n = await fakeNode(app, { nodeId: 'mac-2' });
     const before = await balance();
-    const client = chat({ model: 'llama-3.1-8b', messages: [{ role: 'user', content: 'hi' }] });
+    const client = chat({ model: 'llama-3.1-8b', messages: [{ role: 'user', content: `hi${PAD}` }] });
     const job = (await n.pull()).json();
     await n.chunk(job.jobId, 0, 'A');
     await n.chunk(job.jobId, 1, 'B');
+    await n.chunk(job.jobId, 2, PAD);
     await n.done(job.jobId, { promptTokens: 100, completionTokens: 100, finishReason: 'length' });
     const res = await client;
     expect(res.statusCode).toBe(200);
@@ -235,7 +240,7 @@ describe('node protocol: end to end', () => {
     const j = res.json();
     expect(j.object).toBe('chat.completion');
     expect(j.model).toBe('llama-3.1-8b');
-    expect(j.choices[0]).toMatchObject({ message: { role: 'assistant', content: 'AB' }, finish_reason: 'length' });
+    expect(j.choices[0]).toMatchObject({ message: { role: 'assistant', content: `AB${PAD}` }, finish_reason: 'length' });
     expect(j.usage).toMatchObject({ prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, cost: usd(cost) });
     expect(j.mesh).toMatchObject({ route: 'node', nodeId: 'mac-2', chip: 'M3 Max' });
     expect(before - (await balance())).toBe(cost);
@@ -366,12 +371,13 @@ describe('node protocol: failure handling', () => {
     expect(second.json().attempt).toBe(2);
     expect((app.ctx.db.prepare(`SELECT parent_job_id, exclude_node_id FROM jobs WHERE job_id = ?`).get(second.json().jobId))).toEqual({ parent_job_id: first.jobId, exclude_node_id: 'flaky' });
     await b.chunk(second.json().jobId, 0, 'served by b');
+    await b.chunk(second.json().jobId, 1, PAD);
     await b.done(second.json().jobId, { promptTokens: 50, completionTokens: 50, finishReason: 'stop' });
     const res = await client;
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-mesh-route']).toBe('node:solid');
     const events = sse(res.body);
-    expect(events.map((e) => e.choices?.[0]?.delta?.content ?? '').join('')).toBe('served by b');
+    expect(events.map((e) => e.choices?.[0]?.delta?.content ?? '').join('')).toBe(`served by b${PAD}`);
     expect(events[events.length - 1].mesh).toMatchObject({ route: 'node', nodeId: 'solid', chip: 'M2 Ultra', attempt: 2 });
     const rows = app.ctx.db.prepare(`SELECT node_id, status, node_fault FROM jobs ORDER BY created_ms`).all();
     expect(rows).toEqual([
@@ -510,7 +516,7 @@ describe('config + helpers', () => {
     expect(c.nodeRewards.usdPerMTokens).toBe(testConfig.nodeRewards.usdPerMTokens);
     expect(c.requestPricing.networkPricePerMTokens).toBe(0.08);
     expect(c.nodeRewards.usdPerMTokens).toBe(0.06);
-    expect(c.routing).toEqual({ preferNetwork: true, firstTokenTimeoutMs: 8000, stallTimeoutMs: 6000, jobTimeoutMs: 120_000, defaultMaxTokens: 1024, minSuccessRate: 0.8, reputationMinJobs: 5, queueWaitMs: 6000, maxQueueDepthPerNode: 3, maxParallelPerNode: 4 });
+    expect(c.routing).toEqual({ preferNetwork: true, firstTokenTimeoutMs: 8000, stallTimeoutMs: 6000, jobTimeoutMs: 120_000, defaultMaxTokens: 1024, nodeMaxTokens: 8192, upstreamDefaultMaxTokens: 8192, minSuccessRate: 0.8, reputationMinJobs: 5, queueWaitMs: 6000, maxQueueDepthPerNode: 3, maxParallelPerNode: 4 });
     expect(() => parseTokenomics({ ...raw, nodeRewards: { usdPerMTokens: -1 } })).toThrow();
     expect(networkCostMicros(1_000_000, 0.02)).toBe(20_000);
     expect(nodeRewardMicros(1_000_000, 0.06)).toBe(60_000);

@@ -3,7 +3,7 @@ import type { TokenomicsConfig } from '@mesh/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { nowSec } from '../src/db.js';
 import { runEpoch } from '../src/jobs/distribute.js';
-import { JobBroker, JobRelay, RELAY_MAX_PENDING } from '../src/network.js';
+import { JobBroker, JobRelay, RELAY_MAX_PENDING, completionTokenBound } from '../src/network.js';
 import { headerSafe } from '../src/relay.js';
 import { decideRoute } from '../src/routing.js';
 import { MockUpstream, SseUsageScanner, costMicros, normalizeUsage } from '../src/upstream.js';
@@ -70,7 +70,7 @@ const msg = { model: 'llama-3.1-8b', stream: true, messages: [{ role: 'user', co
 // ---------------------------------------------------------------- part 1: bugs
 
 describe('money: what a node reports is bounded by what the job could produce', () => {
-  it('completion tokens are clamped to max_tokens and prompt tokens to the payload size; billing and reward use the clamped usage', async () => {
+  it('completion tokens are clamped to what the relayed text can be, prompt tokens to the messages sent; billing and reward use the clamped usage', async () => {
     const { app, chat, balance } = await boot();
     const n = await fakeNode(app, { nodeId: 'greedy' });
     const before = await balance();
@@ -82,12 +82,12 @@ describe('money: what a node reports is bounded by what the job could produce', 
     expect(done.statusCode).toBe(200);
     const res = await client;
     const last = sse(res.body).pop()!;
-    expect(last.usage.completion_tokens).toBe(50);
-    expect(last.usage.prompt_tokens).toBeLessThan(2000);
+    expect(last.usage.completion_tokens).toBe(completionTokenBound(Buffer.byteLength('short answer'))); // 12 bytes → 14, not the 50 max_tokens allows
+    expect(last.usage.prompt_tokens).toBeLessThan(200);
     const tokens = last.usage.total_tokens as number;
     expect(before - (await balance())).toBe(networkMicros(tokens));
     expect(app.ctx.db.prepare(`SELECT usd_micros, tokens FROM node_rewards`).get()).toEqual({ usd_micros: rewardMicros(tokens), tokens });
-    expect(app.ctx.db.prepare(`SELECT completion_tokens FROM jobs`).get()).toEqual({ completion_tokens: 50 });
+    expect(app.ctx.db.prepare(`SELECT completion_tokens FROM jobs`).get()).toEqual({ completion_tokens: 14 });
     // zod refuses absurd values outright
     expect((await n.done('job_x', { promptTokens: 1e12 })).statusCode).toBe(400);
   });

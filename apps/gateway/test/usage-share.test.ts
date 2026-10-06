@@ -6,6 +6,9 @@ import { MOCK_COST_USD } from '../src/upstream.js';
 import { recordUsageShare, splitUsageMargin, usageShareTotals } from '../src/usage-share.js';
 import { ADMIN, memDb, networkMicros, rewardMicros, testConfig, testServer } from './helpers.js';
 
+/** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
+const PAD = ' '.repeat(2000);
+
 type App = Awaited<ReturnType<typeof testServer>>['app'];
 const apps: App[] = [];
 afterEach(async () => {
@@ -43,9 +46,9 @@ async function boot(config: TokenomicsConfig) {
   const h = { authorization: `Bearer ${reg.json().nodeToken as string}` };
   /** One network-served request: 1000 prompt + 500 completion tokens. */
   const serveNetwork = async () => {
-    const client = app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { model: 'llama-3.1-8b', messages: [{ role: 'user', content: 'hi' }] } });
+    const client = app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { model: 'llama-3.1-8b', messages: [{ role: 'user', content: `hi${PAD}` }] } });
     const job = (await app.inject({ method: 'GET', url: `/nodes/mac-u/jobs/next?wait=2000`, headers: h })).json();
-    await app.inject({ method: 'POST', url: `/nodes/mac-u/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 0, delta: 'ok' } });
+    await app.inject({ method: 'POST', url: `/nodes/mac-u/jobs/${job.jobId}/chunk`, headers: h, payload: { seq: 0, delta: `ok${PAD}` } });
     await app.inject({ method: 'POST', url: `/nodes/mac-u/jobs/${job.jobId}/done`, headers: h, payload: { promptTokens: 1000, completionTokens: 500, finishReason: 'stop' } });
     const res = await client;
     expect(res.statusCode).toBe(200);
