@@ -33,7 +33,7 @@ Where the fee goes:
 
 ## Prepaid balance (settlement)
 
-This version has no on-chain checkout. Buyers pay from a prepaid USD balance (`prepaid_ledger`), which during the beta is topped up by the team after an off-chain or hand-sent USDC payment: `POST /admin/prepaid { wallet, amountUsd, note, ref? }`, audited in `admin_actions` with the note; re-posting the same `ref` is a no-op. Sellers' proceeds land in the same balance and leave through `withdrawal_requests`.
+Buyers pay from a prepaid USD balance (`prepaid_ledger`), which during the beta is topped up by the team after an off-chain or hand-sent USDC payment: `POST /admin/prepaid { wallet, amountUsd, note, ref? }`, audited in `admin_actions` with the note; re-posting the same `ref` is a no-op. Sellers' proceeds land in the same balance and leave through `withdrawal_requests`.
 
 Every fill records `settlement = 'prepaid'`. A USDC settlement adapter can be added without a schema change: it credits `prepaid_ledger` (`kind = 'topup'`, `ref = <tx>`) when a transfer lands, or fills directly with `settlement = 'external'` and the tx in `settlement_ref`. Withdrawals would be paid by the same adapter and marked with the payout `tx_ref`.
 
