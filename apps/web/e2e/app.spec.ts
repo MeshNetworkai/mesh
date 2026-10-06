@@ -102,7 +102,7 @@ test.describe('landing', () => {
     await expect(page.locator('.liveline-row')).toContainText('$100 fees collected');
     await expect(page.locator('.liveline-row')).toContainText('$50 credits issued');
     await expect(page.getByRole('link', { name: 'All the stats' })).toHaveAttribute('href', '/stats');
-    await expect(page.getByRole('heading', { name: /Five free messages/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Try it in a minute/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect wallet' }).first()).toBeVisible();
   });
 

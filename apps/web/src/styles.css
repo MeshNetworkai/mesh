@@ -4729,3 +4729,53 @@ a,
 button {
   transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
+
+/* ---- type scale, calmer: one loud moment (the hero), everything else measured ---- */
+.d-xl {
+  font-size: clamp(34px, 4.6vw, 56px);
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+.d-l {
+  font-size: clamp(30px, 3.8vw, 46px);
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+.d-m {
+  font-size: clamp(24px, 2.7vw, 32px);
+}
+.home-h1 {
+  font-size: clamp(40px, 5.6vw, 76px);
+}
+.statement .big {
+  font-size: clamp(32px, 4.4vw, 54px);
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+.home-hero .lede {
+  font-size: 17px;
+}
+.lede {
+  font-size: 18px;
+}
+/* final section: a measured close, heading left, actions right */
+.final {
+  gap: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 40px;
+}
+.final-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px 40px;
+  flex-wrap: wrap;
+}
+.final-row .stack {
+  gap: 10px;
+  max-width: 44ch;
+}
+.final .risk {
+  border-top: 0;
+  padding-top: 0;
+}

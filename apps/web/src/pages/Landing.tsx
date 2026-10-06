@@ -397,19 +397,24 @@ export function Landing() {
 
       {/* 8 · final CTA */}
       <section className="final" aria-labelledby="final-h">
-        <h2 className="display d-xl" id="final-h">
-          Five free messages. <em>No wallet.</em>
-        </h2>
-        <div className="row">
-          <button type="button" className="btn primary lg" onClick={focusChat}>
-            Start chatting
-          </button>
-          <Link className="btn secondary lg" to="/app/node">
-            Run a node
-          </Link>
-          <Link className="btn ghost lg" to="/docs">
-            Read the docs
-          </Link>
+        <div className="final-row">
+          <div className="stack">
+            <h2 className="display d-l" id="final-h">
+              Try it in a minute.
+            </h2>
+            <p className="sub">Five free messages a day, no wallet. Hold {minHold} for the hourly credits, or run a Mac and get paid for the answers it serves.</p>
+          </div>
+          <div className="row">
+            <button type="button" className="btn primary" onClick={focusChat}>
+              Start chatting
+            </button>
+            <Link className="btn secondary" to="/app/node">
+              Run a node
+            </Link>
+            <Link className="btn ghost" to="/docs">
+              Read the docs
+            </Link>
+          </div>
         </div>
         <p className="risk small muted">
           Credits are a share of fees, not a promise: <Link to="/risk">read the risks</Link>. {T.name} stores no prompts and no replies; the machine
