@@ -275,6 +275,20 @@ main() {
   echo "  public ip:   ${PUBLIC_IP}"
 
   # ---- 2. firewall / fail2ban / unattended upgrades ------------------------------------------------
+  # ---- swap: Docker builds (pnpm install + tsc + vite) peak well above 1 GB; a small VPS without swap
+  # locks up under two of them. 2 GB file, created once, idempotent.
+  if ! swapon --show --noheadings 2>/dev/null | grep -q .; then
+    if [[ ! -f /swapfile ]]; then
+      fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+      chmod 600 /swapfile && mkswap /swapfile >/dev/null
+    fi
+    swapon /swapfile && ok "swap: 2 GB file at /swapfile"
+    grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    grep -q '^vm.swappiness' /etc/sysctl.conf || { echo 'vm.swappiness=10' >> /etc/sysctl.conf; sysctl -q vm.swappiness=10; }
+  else
+    ok "swap already present"
+  fi
+
   log "2/9 Firewall, fail2ban, unattended-upgrades"
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
@@ -741,6 +755,18 @@ cmd_status() {
   ls -1t "$BACKUPS"/mesh-*.db.gz 2>/dev/null | head -1 | sed 's|^|  latest backup: |' || true
 }
 
+# One deploy at a time per server. GitHub Actions and a hand-run deploy (or bootstrap.sh) would otherwise
+# build two Docker images at once, which is enough to exhaust a small VPS and take the box down.
+# The second caller waits (up to 20 min) instead of failing, so nothing is lost either way.
+LOCK_FILE="$ROOT/.deploy.lock"
+take_lock() {
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    echo "  another deploy is running; waiting for it to finish (up to 20 min)"
+    flock -w 1200 9 || die "gave up waiting for the deploy lock ($LOCK_FILE)"
+  fi
+}
+
 cmd_deploy() {
   local started
   started=$(date +%s)
@@ -760,6 +786,7 @@ cmd_deploy() {
   if [[ -z "$DOMAIN" ]]; then warn "no domain configured yet: re-run bootstrap.sh --domain <name> once you have one"; fi
 }
 
+case "${1:-deploy}" in deploy|restart|restore) take_lock ;; esac
 case "${1:-deploy}" in
   deploy)  cmd_deploy ;;
   restart) log "Restarting gateway"; compose restart gateway; wait_healthy || die "gateway not healthy after restart"; cmd_health ;;
