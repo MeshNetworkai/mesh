@@ -8,7 +8,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const now = () => Math.floor(Date.now() / 1000);
 const HOUR = 3_600;
 const DAY = 86_400;
-const CFG: MarketConfig = { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid' };
+const CFG: MarketConfig = { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDC', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
 const ME = mockAccount.wallet;
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -249,3 +249,5 @@ export const mockWithdraw = async (amountUsd: number): Promise<Withdrawal & { pr
   prepaidAdd('withdrawal', -amt, `withdrawal:${w.id}`);
   return { ...w, prepaidBalanceUsd: prepaidBalance() };
 };
+
+export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: 'USDC', blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });

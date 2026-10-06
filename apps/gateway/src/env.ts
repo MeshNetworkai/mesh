@@ -20,6 +20,8 @@ const EnvSchema = z.object({
    * goes live once token + feeVault are known; until then the gateway stays on mock and /health says so.
    */
   MESH_ADAPTER: z.enum(['mock', 'chain', 'evm', 'solana']).default('mock'),
+  /** EVM JSON-RPC for on-chain reads (sweeps, deposit verification). Falls back to the known chain's public RPC. */
+  MESH_EVM_RPC_URL: z.string().url().optional(),
   JWT_SECRET: z.string().min(16).default(DEV_JWT_SECRET),
   /**
    * Previous JWT secret, accepted for verification only, so sessions survive a rotation:

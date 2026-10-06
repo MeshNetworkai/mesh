@@ -17,6 +17,7 @@ import {
   verifyAdminSession,
   verifySession,
 } from './auth.js';
+import type { DepositVerifier } from './deposits.js';
 import type { Db } from './db.js';
 import { jwtSecrets, type Env } from './env.js';
 import type { JobBroker } from './network.js';
@@ -48,6 +49,8 @@ export interface AppContext {
   stakes?: StakeResolver;
   /** Spot-check verification of node work (verification.ts); absent only when a test injects nothing and config disables it. */
   verifier?: Verifier;
+  /** On-chain check for prepaid deposits (deposits.ts); tests inject a fake, production builds one from config + MESH_EVM_RPC_URL. */
+  depositVerifier?: DepositVerifier;
 }
 
 export interface Session {

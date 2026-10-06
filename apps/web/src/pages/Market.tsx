@@ -128,6 +128,29 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
   const [wdOpen, setWdOpen] = useState(false);
   const [wd, setWd] = useState('');
   const [busy, setBusy] = useState(false);
+  const deposits = mine?.config.deposits;
+  const [depOpen, setDepOpen] = useState(false);
+  const [txHash, setTxHash] = useState('');
+  const [depBusy, setDepBusy] = useState(false);
+  const [copiedAddr, copyAddr] = useCopy();
+  const hashOk = /^0x[0-9a-fA-F]{64}$/.test(txHash.trim());
+
+  const submitDeposit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !hashOk) return;
+    setDepBusy(true);
+    try {
+      const r = await market.deposit(token, txHash.trim());
+      toast.ok(`${fmtUsd(r.creditedUsd)} ${r.token} credited to your prepaid balance.`);
+      setTxHash('');
+      setDepOpen(false);
+      onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setDepBusy(false);
+    }
+  };
   const wdAmt = Number(wd);
   const wdOk = Number.isFinite(wdAmt) && wdAmt > 0 && prepaid !== null && wdAmt <= prepaid + 1e-9;
   const pending = (mine?.withdrawals ?? []).filter((w) => w.status === 'pending');
@@ -172,11 +195,44 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
       </div>
       <div className="row between">
         <span className="display d-s num">{loading && !mine ? <Skeleton w="5ch" h="0.9em" /> : fmtUsd(prepaid, 2)}</span>
-        <button type="button" className="btn secondary sm" onClick={() => setWdOpen((v) => !v)} disabled={!prepaid} aria-expanded={wdOpen}>
-          Withdraw
-        </button>
+        <span className="row" style={{ gap: 8 }}>
+          {deposits?.enabled ? (
+            <button type="button" className="btn primary sm" onClick={() => { setDepOpen((v) => !v); setWdOpen(false); }} aria-expanded={depOpen}>
+              Top up
+            </button>
+          ) : null}
+          <button type="button" className="btn secondary sm" onClick={() => { setWdOpen((v) => !v); setDepOpen(false); }} disabled={!prepaid} aria-expanded={wdOpen}>
+            Withdraw
+          </button>
+        </span>
       </div>
-      {wdOpen ? (
+      {depOpen && deposits?.enabled && deposits.receiver ? (
+        <form className="stack sm deposit" onSubmit={submitDeposit} aria-label="Top up prepaid balance">
+          <p className="hint" style={{ margin: 0 }}>
+            Send <b>{deposits.tokens.map((t) => t.symbol).join(' or ')}</b> on <b>{deposits.chainName}</b> from the wallet you are signed in with to this address (minimum {fmtUsd(deposits.minUsd, 0)}):
+          </p>
+          <div className="market-amount">
+            <code className="mono input sm deposit-addr" title={deposits.receiver}>
+              {deposits.receiver}
+            </code>
+            <button type="button" className="btn secondary sm" onClick={() => void copyAddr(deposits.receiver!)}>
+              {copiedAddr ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <p className="hint" style={{ margin: 0 }}>Then paste the transaction hash. It is checked on chain and credited after {deposits.confirmations} confirmations.</p>
+          <div className="market-amount">
+            <input className="input sm mono" value={txHash} onChange={(e) => setTxHash(e.target.value)} placeholder="0x… transaction hash" aria-label="Transaction hash" spellCheck={false} autoFocus />
+            <button type="submit" className="btn primary sm" disabled={!hashOk || depBusy}>
+              {depBusy ? <Spinner /> : 'Credit'}
+            </button>
+          </div>
+          {deposits.explorer ? (
+            <p className="hint" style={{ margin: 0 }}>
+              Find the hash in your wallet's activity or on the <a href={`${deposits.explorer}/address/${deposits.receiver}`} target="_blank" rel="noreferrer">explorer</a>. Sent from another wallet by mistake? Contact us with the hash.
+            </p>
+          ) : null}
+        </form>
+      ) : wdOpen ? (
         <form className="stack sm" onSubmit={withdraw} aria-label="Withdraw prepaid balance">
           <div className="market-amount">
             <input className="input sm" inputMode="decimal" value={wd} onChange={(e) => setWd(e.target.value)} placeholder="0.00" aria-label="Amount to withdraw, USD" autoFocus />
@@ -190,7 +246,7 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
           <p className="hint">The amount leaves your balance now; the team sends USDC to this wallet and marks it paid.</p>
         </form>
       ) : (
-        <p className="hint">Buys are paid from here, sales are paid into here. {BETA_TOPUP}</p>
+        <p className="hint">Buys are paid from here, sales are paid into here. {deposits?.enabled ? `Top up with ${deposits.tokens.map((t) => t.symbol).join(' or ')} on ${deposits.chainName}; withdrawals are paid out by the team.` : BETA_TOPUP}</p>
       )}
 
       <hr className="mkt-div" />

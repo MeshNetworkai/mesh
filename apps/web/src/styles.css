@@ -4888,3 +4888,13 @@ button {
     gap: 6px;
   }
 }
+.deposit-addr {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  padding-top: 9px;
+  font-size: 12.5px;
+}

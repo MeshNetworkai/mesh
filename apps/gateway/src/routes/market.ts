@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { markAdminAudited, requireAdmin, requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec, recordAdminAction, recordError } from '../db.js';
+import { creditDeposit, depositsInfo, rpcVerifier } from '../deposits.js';
 import { balanceMicros } from '../ledger.js';
 import {
   MIN_FILL_MICROS,
@@ -132,7 +133,10 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     maxDiscountBps: cfg.maxDiscountBps,
     listingTtlHours: cfg.listingTtlHours,
     settlement: 'prepaid' as const,
+    deposits: depositsInfo(cfg.deposits),
   });
+  const verifier = () => (ctx.depositVerifier ??= rpcVerifier({ chainId: cfg.deposits.chainId, rpcUrl: ctx.env.MESH_EVM_RPC_URL }));
+  const DepositBody = z.object({ txHash: z.string().min(66).max(66) });
 
   // ---------- public ----------
 
@@ -255,6 +259,24 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
       withdrawals: withdrawalsOf(ctx.db, wallet).map(withdrawalView),
       config: configView(),
     };
+  });
+
+  /**
+   * Self-serve top-up: the buyer sent a stablecoin to the deposit receiver and pastes the tx hash. The
+   * gateway verifies the ERC-20 Transfer on chain (sender = session wallet, accepted token, confirmed)
+   * and credits the prepaid balance once per hash.
+   */
+  app.post('/me/market/deposits', { onRequest: gate, preHandler: auth, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const parsed = DepositBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
+    const { wallet } = sessionOf(req);
+    const r = await creditDeposit(ctx.db, cfg.deposits, verifier(), { wallet, txHash: parsed.data.txHash });
+    if (!r.ok) {
+      const status = r.code === 'disabled' ? 404 : r.code === 'pending' || r.code === 'unconfirmed' || r.code === 'already_credited' ? 409 : 400;
+      return reply.code(status).send({ error: r.code, message: r.message, ...(r.confirmations !== undefined ? { confirmations: r.confirmations } : {}), statusCode: status });
+    }
+    req.log.info({ wallet, txHash: parsed.data.txHash, creditedUsd: usd(r.creditedMicros), token: r.token }, 'prepaid deposit credited');
+    return { ok: true, creditedUsd: usd(r.creditedMicros), token: r.token, blockNumber: r.blockNumber, prepaid: { usd: usd(prepaidBalanceMicros(ctx.db, wallet)) } };
   });
 
   app.post('/me/market/withdraw', { onRequest: gate, preHandler: auth, config: writeLimit }, async (req, reply) => {

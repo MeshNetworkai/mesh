@@ -14,6 +14,27 @@ export interface MarketConfig {
   maxDiscountBps: number;
   listingTtlHours: number;
   settlement: 'prepaid';
+  /** Self-serve top-ups (docs/MARKETPLACE.md "Paying in"); `enabled` false until the stablecoin + receiver are configured. */
+  deposits?: DepositsInfo;
+}
+
+export interface DepositsInfo {
+  enabled: boolean;
+  chainId: number;
+  chainName: string;
+  explorer: string | null;
+  receiver: string | null;
+  tokens: Array<{ symbol: string; address: string; decimals: number }>;
+  minUsd: number;
+  confirmations: number;
+}
+
+export interface DepositResult {
+  ok: true;
+  creditedUsd: number;
+  token: string;
+  blockNumber: number;
+  prepaid: { usd: number };
 }
 
 export interface BookTier {
@@ -159,5 +180,8 @@ export const fill = (token: string, input: { listingId: string; amountUsd: numbe
 // ---------- me ----------
 
 export const myMarket = (token: string): Promise<MyMarket> => (MOCK ? mock.mockMyMarket() : rawSessionRequest<MyMarket>('/me/market', {}, token));
+/** POST /me/market/deposits — paste a tx hash; the gateway verifies the transfer on chain and credits the prepaid balance. */
+export const deposit = (token: string, txHash: string): Promise<DepositResult> =>
+  MOCK ? mock.mockDeposit(txHash) : rawSessionRequest<DepositResult>('/me/market/deposits', { method: 'POST', body: JSON.stringify({ txHash }) }, token);
 export const withdraw = (token: string, amountUsd: number): Promise<Withdrawal & { prepaidBalanceUsd: number }> =>
   MOCK ? mock.mockWithdraw(amountUsd) : rawSessionRequest('/me/market/withdraw', { method: 'POST', body: JSON.stringify({ amountUsd }) }, token);

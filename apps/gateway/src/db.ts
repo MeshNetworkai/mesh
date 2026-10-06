@@ -552,6 +552,20 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     );
     `,
   },
+  {
+    id: 18,
+    sql: `
+    CREATE TABLE IF NOT EXISTS market_deposits (
+      tx_hash       TEXT PRIMARY KEY,
+      wallet        TEXT NOT NULL,
+      token         TEXT NOT NULL,
+      amount_micros INTEGER NOT NULL,
+      block_number  INTEGER NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS market_deposits_wallet ON market_deposits(wallet, created_at);
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

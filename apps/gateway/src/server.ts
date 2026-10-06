@@ -70,6 +70,7 @@ export function createContext(opts: BuildOptions = {}): AppContext {
     adapter,
     adapterStatus,
     chainCheck: opts.context?.chainCheck,
+    depositVerifier: opts.context?.depositVerifier,
     db,
     prices: opts.context?.prices ?? loadModelPrices(),
     policy: opts.context?.policy ?? loadModelPolicy(),

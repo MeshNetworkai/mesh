@@ -37,6 +37,16 @@ This version has no on-chain checkout. Buyers pay from a prepaid USD balance (`p
 
 Every fill records `settlement = 'prepaid'`. A USDC settlement adapter can be added without a schema change: it credits `prepaid_ledger` (`kind = 'topup'`, `ref = <tx>`) when a transfer lands, or fills directly with `settlement = 'external'` and the tx in `settlement_ref`. Withdrawals would be paid by the same adapter and marked with the payout `tx_ref`.
 
+### Paying in (self-serve deposits)
+
+When `marketplace.deposits` has a `receiver` and at least one token, the Market page shows **Top up** next to the prepaid balance:
+
+1. The buyer sends USDC or USDG on Robinhood Chain **from the wallet they are signed in with** to the receiver address (shown with a Copy button; the minimum is `minUsd`).
+2. They paste the transaction hash. `POST /me/market/deposits { txHash }` fetches the receipt over JSON-RPC (`MESH_EVM_RPC_URL`, else the chain's public RPC), decodes the ERC-20 `Transfer` logs and credits the prepaid balance when all of these hold: the transaction succeeded, it is `confirmations` blocks behind the head, a transfer went to the receiver in an accepted token, and its sender is the signed-in wallet. Amounts are converted to micro-USD from the token's decimals.
+3. One credit per transaction hash, ever (`market_deposits` is keyed on the hash; the prepaid row carries `ref = deposit:<hash>`). A second paste answers `409 already_credited`; a pending or under-confirmed transfer answers `409 pending` / `409 unconfirmed` with the current count, so the page can simply be retried.
+
+Deposits from a different wallet than the session's are refused (`wrong_sender`) rather than credited to the wrong account; the operator can credit those by hand with `POST /admin/prepaid` after checking the explorer. Withdrawals stay manual during the beta.
+
 ## Ledger entries per trade
 
 | Event | credits_ledger | prepaid_ledger | treasury_ledger | pool_extra_micros |

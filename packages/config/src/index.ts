@@ -260,6 +260,24 @@ export const TokenomicsSchema = z
         maxDiscountBps: bps.default(7000),
         /** Open listings expire (escrow returns to the seller) after this many hours. */
         listingTtlHours: z.number().int().positive().default(168),
+        /**
+         * Self-serve top-ups: a buyer sends a stablecoin on the EVM chain to `receiver`, pastes the tx hash,
+         * the gateway verifies the ERC-20 Transfer on chain and credits the prepaid balance. Off while
+         * `receiver` or `tokens` are empty (the admin tops balances up by hand).
+         */
+        deposits: z
+          .object({
+            enabled: z.boolean().default(true),
+            chainId: z.number().int().positive().default(4663),
+            /** Address that receives deposits (the treasury multisig or a dedicated deposit wallet). */
+            receiver: z.string().nullable().default(null),
+            tokens: z.array(z.object({ symbol: z.string().min(1), address: z.string().min(1), decimals: z.number().int().min(0).max(18).default(6) })).default([]),
+            /** Smallest deposit credited, USD. */
+            minUsd: z.number().positive().default(5),
+            /** Blocks a deposit must be behind the head before it is credited. */
+            confirmations: z.number().int().min(0).default(3),
+          })
+          .default({}),
       })
       .default({}),
     /**
