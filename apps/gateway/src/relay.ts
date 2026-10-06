@@ -11,7 +11,8 @@ import { decideRoute, eligibleNodes, type PrivacyChoice, type RouteDecision } fr
 import { listCostMicros, savedMicros } from './savings.js';
 import { applyMultiplier } from './staking.js';
 import { getNode } from './routes/nodes.js';
-import { SseUsageScanner, UpstreamError, costMicros, describeUpstreamError, normalizeUsage, type Usage } from './upstream.js';
+import type { SpendPlan } from './reserve.js';
+import { SseUsageScanner, UpstreamError, costMicros, describeUpstreamError, estimateUsage, normalizeUsage, type Usage } from './upstream.js';
 import { recordUsageShare } from './usage-share.js';
 
 /**
@@ -80,6 +81,8 @@ export interface RelayOptions {
   started: number;
   /** Force the upstream leg to ZDR providers regardless of what the tier implies. */
   zdr?: boolean;
+  /** Completion caps from the balance reservation (reserve.ts); absent for callers that cap the body themselves (guests). */
+  limits?: Pick<SpendPlan, 'upstreamMaxTokens' | 'maxTokensField' | 'nodeMaxTokens'>;
 }
 
 type NetworkOutcome = { kind: 'served' } | { kind: 'errored' } | { kind: 'fallback'; reason: string; jobId: string };
@@ -177,6 +180,7 @@ async function serveFromNetwork(
   route: RouteDecision & { tag: string },
   stream: boolean,
   started: number,
+  maxTokensCap?: number,
 ): Promise<NetworkOutcome> {
   const { tag, trustedOnly } = route;
   const queued = route.reason === 'queued';
@@ -191,7 +195,8 @@ async function serveFromNetwork(
   // anything else the client attached (docs/PRIVACY.md).
   const params: Record<string, unknown> = {};
   for (const k of NODE_PARAM_KEYS) if (body[k] !== undefined) params[k] = body[k];
-  const maxTokens = typeof body.max_tokens === 'number' && body.max_tokens > 0 ? Math.floor(body.max_tokens) : routing.defaultMaxTokens;
+  const wantedTokens = typeof body.max_tokens === 'number' && body.max_tokens > 0 ? Math.floor(body.max_tokens) : routing.defaultMaxTokens;
+  const maxTokens = Math.max(1, Math.min(wantedTokens, routing.nodeMaxTokens, maxTokensCap ?? Infinity));
   const id = `chatcmpl-mesh-${Date.now().toString(36)}`;
   const created = nowSec();
   const raw = reply.raw;
@@ -308,7 +313,12 @@ async function serveFromNetwork(
       // Stake tier of the node's reward wallet multiplies the reward (staking.ts; 1× when unstaked / not wired).
       const stake = node && ctx.stakes ? await ctx.stakes.resolve(node.wallet).catch(() => null) : null;
       const rewardMultiplier = stake?.multiplier ?? 1;
-      const reward = applyMultiplier(nodeRewardMicros(tokens, ctx.config.nodeRewards.usdPerMTokens), rewardMultiplier);
+      // A wallet serving its own request is running its own model for itself: it pays the network price
+      // like anyone else but earns nothing, or credits would turn into treasury-paid rewards in a loop.
+      const selfServed = node !== null && node !== undefined && node.wallet === requesterWallet;
+      // The stake multiplier may lift a reward up to the network price of the job and no further: a
+      // reward above what the job is billed would pay two wallets working together to send requests.
+      const reward = selfServed ? 0 : Math.min(price, applyMultiplier(nodeRewardMicros(tokens, ctx.config.nodeRewards.usdPerMTokens), rewardMultiplier));
       let cost = 0;
       ctx.db.transaction(() => {
         cost = account.record({ model, usage: u, upstream: `node:${nodeId}`, latencyMs: Date.now() - started, stream, network: { costMicros: price, listCostMicros: listCost } });
@@ -333,7 +343,7 @@ async function serveFromNetwork(
         ...(queued && claimedMs !== null ? { queuedMs: claimedMs - createdMs } : {}),
         ...(pricing.showSavings ? { listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved) } : {}),
       };
-      req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, stakeTier: stake?.tier.name ?? null, servedBy, routeReason, verifying }, 'chat completion (node)');
+      req.log.info({ jobId: job.job_id, nodeId, tokens, costUsd: microsToUsd(cost), listCostUsd: microsToUsd(listCost), savedUsd: microsToUsd(saved), rewardUsd: microsToUsd(reward), rewardMultiplier, selfServed, stakeTier: stake?.tier.name ?? null, servedBy, routeReason, verifying }, 'chat completion (node)');
       if (stream) {
         writeHeaders(nodeId, servedBy);
         await write(enc({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }], usage: usageOut, mesh }));
@@ -409,7 +419,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   const upstreamPrivacy = zdr ? 'upstream_zdr' : 'network';
   let routeReason: RouteReason = route.reason;
   if (route.target === 'node' && route.tag) {
-    const outcome = await serveFromNetwork(ctx, req, reply, account, body, requestedModel, route as RouteDecision & { tag: string }, stream, started);
+    const outcome = await serveFromNetwork(ctx, req, reply, account, body, requestedModel, route as RouteDecision & { tag: string }, stream, started, opts.limits?.nodeMaxTokens);
     if (outcome.kind === 'served') return true;
     if (outcome.kind === 'errored') return false;
     reply.header('x-mesh-fallback', headerSafe(outcome.reason));
@@ -427,7 +437,10 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   try {
     // Short aliases (llama-3.1-8b) are translated to the upstream's own id; the reply keeps the requested name.
     const upstreamModel = upstreamModelFor(ctx.policy, requestedModel);
-    upstreamRes = await ctx.upstream.chat(upstreamModel === requestedModel ? body : { ...body, model: upstreamModel }, { zdr });
+    upstreamRes = await ctx.upstream.chat(
+      { ...body, model: upstreamModel, ...(opts.limits ? { [opts.limits.maxTokensField]: opts.limits.upstreamMaxTokens } : {}) },
+      { zdr },
+    );
   } catch (err) {
     await upstreamThrow(ctx, req, reply, err);
     return false;
@@ -485,10 +498,15 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   const scanner = new SseUsageScanner();
   const decoder = new TextDecoder();
   const reader = upstreamRes.body.getReader();
+  // A client that goes away does not stop the meter: the upstream bills the operator for what it
+  // generates whether or not anyone is reading. Keep draining (writing nothing) so the usage chunk
+  // still arrives and the request is billed exactly; give up after jobTimeoutMs and bill an estimate.
   let aborted = false;
+  let drainTimer: NodeJS.Timeout | null = null;
   onClientGone(req, reply, () => {
     aborted = true;
-    reader.cancel().catch(() => undefined);
+    drainTimer = setTimeout(() => void reader.cancel().catch(() => undefined), ctx.config.routing.jobTimeoutMs);
+    drainTimer.unref();
   });
   // Pass lines through as they complete; just before the upstream's `data: [DONE]` add one chunk
   // carrying `mesh` (privacy tier + served-by) so clients see the same final-chunk shape as for nodes.
@@ -524,7 +542,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       if (done || !value) break;
       const text = decoder.decode(value, { stream: true });
       scanner.push(text);
-      await relayText(text);
+      if (!aborted) await relayText(text);
     }
     const tail = decoder.decode();
     scanner.push(tail);
@@ -533,6 +551,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   } catch (err) {
     if (!aborted) req.log.error({ err }, 'stream relay failed');
   } finally {
+    if (drainTimer) clearTimeout(drainTimer);
     scanner.end();
     if (!raw.writableEnded) raw.end();
     const model = scanner.model ?? requestedModel;
@@ -542,12 +561,15 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       req.log.warn({ wallet: account.wallet, model, error: scanner.error }, 'upstream error inside stream; not charged');
     } else {
       // Charge whatever the upstream reported (or fallback from tokens) even if client disconnected.
+      // No usage chunk (cut off, or the upstream never sent one): bill what was generated, never nothing.
+      const usage = scanner.usage ?? estimateUsage(body, scanner.completionChars);
+      if (!scanner.usage) req.log.warn({ wallet: account.wallet, model, aborted, completionChars: scanner.completionChars }, 'upstream stream ended without usage; billing an estimate');
       let cost = 0;
       ctx.db.transaction(() => {
-        cost = account.record({ model, usage: scanner.usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: true });
-        shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(scanner.usage, model, ctx.prices) });
+        cost = account.record({ model, usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: true });
+        shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(usage, model, ctx.prices) });
       })();
-      req.log.info({ wallet: account.wallet, model, costUsd: microsToUsd(cost), aborted }, 'chat completion (stream)');
+      req.log.info({ wallet: account.wallet, model, costUsd: microsToUsd(cost), aborted, estimated: !scanner.usage }, 'chat completion (stream)');
     }
   }
   return true;

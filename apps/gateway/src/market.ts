@@ -195,7 +195,7 @@ export function topUpPrepaid(db: Db, input: { wallet: string; chain: string; amo
 export function createListing(
   db: Db,
   cfg: MarketConfig,
-  input: { seller: string; chain: string; amountMicros: number; discountBps: number },
+  input: { seller: string; chain: string; amountMicros: number; discountBps: number; reservedMicros?: number },
   now = nowSec(),
 ): ListingRow {
   const { seller, amountMicros, discountBps } = input;
@@ -206,7 +206,8 @@ export function createListing(
   if (discountBps > cfg.maxDiscountBps) throw new MarketError(400, 'discount_too_deep', `the deepest discount allowed is ${cfg.maxDiscountBps / 100}%`);
   const tx = db.transaction(() => {
     ensureWallet(db, seller, input.chain);
-    const bal = balanceMicros(db, seller);
+    // Credit held by the seller's requests in flight (reserve.ts) is about to be spent: it cannot be listed too.
+    const bal = balanceMicros(db, seller) - (input.reservedMicros ?? 0);
     if (bal < amountMicros) throw new MarketError(402, 'insufficient_credits', `spendable balance is $${usdStr(bal)}; cannot list $${usdStr(amountMicros)}`);
     const id = newId('lst');
     db.prepare(

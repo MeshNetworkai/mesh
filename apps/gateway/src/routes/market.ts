@@ -31,6 +31,7 @@ import {
   type WithdrawalRow,
 } from '../market.js';
 import { microsToUsd, usdToMicros } from '../money.js';
+import { walletHold } from '../reserve.js';
 
 const Amount = z.number().positive().max(1_000_000);
 const ListBody = z.object({ amountUsd: Amount, discountBps: z.number().int().min(0).max(10_000) });
@@ -206,7 +207,7 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const { wallet, chain } = sessionOf(req);
     try {
-      const row = createListing(ctx.db, cfg, { seller: wallet, chain, amountMicros: usdToMicros(parsed.data.amountUsd), discountBps: parsed.data.discountBps });
+      const row = createListing(ctx.db, cfg, { seller: wallet, chain, amountMicros: usdToMicros(parsed.data.amountUsd), discountBps: parsed.data.discountBps, reservedMicros: ctx.reservations.reserved(walletHold(wallet)) });
       const q = quote(cfg, row.amount_micros, row.discount_bps);
       return reply.code(201).send({ ...listingView(row), ifFullySold: { buyerPaysUsd: usd(q.paidMicros), feeUsd: usd(q.feeMicros), youReceiveUsd: usd(q.sellerReceivesMicros) } });
     } catch (err) {

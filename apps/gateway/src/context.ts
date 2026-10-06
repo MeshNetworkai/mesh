@@ -21,6 +21,7 @@ import type { DepositVerifier } from './deposits.js';
 import type { Db } from './db.js';
 import { jwtSecrets, type Env } from './env.js';
 import type { JobBroker } from './network.js';
+import type { Reservations } from './reserve.js';
 import type { StakeResolver } from './staking.js';
 import type { Upstream } from './upstream.js';
 import type { Verifier } from './verification.js';
@@ -43,6 +44,8 @@ export interface AppContext {
   nonces: NonceStore;
   /** Node network job queue + live relays. */
   broker: JobBroker;
+  /** Credit held by paid requests in flight (reserve.ts). */
+  reservations: Reservations;
   /** Ops alerting (alerts.ts); created in buildServer, ticked from index.ts. */
   alerts?: AlertMonitor;
   /** Stake tier resolver (staking.ts): per-epoch cache of wallet → tier/multiplier. */

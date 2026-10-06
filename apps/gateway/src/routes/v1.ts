@@ -7,6 +7,7 @@ import { addLedgerEntry, balanceMicros } from '../ledger.js';
 import { microsToUsd } from '../money.js';
 import { syncPoints } from '../points.js';
 import { openaiError, relayChat, upstreamFailure, upstreamThrow, type ChatAccount, type RecordInput } from '../relay.js';
+import { keyHold, planSpend, walletHold } from '../reserve.js';
 import { resolvePrivacy } from '../routing.js';
 import { catalogueView } from '../catalogue.js';
 import { savedMicros } from '../savings.js';
@@ -129,7 +130,28 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     const privacy = resolvePrivacy({ header: req.headers['x-mesh-privacy'], body, keyDefault: key.privacy }, ctx.config.privacy);
     if ('error' in privacy) return openaiError(reply, 400, privacy.error, 'invalid_request_error', 'invalid_privacy_tier');
 
-    await relayChat(ctx, req, reply, { account: keyAccount(key), body, model: requestedModel, privacy, stream: body.stream === true, started: Date.now() });
+    // ---- reserve the most this request can cost before it starts (reserve.ts) ----
+    const walletAvailable = balance - ctx.reservations.reserved(walletHold(key.wallet));
+    const keyAvailable = key.spend_limit_usd_micros === null ? Infinity : key.spend_limit_usd_micros - key.spent_usd_micros - ctx.reservations.reserved(keyHold(key.id));
+    const plan = planSpend(ctx, body, requestedModel, Math.min(walletAvailable, keyAvailable));
+    if (!plan) {
+      if (planSpend(ctx, body, requestedModel, walletAvailable)) {
+        return openaiError(reply, 429, `This API key's spend limit ($${microsToUsd(key.spend_limit_usd_micros ?? 0)}) does not cover this request. Raise it with PATCH /keys/${key.id}.`, 'insufficient_quota', 'key_spend_limit_reached');
+      }
+      return openaiError(
+        reply,
+        402,
+        `Insufficient Mesh credits for this request (balance $${microsToUsd(balance).toFixed(6)}, $${microsToUsd(balance - walletAvailable).toFixed(6)} held by requests in flight).`,
+        'insufficient_quota',
+        'insufficient_quota',
+      );
+    }
+    const release = ctx.reservations.hold([walletHold(key.wallet), keyHold(key.id)], plan.reserveMicros);
+    try {
+      await relayChat(ctx, req, reply, { account: keyAccount(key), body, model: requestedModel, privacy, stream: body.stream === true, started: Date.now(), limits: plan });
+    } finally {
+      release();
+    }
     return reply;
   });
 }

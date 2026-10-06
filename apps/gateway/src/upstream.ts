@@ -253,6 +253,20 @@ export function costMicros(usage: Usage | null | undefined, model: string, price
   return micros;
 }
 
+/** Characters per token assumed when usage has to be estimated from text. */
+const EST_CHARS_PER_TOKEN = 4;
+
+/**
+ * Usage for a stream that ended without a usage chunk (the upstream was cut off, or never sent one):
+ * prompt from the request body, completion from the text that was relayed. No `cost`, so `costMicros`
+ * prices it from the table.
+ */
+export function estimateUsage(body: Record<string, unknown>, completionChars: number): Usage {
+  const prompt = Math.ceil(JSON.stringify(body.messages ?? []).length / EST_CHARS_PER_TOKEN);
+  const completion = Math.ceil(completionChars / EST_CHARS_PER_TOKEN);
+  return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion };
+}
+
 /** Scan SSE text for the last `usage` object and the model name. */
 export class SseUsageScanner {
   private buffer = '';
@@ -260,6 +274,8 @@ export class SseUsageScanner {
   model: string | null = null;
   /** Set when the upstream reported an error inside the stream (OpenRouter does this on a 200). */
   error: { message: string; code?: string | number } | null = null;
+  /** Characters of completion text (content + reasoning) seen so far: the basis for `estimateUsage` when no usage chunk arrives. */
+  completionChars = 0;
 
   push(chunk: string): void {
     this.buffer += chunk;
@@ -285,7 +301,14 @@ export class SseUsageScanner {
         usage?: Usage | null;
         model?: string;
         error?: { message?: string; code?: string | number } | string;
+        choices?: Array<{ delta?: { content?: unknown; reasoning?: unknown } | null } | null>;
       };
+      if (Array.isArray(obj.choices)) {
+        for (const c of obj.choices) {
+          if (typeof c?.delta?.content === 'string') this.completionChars += c.delta.content.length;
+          if (typeof c?.delta?.reasoning === 'string') this.completionChars += c.delta.reasoning.length;
+        }
+      }
       if (typeof obj.model === 'string' && obj.model) this.model = obj.model;
       if (obj.usage && typeof obj.usage === 'object') this.usage = normalizeUsage(obj.usage);
       if (obj.error) {

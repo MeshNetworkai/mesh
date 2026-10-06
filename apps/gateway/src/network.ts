@@ -125,6 +125,8 @@ export class JobRelay {
   chunks = 0;
   /** Delta characters delivered to the client so far. */
   chars = 0;
+  /** UTF-8 bytes of those deltas: what `completionTokenBound` measures a node's reported usage against. */
+  bytes = 0;
 
   /**
    * Queue an event. Returns false when it was refused: the relay is closed or finished, or a chunk
@@ -167,6 +169,7 @@ export class JobRelay {
     if (ev.type === 'chunk') {
       this.chunks++;
       this.chars += ev.delta.length;
+      this.bytes += Buffer.byteLength(ev.delta);
     }
     if (this.waiter) {
       const w = this.waiter;
@@ -530,9 +533,10 @@ export class JobBroker implements NodeSource {
 
   /**
    * Node finished the job. `not_running` when the job is no longer running for this node. The usage a
-   * node reports is what the client is billed and the node is rewarded for, so it is clamped to what the
-   * job could have produced (completion ≤ max_tokens, prompt ≤ 4 × payload bytes + 1024), and a "done" with no
-   * delivered output at all is a node failure (`empty_output`), never a paid reply.
+   * node reports is what the client is billed and the node is rewarded for, so it is never taken on
+   * trust: it is clamped to what the text the gateway itself saw can amount to (`completionTokenBound`
+   * of the bytes relayed, and never above max_tokens; `promptTokenBound` of the messages sent), and a
+   * "done" with no delivered output at all is a node failure (`empty_output`), never a paid reply.
    */
   done(jobId: string, nodeId: string, usage: JobUsage): DoneResult {
     const ms = Date.now();
@@ -544,14 +548,15 @@ export class JobBroker implements NodeSource {
       return { ok: false, reason: 'empty_output' };
     }
     const tx = this.db.transaction((): DoneResult => {
-      const job = this.db.prepare(`SELECT max_tokens, LENGTH(payload) AS payload_len FROM jobs WHERE job_id = ? AND status = 'running' AND node_id = ?`).get(jobId, nodeId) as
-        | { max_tokens: number; payload_len: number }
+      const job = this.db.prepare(`SELECT max_tokens, payload FROM jobs WHERE job_id = ? AND status = 'running' AND node_id = ?`).get(jobId, nodeId) as
+        | { max_tokens: number; payload: string }
         | undefined;
       if (!job) return { ok: false, reason: 'not_running' };
+      // Without a live relay (it belonged to a previous process) nobody is waiting to be billed; max_tokens alone bounds the row.
+      const completionCap = relay ? Math.min(Math.max(1, job.max_tokens), completionTokenBound(relay.bytes)) : Math.max(1, job.max_tokens);
       const clamped: JobUsage = {
-        // Tokenisers vary (CJK / emoji can be several tokens per character): bound the prompt generously, the completion exactly.
-        promptTokens: clampInt(usage.promptTokens, 0, job.payload_len * 4 + 1024),
-        completionTokens: clampInt(usage.completionTokens, 0, Math.max(1, job.max_tokens)),
+        promptTokens: clampInt(usage.promptTokens, 0, payloadPromptBound(job.payload)),
+        completionTokens: clampInt(usage.completionTokens, 0, completionCap),
         finishReason: usage.finishReason,
       };
       this.db
@@ -634,6 +639,37 @@ export class JobBroker implements NodeSource {
     const rows = this.db.prepare(`SELECT job_id FROM jobs WHERE status IN ('queued','running') AND deadline_ms < ?`).all(now) as Array<{ job_id: string }>;
     for (const r of rows) this.abandon(r.job_id, 'failed', 'deadline_exceeded', false);
     return rows.length;
+  }
+}
+
+/**
+ * Fewest UTF-8 bytes a token is assumed to take. English prose runs near 4, code near 3, CJK about 3
+ * per character; dense digits and punctuation approach 2. So a count above bytes / 2 is not something
+ * the text can account for, and an honest node is not cut short.
+ */
+const MIN_BYTES_PER_TOKEN = 2;
+/** Chat-template tokens allowed per message (role header, turn delimiters) and per prompt (BOS, generation header). */
+const TEMPLATE_TOKENS_PER_MESSAGE = 16;
+const TEMPLATE_TOKENS_PER_PROMPT = 64;
+
+/** Most completion tokens `bytes` of relayed text can be. */
+export function completionTokenBound(bytes: number): number {
+  return Math.ceil(bytes / MIN_BYTES_PER_TOKEN) + 8;
+}
+
+/** Most prompt tokens `messages` messages totalling `contentBytes` of text can be. */
+export function promptTokenBound(contentBytes: number, messages: number): number {
+  return Math.ceil(contentBytes / MIN_BYTES_PER_TOKEN) + TEMPLATE_TOKENS_PER_MESSAGE * messages + TEMPLATE_TOKENS_PER_PROMPT;
+}
+
+/** `promptTokenBound` for a stored job payload; an unreadable payload is bounded by its whole length as one message. */
+function payloadPromptBound(payload: string): number {
+  try {
+    const messages = (JSON.parse(payload) as JobPayload).messages;
+    const bytes = messages.reduce((n, m) => n + Buffer.byteLength(typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')), 0);
+    return promptTokenBound(bytes, messages.length);
+  } catch {
+    return promptTokenBound(Buffer.byteLength(payload), 1);
   }
 }
 

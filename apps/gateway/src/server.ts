@@ -14,6 +14,7 @@ import { adminIpAllowlist, corsOrigin, loadEnv, productionProblems, trustedProxy
 import { geoBlockHook } from './geoblock.js';
 import { cidrMatcher } from './netaddr.js';
 import { JobBroker } from './network.js';
+import { Reservations } from './reserve.js';
 import { isTrustedNode, reputationConfig } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
@@ -65,6 +66,7 @@ export function createContext(opts: BuildOptions = {}): AppContext {
   const upstream = opts.context?.upstream ?? createUpstream(env);
   const ctx: AppContext = {
     broker,
+    reservations: opts.context?.reservations ?? new Reservations(),
     env,
     config,
     adapter,
