@@ -168,6 +168,9 @@ export function TopNav() {
       <NavLink to="/stats" className={cls}>
         Stats
       </NavLink>
+      <NavLink to="/launchpad" className={cls}>
+        Launchpad
+      </NavLink>
       {pointsEnabled ? (
         <NavLink to="/leaderboard" className={cls}>
           Ranks

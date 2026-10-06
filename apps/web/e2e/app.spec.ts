@@ -480,11 +480,11 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
-  test('top nav: Chat · Market · Run a node · Stats · Docs, market and node readable signed out', async ({ page }) => {
+  test('top nav: Chat · Market · Run a node · Stats · Launchpad · Docs, market and node readable signed out', async ({ page }) => {
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Primary' });
     const labels = await nav.getByRole('link').allInnerTexts();
-    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['Chat', 'Market', 'Run a node', 'Stats', 'Docs']);
+    expect(labels.map((l) => l.trim()).filter((l) => l !== 'Mesh' && !l.startsWith('Mesh'))).toEqual(['Chat', 'Market', 'Run a node', 'Stats', 'Launchpad', 'Docs']);
     await expect(nav.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/chat');
     await expect(nav.getByRole('link', { name: 'App', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('link', { name: 'Download' })).toHaveCount(0);
@@ -574,7 +574,7 @@ test.describe('signed-in app', () => {
 
   test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {
     await page.goto('/');
-    // Download lives in the footer only (the top nav is App · Market · Run a node · Stats · Docs).
+    // Download lives in the footer only (the top nav is Chat · Market · Run a node · Stats · Launchpad · Docs).
     await page.locator('footer').getByRole('link', { name: 'Download for Mac' }).click();
     await expect(page).toHaveURL(/\/download$/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Run a node');
