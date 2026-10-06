@@ -181,7 +181,7 @@ export function Keys() {
           <label htmlFor="newprivacy">Default privacy</label>
           <PrivacySelect id="newprivacy" value={newPrivacy} onChange={setNewPrivacy} />
         </div>
-        <button className="btn accent" type="submit" disabled={creating || !token} style={{ alignSelf: 'end', height: 46 }}>
+        <button className="btn primary" type="submit" disabled={creating || !token} style={{ alignSelf: 'end' }}>
           {creating ? <Spinner /> : null}
           Create API key
         </button>

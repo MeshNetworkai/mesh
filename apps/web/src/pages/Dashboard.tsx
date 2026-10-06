@@ -282,7 +282,7 @@ export function Dashboard() {
       {pointsEnabled ? <ReferralCard /> : null}
 
       <div className="row">
-        <Link className="btn accent" to="/app/keys">
+        <Link className="btn primary" to="/app/keys">
           Create API key
         </Link>
         {pointsEnabled ? (
@@ -296,14 +296,16 @@ export function Dashboard() {
         <Link className="btn ghost" to="/docs">
           Docs
         </Link>
-        <Link className="btn primary" to="/app/stake">
-          Stake
-        </Link>
+        {stats?.tokenLive === false ? null : (
+          <Link className="btn secondary" to="/app/stake">
+            Stake
+          </Link>
+        )}
       </div>
 
       {/* Credit marketplace: sell what you will not use, or buy below face value (pages/Market.tsx). */}
-      <div className="row between panel" style={{ flexWrap: 'wrap' }}>
-        <div className="stack" style={{ gap: 2 }}>
+      <div className="row between promo-row" style={{ flexWrap: 'wrap' }}>
+        <div className="stack" style={{ gap: 2, maxWidth: '68ch' }}>
           <span className="eyebrow">Credit market</span>
           <span className="small" style={{ color: 'var(--fg-2)' }}>
             Sell credits you will not use at a discount, or buy them below face value. Mesh keeps {pctFromBps(TOKENOMICS.marketplace.feeBps)} of the price, half of it back to holders.
