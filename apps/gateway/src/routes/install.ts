@@ -39,8 +39,12 @@ export const ReleaseBody = z
     dmgSha256: SHA.optional(),
     notes: z.string().max(2000).optional(),
     publishedAt: z.string().datetime().optional(),
+    // written by the release workflow; informational
+    channel: z.string().max(32).optional(),
+    minMacOS: z.string().max(32).optional(),
+    arch: z.string().max(32).optional(),
   })
-  .strict();
+  .passthrough();
 
 export type Release = z.infer<typeof ReleaseBody> & { publishedAt: string };
 

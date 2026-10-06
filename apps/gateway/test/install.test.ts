@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LATEST_CACHE_MS } from '../src/routes/install.js';
+import { LATEST_CACHE_MS, ReleaseBody } from '../src/routes/install.js';
 import { ADMIN, testServer } from './helpers.js';
 
 const SHA = 'a'.repeat(64);
@@ -38,6 +38,26 @@ function fakeFetch(body: unknown, status = 200) {
 }
 
 describe('GET /install/latest.json', () => {
+  it('accepts exactly what .github/workflows/release.yml publishes (channel, minMacOS, arch, notes URL)', () => {
+    const sha = 'a'.repeat(64);
+    const doc = {
+      version: '0.1.2',
+      channel: 'beta',
+      publishedAt: '2026-10-06T12:00:00Z',
+      bundleUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.1.2/mesh-node.js',
+      bundleSha256: sha,
+      tarballUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.1.2/mesh-node-0.1.2-darwin-arm64.tar.gz',
+      tarballSha256: sha,
+      dmgUrl: 'https://github.com/MeshNetworkai/mesh/releases/download/v0.1.2/MeshNode-0.1.2-arm64.dmg',
+      dmgSha256: sha,
+      minMacOS: '13.0',
+      arch: 'arm64',
+      notes: 'https://github.com/MeshNetworkai/mesh/releases/tag/v0.1.2',
+    };
+    expect(ReleaseBody.parse(doc).version).toBe('0.1.2');
+    expect(ReleaseBody.parse({ ...doc, futureField: 1 }).version).toBe('0.1.2'); // a newer workflow may add keys
+  });
+
   it('404 no_release when nothing is published', async () => {
     const dir = tmp();
     const { app } = await testServer({ env: { UPDATE_LATEST_PATH: join(dir, 'latest.json') } });
