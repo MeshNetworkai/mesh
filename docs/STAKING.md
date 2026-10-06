@@ -140,3 +140,6 @@ your row marked, and the stake / unstake panels.
   gateway re-evaluates at the next epoch; `StakeResolver.clear()` forces it.
 - Rewards are paid from the treasury share exactly as before — the multiplier only scales the accrual,
   so budget for the average multiplier when setting `nodeRewards.usdPerMTokens`.
+- The multiplied reward is capped at what the job is billed (`requestPricing.networkPricePerMTokens ×
+  tokens`). At the shipped prices ($0.06 reward, $0.08 network price) that holds silver and gold alike at
+  1.33× in effect: 1.5× and 2× only pay out in full if the reward rate is lowered or the price raised.

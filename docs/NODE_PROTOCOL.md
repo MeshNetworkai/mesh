@@ -218,9 +218,11 @@ Finish with exactly one of:
 
 - **Token counts**: send `prompt_eval_count` / `eval_count` from Ollama's final message; `finishReason`
   is `stop` | `length`. They are what the client is billed and you are paid for, so the gateway
-  **clamps** them to what the job could have produced: `completionTokens ≤ maxTokens` and
-  `promptTokens ≤ 4 × payload bytes + 1024` (tokenisers vary; CJK/emoji can be several tokens per
-  character). The accepted values come back in `usage`. Each field is an integer 0..10 000 000 (missing
+  **clamps** them to what the text it saw can amount to, assuming no token is shorter than 2 UTF-8
+  bytes: `completionTokens ≤ min(maxTokens, ceil(bytes relayed / 2) + 8)` and
+  `promptTokens ≤ ceil(message bytes / 2) + 16 per message + 64`. `maxTokens` itself is never above
+  `routing.nodeMaxTokens` (8192). A job served for a request from the node's own reward wallet is
+  billed to that wallet as usual and earns no reward. The accepted values come back in `usage`. Each field is an integer 0..10 000 000 (missing
   → 0). If Ollama omitted a count (some versions skip `prompt_eval_count` for a fully cached prompt)
   the reference agent estimates `ceil(chars / 4)` rather than sending 0, so the clamp is a backstop,
   not the normal path.

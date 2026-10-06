@@ -373,11 +373,27 @@ Still open (noted, not fixed):
 
 - A key revoked or a wallet exhausted mid-stream keeps streaming until the reply ends; the request is
   then charged. Bounded by `max_tokens`; a per-chunk re-check is a product call.
-- Spend limit / balance are checked before the request, so N concurrent requests on one key can
-  overshoot by N × one request's cost (bounded by H1).
-- An upstream stream the client aborts before the final usage chunk is recorded with 0 tokens (the
-  upstream still bills the operator). Estimating from bytes relayed is possible but was not done.
+- ~~Spend limit / balance are checked before the request, so N concurrent requests can overshoot.~~
+  **Fixed**: every paid request reserves its worst-case cost first (`apps/gateway/src/reserve.ts`):
+  `max_tokens` is lowered to what the wallet (and the key's spend limit) still affords, the amount is
+  held until the request is billed, and held credit cannot be listed on the market. A request with no
+  `max_tokens` is sent upstream with `routing.upstreamDefaultMaxTokens` (8192). Residual: costs the
+  price table cannot see (upstream plugins, a stale price) can still overshoot the hold slightly.
+- ~~An upstream stream the client aborts before the final usage chunk is recorded with 0 tokens.~~
+  **Fixed**: the relay keeps draining the upstream after the client is gone (up to
+  `routing.jobTimeoutMs`) so the usage chunk is billed; a stream that ends with no usage at all is
+  billed an estimate from the text relayed (`estimateUsage`). Tests: `apps/gateway/test/reserve.test.ts`.
 - Node tokens still use plain sha256 (see #18).
+
+Fixed after the session (tests in `apps/gateway/test/reserve.test.ts`):
+
+- **Self-dealing loop.** H1 bounded a node's completion count by `max_tokens`, which the client
+  chooses, so a wallet running its own node could send `max_tokens: 10000000`, answer with one
+  character, claim ten million tokens and collect the reward. Now the broker measures the claim against
+  the text it relayed (`completionTokenBound` / `promptTokenBound` in `network.ts`), `max_tokens` for a
+  node job is capped at `routing.nodeMaxTokens`, and a job served by the requester's own wallet accrues
+  no reward (`relay.ts`). The stake multiplier is capped too: a reward never exceeds the network
+  price of the job, so two wallets working together cannot earn more than they spend.
 
 ## Privacy (session 7, 2026-10-03)
 
