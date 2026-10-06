@@ -103,6 +103,14 @@ export const TokenomicsSchema = z
         jobTimeoutMs: z.number().int().positive().default(120_000),
         /** max_tokens sent to the node when the client did not set one. */
         defaultMaxTokens: z.number().int().positive().default(1024),
+        /** Most completion tokens one node job may be asked for, whatever the client sent (a local model's output window). */
+        nodeMaxTokens: z.number().int().positive().default(8192),
+        /**
+         * max_tokens sent to the upstream when the client did not set one. The gateway reserves the
+         * cost of the whole cap before the request starts (apps/gateway/src/reserve.ts), so there is
+         * always one; a client that wants longer answers sets max_tokens itself.
+         */
+        upstreamDefaultMaxTokens: z.number().int().positive().default(8192),
         /** Nodes with a success rate (last 100 jobs) below this are not routed to. */
         minSuccessRate: z.number().min(0).max(1).default(0.8),
         /** Reputation only applies once a node has at least this many scored jobs. */
