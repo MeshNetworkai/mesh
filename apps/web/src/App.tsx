@@ -19,6 +19,7 @@ import { NodePage } from './pages/Node';
 import { NotFound } from './pages/NotFound';
 import { usePointsEnabled, useStats } from './lib/hooks';
 import { StatsPage } from './pages/StatsPage';
+import { StatusPage } from './pages/StatusPage';
 import { Stake } from './pages/Stake';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -88,6 +89,7 @@ export function App() {
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/risk" element={<Risk />} />
             <Route path="/stats" element={<StatsPage />} />
+            <Route path="/status" element={<StatusPage />} />
             <Route path="/numbers" element={<ToStats />} />
             <Route path="/report" element={<ToStats />} />
             <Route path="/app/stats" element={<ToStats />} />

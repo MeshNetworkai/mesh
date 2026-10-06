@@ -602,4 +602,13 @@ test.describe('signed-in app', () => {
     await page.goto('/app/node');
     await expect(page.locator('main').getByRole('link', { name: 'Download for Mac' })).toHaveCount(1);
   });
+  test('status page: verdict, six components, 24 hourly bars, node explorer', async ({ page }) => {
+    await page.goto('/status');
+    await expect(page.locator('h1.status-title')).toContainText(/operating|degraded|down/i);
+    await expect(page.locator('.status-row')).toHaveCount(6);
+    await expect(page.locator('.status-row').filter({ hasText: 'fee feed' })).toContainText('Not live yet');
+    await expect(page.locator('.status-bar')).toHaveCount(24);
+    await expect(page.getByText('Node explorer')).toBeVisible();
+    await expect(page.locator('footer').getByRole('link', { name: 'Status' })).toHaveAttribute('href', '/status');
+  });
 });

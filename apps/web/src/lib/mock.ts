@@ -32,6 +32,7 @@ import type {
   NodePledge,
   NodeStats,
   NodesSummary,
+  StatusResponse,
   PeriodTotals,
   PledgeText,
   PrivacyTier,
@@ -1455,5 +1456,29 @@ export const mockCatalogue = async (guest = false): Promise<Catalogue> => {
     object: 'list',
     data: guest ? rows.filter((r) => r.guestAllowed) : rows,
     pricing: { networkPricePerMTokens: NETWORK_USD_PER_M, upstreamDiscountBps: MOCK_UPSTREAM_DISCOUNT_BPS, upstreamMarkupBps: 0, guestTiers: MOCK_GUEST_TIERS },
+  };
+};
+
+/** GET /status in mock mode: everything green, one Mac online, a quiet day. */
+export const mockStatus = async (): Promise<StatusResponse> => {
+  const now = Math.floor(Date.now() / 1000);
+  const hour = Math.floor(now / 3600) * 3600;
+  return {
+    overall: 'operational',
+    components: [
+      { key: 'gateway', label: 'Gateway', state: 'ok', detail: 'up 3d 4h' },
+      { key: 'database', label: 'Database', state: 'ok', detail: 'reads and writes ok' },
+      { key: 'upstream', label: 'Frontier models', state: 'ok', detail: 'openrouter · zero-data-retention providers' },
+      { key: 'network', label: 'Mac network', state: 'ok', detail: '1 of 1 registered Mac online' },
+      { key: 'epochs', label: 'Hourly distribution', state: 'ok', detail: 'last run 12m ago · complete' },
+      { key: 'token', label: '$MESH fee feed', state: 'off', detail: 'before launch — fee feed is the test harness' },
+    ],
+    requests24h: 412,
+    errors24h: Array.from({ length: 24 }, (_, i) => ({ hour: hour - (23 - i) * 3600, n: i === 9 ? 2 : 0 })),
+    errorTotal24h: 2,
+    topErrorCodes: [{ code: 'upstream_error', n: 2 }],
+    fleet: [{ id: 'node_2d2', chip: 'Apple M3 Max', ramGb: 64, models: ['llama3.1:8b', 'qwen2.5:14b'], state: 'online', uptimePct24h: 97.4, jobs24h: 38, tokens24h: 61_200, since: now - 86_400 * 3, agentVersion: '0.1.1' }],
+    fleetOnline: 1,
+    generatedAt: now,
   };
 };

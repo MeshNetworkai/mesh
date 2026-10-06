@@ -29,7 +29,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to?: string;
       { label: 'Treasury and market', to: '/stats#treasury' },
       { label: 'Roadmap', to: '/docs#roadmap' },
       { label: 'Leaderboard', to: '/leaderboard', points: true }, // hidden while the points programme is disabled
-      { label: 'Health', href: `${PUBLIC_API_URL}/health` },
+      { label: 'Status', to: '/status' },
     ],
   },
   {

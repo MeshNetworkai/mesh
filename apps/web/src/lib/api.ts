@@ -26,6 +26,7 @@ import type {
   MyReferral,
   NodeStats,
   NodesSummary,
+  StatusResponse,
   NonceResponse,
   PledgeText,
   PointsRules,
@@ -211,6 +212,19 @@ export const getEpochs = async (limit = 48): Promise<EpochSummary[]> =>
   MOCK ? mock.mockEpochs(limit) : (await request<EpochsResponse>(`/epochs?limit=${limit}`)).epochs;
 
 export const getNodes = (): Promise<NodesSummary> => (MOCK ? mock.mockNodes() : request<NodesSummary>('/nodes'));
+
+/** GET /status — public status + node explorer (503 with the same body when the gateway is down). */
+export const getStatus = async (): Promise<StatusResponse> => {
+  if (MOCK) return mock.mockStatus();
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/status`, { credentials: 'omit' });
+  } catch {
+    throw new ApiError(0, `Could not reach the gateway at ${API_URL}`, 'network');
+  }
+  if (!res.ok && res.status !== 503) throw await readError(res);
+  return (await res.json()) as StatusResponse;
+};
 
 /** GET /report — public treasury report (totals, 7d/30d, 12 ISO weeks). */
 export const getReport = (): Promise<Report> => (MOCK ? mock.mockReport() : request<Report>('/report'));

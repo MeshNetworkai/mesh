@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { noHorizontalScroll, signIn } from './helpers';
 
 /** 390 px viewport (project "phone"): nothing may be wider than the screen. */
-const PAGES = ['/', '/docs', '/download', '/stats', '/app/node', '/app/market', '/app/chat'];
+const PAGES = ['/', '/docs', '/download', '/stats', '/status', '/app/node', '/app/market', '/app/chat'];
 
 for (const path of PAGES) {
   test(`no horizontal scroll at 390px: ${path}`, async ({ page }) => {

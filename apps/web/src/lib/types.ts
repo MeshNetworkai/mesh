@@ -851,3 +851,28 @@ export interface ChainCheckReport {
   items: ChainCheckItem[];
   checkedAt: number;
 }
+
+/** GET /status — public status page + node explorer. */
+export type StatusState = 'ok' | 'degraded' | 'down' | 'off';
+export interface StatusResponse {
+  overall: 'operational' | 'degraded' | 'down';
+  components: Array<{ key: string; label: string; state: StatusState; detail: string }>;
+  requests24h: number;
+  errors24h: Array<{ hour: number; n: number }>;
+  errorTotal24h: number;
+  topErrorCodes: Array<{ code: string; n: number }>;
+  fleet: Array<{
+    id: string;
+    chip: string | null;
+    ramGb: number | null;
+    models: string[];
+    state: 'online' | 'busy' | 'offline';
+    uptimePct24h: number;
+    jobs24h: number;
+    tokens24h: number;
+    since: number;
+    agentVersion: string | null;
+  }>;
+  fleetOnline: number;
+  generatedAt: number;
+}

@@ -28,6 +28,7 @@ import { pointsRoutes } from './routes/points.js';
 import { referralRoutes } from './routes/referrals.js';
 import { reportRoutes } from './routes/report.js';
 import { stakeRoutes } from './routes/stake.js';
+import { statusRoutes } from './routes/status.js';
 import { statsRoutes } from './routes/stats.js';
 import { v1Routes } from './routes/v1.js';
 import { StakeResolver } from './staking.js';
@@ -215,6 +216,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(alertRoutes, ctx);
 
   await app.register(statsRoutes, ctx);
+  await app.register(statusRoutes, ctx);
   await app.register(openapiRoutes, ctx);
   await app.register(async (inst) => installRoutes(inst, ctx, opts.install ?? {}));
   await app.register(reportRoutes, ctx);

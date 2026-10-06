@@ -51,6 +51,13 @@ tags:
     description: Operator endpoints (`x-admin-token` or the admin cookie from `POST /admin/login`). Every call is audited.
 security: []
 paths:
+  /status:
+    get:
+      summary: Public status page data — verdict, components, hourly error counts (codes only), anonymised fleet
+      tags: [Public]
+      responses:
+        '200': { description: Operational or degraded }
+        '503': { description: Down (same body) }
   /health:
     get:
       tags: [Public]
