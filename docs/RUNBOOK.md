@@ -482,3 +482,25 @@ docker compose start gateway && curl -s $G/health | jq .ok
 | Beta: admit one wallet | `POST /admin/admit {wallet}` (admin) |
 | Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |
+
+## 12. Backups: verify monthly, restore when needed
+
+Nightly at 03:15 UTC `deploy.sh backup` writes a WAL-safe copy to `/opt/mesh/backups/mesh-YYYYMMDD-HHMMSS.db.gz` and keeps the newest 14. A backup nobody has ever restored is a hope, not a backup, so:
+
+**Drill (monthly, 1 minute, touches nothing live)**
+
+```
+ssh mesh@SERVER "/opt/mesh/deploy.sh verify-backup"
+```
+
+Unpacks the newest backup in a throwaway container and checks three things: the archive is intact, the file is exactly `page_count × page_size` bytes (a truncated file can still pass `integrity_check`), and `PRAGMA integrity_check` says `ok`. It then prints row counts for wallets, ledger, epochs, nodes, keys, jobs, requests and market listings plus the latest migration number, so you can see the backup is the one you think it is. Pass a path to check an older file.
+
+**Restore (only when the live database is lost or corrupt)**
+
+```
+ssh mesh@SERVER "/opt/mesh/deploy.sh restore /opt/mesh/backups/mesh-YYYYMMDD-HHMMSS.db.gz"
+```
+
+Verifies the file first, asks for a typed `YES`, stops the gateway, keeps the current database as `backups/pre-restore-<stamp>.db.gz`, swaps the backup in, starts the gateway and waits for `/health`. Anything created after the backup (credits, keys, nodes, listings) is gone; the pre-restore copy lets you roll the restore itself back with the same command. Node agents re-register on their own when the gateway rejects their token (`mesh-node` logs "re-registering").
+
+Off-site copy: `scp mesh@SERVER:/opt/mesh/backups/mesh-*.db.gz ~/mesh-backups/` from any machine with the deploy key; the files are small (the whole beta database is under 10 MB).

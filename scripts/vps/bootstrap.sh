@@ -673,6 +673,62 @@ cmd_backup() {
   echo "  kept $(ls -1 "$BACKUPS"/mesh-*.db.gz 2>/dev/null | wc -l) backup(s)"
 }
 
+# verify-backup <file.db.gz>: integrity check + key row counts, in a throwaway container. Never touches the live volume.
+cmd_verify_backup() {
+  local f="${1:-}"
+  [[ -n "$f" ]] || f="$(ls -1t "$BACKUPS"/mesh-*.db.gz 2>/dev/null | head -1)"
+  [[ -f "$f" ]] || die "no backup file (pass a path, or run: deploy.sh backup)"
+  log "Verifying $(basename "$f") in a throwaway container"
+  # Three checks, any failure aborts: the archive unpacks, the file is exactly page_count × page_size bytes
+  # (a truncated file can still answer integrity_check with "ok"), integrity_check says ok, and every core
+  # table answers a COUNT. Row counts are printed so you can eyeball that the backup is the one you think.
+  docker run --rm -v "$(dirname "$(readlink -f "$f")"):/in:ro" alpine:3 sh -c "
+    set -e
+    apk add --no-cache sqlite >/dev/null 2>&1
+    gzip -t /in/$(basename "$f")
+    gunzip -c /in/$(basename "$f") > /tmp/check.db
+    size=\$(wc -c < /tmp/check.db)
+    want=\$(( \$(sqlite3 /tmp/check.db 'PRAGMA page_count;') * \$(sqlite3 /tmp/check.db 'PRAGMA page_size;') ))
+    [ \"\$size\" -eq \"\$want\" ] || { echo \"  size mismatch: file \$size bytes, header says \$want (truncated?)\"; exit 3; }
+    ic=\$(sqlite3 /tmp/check.db 'PRAGMA integrity_check;')
+    echo \"  integrity: \$ic\"
+    [ \"\$ic\" = ok ] || exit 3
+    for t in wallets credits_ledger epochs nodes api_keys jobs requests_log market_listings schema_migrations; do
+      n=\$(sqlite3 /tmp/check.db \"SELECT COUNT(*) FROM \$t;\")
+      printf '  %-18s %s\\n' \"\$t\" \"\$n\"
+    done
+    echo \"  latest migration: \$(sqlite3 /tmp/check.db 'SELECT MAX(id) FROM schema_migrations;' 2>/dev/null || echo '?')\"
+  " || die "backup failed verification"
+  ok "backup unpacks, is complete and passes integrity_check"
+}
+
+# restore <file.db.gz>: stop the gateway, keep the current database beside the backups as a safety copy,
+# put the backup in its place, start again and wait for /health. Asks for a typed YES.
+cmd_restore() {
+  local f="${1:-}"
+  [[ -f "$f" ]] || die "usage: deploy.sh restore /opt/mesh/backups/mesh-YYYYMMDD-HHMMSS.db.gz"
+  docker volume inspect "$VOLUME" >/dev/null 2>&1 || die "volume ${VOLUME} does not exist yet (deploy first)"
+  cmd_verify_backup "$f"
+  echo
+  warn "This replaces the LIVE database with $(basename "$f"). Credits, keys and nodes registered after that backup are lost."
+  printf '  type YES to continue: '
+  local answer; read -r answer
+  [[ "$answer" == "YES" ]] || die "aborted"
+  log "Stopping the gateway"
+  compose stop gateway
+  local stamp; stamp="$(date -u +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUPS"
+  log "Safety copy of the current database -> ${BACKUPS}/pre-restore-${stamp}.db.gz"
+  docker run --rm -v "${VOLUME}:/data:ro" -v "$BACKUPS:/out" alpine:3 sh -c "cp /data/mesh.db /out/pre-restore-${stamp}.db && gzip -f /out/pre-restore-${stamp}.db"
+  log "Restoring"
+  docker run --rm -v "${VOLUME}:/data" -v "$(dirname "$(readlink -f "$f")"):/in:ro" alpine:3 sh -c \
+    "rm -f /data/mesh.db /data/mesh.db-wal /data/mesh.db-shm && gunzip -c /in/$(basename "$f") > /data/mesh.db && chown 1000:1000 /data/mesh.db"
+  log "Starting the gateway"
+  compose start gateway
+  wait_healthy || die "gateway not healthy after restore — roll back with: deploy.sh restore ${BACKUPS}/pre-restore-${stamp}.db.gz"
+  ok "restored $(basename "$f"); the previous database is at ${BACKUPS}/pre-restore-${stamp}.db.gz"
+}
+
 cmd_status() {
   log "Status"
   compose ps 2>/dev/null || true
@@ -708,9 +764,11 @@ case "${1:-deploy}" in
   logs)    compose logs --tail=200 --no-color gateway ;;
   health)  cmd_health ;;
   backup)  cmd_backup ;;
+  verify-backup) cmd_verify_backup "${2:-}" ;;
+  restore) cmd_restore "${2:-}" ;;
   status)  cmd_status ;;
   -h|--help|help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command: $1 (deploy|restart|logs|health|backup|status)" ;;
+  *) die "unknown command: $1 (deploy|restart|logs|health|backup|verify-backup|restore|status)" ;;
 esac
 DEPLOY_EOF
   ok "deploy.sh installed"

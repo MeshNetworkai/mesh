@@ -83,7 +83,7 @@ GitHub -> repo -> **Actions** tab -> **Deploy** (left side) -> **Run workflow** 
 selected -> **Run workflow**. Watch the log; it ends with a health check. 3-6 minutes the first time.
 
 From now on every push to `main` does the same thing automatically. The same **Run workflow** button
-also offers `restart`, `logs` (last 200 lines of the gateway), `health` and `backup`.
+also offers `restart`, `logs` (last 200 lines of the gateway), `health`, `backup`, `verify-backup` (restore drill in a throwaway container) and `restore <file>`.
 
 Check it worked:
 
