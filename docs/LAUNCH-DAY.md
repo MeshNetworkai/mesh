@@ -28,7 +28,11 @@ sweeper key on the server over ssh, read from the file.
 
 Addresses it uses (Robinhood Chain mainnet, chain id 4663, from docs.robinhood.com/chain/contracts):
 WETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73`, USDG `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`,
-Pons fee escrow `0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e`.
+Pons fee escrow `0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e`, NVDA stock token
+`0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC` (the launch pairs against NVDA, so Pons pays creator fees in NVDA;
+the vault lists it as a quote asset and swaps NVDA → USDG through the v3 pool `0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3`,
+about $3M of liquidity on 8 Oct). `MESH_QUOTE=eth` switches to an ETH-paired launch. For an NVDA launch the
+SwapRouter02 route is required at deploy time, not optional.
 
 After it finishes:
 
@@ -46,8 +50,8 @@ or with cast: `cast send <vault> "setRoute(address,uint8,address,uint24,bytes)" 
 
 ## Part 2 — Pons, then the admin panel
 
-1. Launch $MESH on Pons. The one setting that matters to us: **creator-fee recipient = the vault address**
-   the script printed. Keep ETH as the quote asset. Pons' creator-fee rate is what the site calls
+1. Launch $MESH on Pons. **Quote asset: NVDA** (the Robinhood NVIDIA stock token). The one setting that
+   matters to us: **creator-fee recipient = the vault address** the script printed. Pons' creator-fee rate is what the site calls
    "the 1.5% fee" — if the form shows a different rate, tell Claude and `tradeFeeBps` follows it.
    (Set after the fact with `transferCreatorFeeRecipient(token, vault)` from the launch wallet if Pons
    only allows it post-launch.)
@@ -66,3 +70,9 @@ or with cast: `cast send <vault> "setRoute(address,uint8,address,uint24,bytes)" 
   `transferCreatorFeeRecipient` from the launch wallet, then the vault's `pull()` claims them.
 - Lost sweeper key: owner calls `setSweeper(newAddress)`; put the new key on the server. Nothing else
   changes.
+
+
+## Known gap for an NVDA launch
+
+The admin panel's "pending fees" figure shows — for NVDA until a price source is added (the adapter prices
+ETH and USDG only). Sweeps are unaffected: the gateway credits the actual USDG the swap returned.

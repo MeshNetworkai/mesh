@@ -17,7 +17,8 @@ import {PonsFeeVault} from "../src/PonsFeeVault.sol";
 ///   MESH_HOLDER_BPS     default 5000 (must match config/tokenomics.json holderShareBps)
 ///   MESH_QUOTE_TOKENS   comma list of ERC-20 quote assets Pons may pay in (default: empty = ETH only)
 ///   MESH_SWAP_ROUTER    optional Uniswap v3 SwapRouter02; with MESH_POOL_FEE sets a V3Single ETH→stable route
-///   MESH_POOL_FEE       default 500
+///   MESH_POOL_FEE       default 500 (ETH→stable pool fee)
+///   MESH_QUOTE_POOL_FEES comma list parallel to MESH_QUOTE_TOKENS: v3 pool fee of each quote→stable route (0 = none)
 contract DeployPonsFeeVault is Script {
     function run() external {
         address deployer = msg.sender;
@@ -49,6 +50,14 @@ contract DeployPonsFeeVault is Script {
         );
         if (router != address(0) && stable != address(0) && weth != address(0)) {
             vault.setRoute(address(0), PonsFeeVault.RouteKind.V3Single, router, uint24(poolFee), "");
+        }
+        // One V3Single route per ERC-20 quote asset (e.g. a tokenised stock the launch is paired with):
+        // MESH_QUOTE_POOL_FEES is a comma list parallel to MESH_QUOTE_TOKENS; 0 = no route for that asset.
+        if (router != address(0) && stable != address(0) && quotes.length > 0) {
+            uint256[] memory fees = _uintList(vm.envOr("MESH_QUOTE_POOL_FEES", string("")));
+            for (uint256 i = 0; i < quotes.length && i < fees.length; i++) {
+                if (fees[i] != 0) vault.setRoute(quotes[i], PonsFeeVault.RouteKind.V3Single, router, uint24(fees[i]), "");
+            }
         }
         if (owner != deployer) vault.transferOwnership(owner); // Ownable2Step: the multisig must acceptOwnership()
         vm.stopBroadcast();
@@ -88,6 +97,25 @@ contract DeployPonsFeeVault is Script {
                 for (uint256 j = start; j < i; j++) part[j - start] = b[j];
                 out[k++] = vm.parseAddress(string(part));
                 start = i + 1;
+            }
+        }
+    }
+
+    function _uintList(string memory csv) internal pure returns (uint256[] memory out) {
+        bytes memory b = bytes(csv);
+        if (b.length == 0) return out;
+        uint256 n = 1;
+        for (uint256 i = 0; i < b.length; i++) if (b[i] == ",") n++;
+        out = new uint256[](n);
+        uint256 k;
+        uint256 acc;
+        for (uint256 i = 0; i <= b.length; i++) {
+            if (i == b.length || b[i] == ",") {
+                out[k++] = acc;
+                acc = 0;
+            } else {
+                require(b[i] >= "0" && b[i] <= "9", "MESH_QUOTE_POOL_FEES: digits only");
+                acc = acc * 10 + (uint8(b[i]) - 48);
             }
         }
     }

@@ -26,6 +26,8 @@ EXPLORER="https://robinhoodchain.blockscout.com"
 WETH="0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"      # docs.robinhood.com/chain/contracts
 USDG="0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"      # docs.robinhood.com/chain/contracts
 PONS_ESCROW="0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e"
+NVDA="0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC"      # NVIDIA Robinhood stock token (the launch pairs against it)
+QUOTE="${MESH_QUOTE:-nvda}"                               # nvda | eth: the asset Pons pays creator fees in
 HOLDER_BPS="${MESH_HOLDER_BPS:-5000}"
 POOL_FEE="${MESH_POOL_FEE:-500}"
 VPS_HOST="${MESH_VPS_HOST:-80.78.27.94}"
@@ -100,9 +102,16 @@ TREASURY="${MESH_TREASURY:-$OWNER}"
 ok "owner + treasury $OWNER"
 
 # ---- 4. swap route -------------------------------------------------------------------------------
-bold "4/7 ETH → USDG route"
-echo "  The vault swaps fees to USDG through Uniswap v3 SwapRouter02 if one is wired. Without it, fees wait"
-echo "  in the vault (nothing is lost) until the owner sets a route — but holders get no credits meanwhile."
+bold "4/7 Quote asset and USDG route"
+case "$QUOTE" in
+  nvda) QUOTE_TOKENS="$NVDA"; echo "  Launch pairs against NVDA: Pons pays creator fees in NVDA tokens. The vault claims them and swaps"; echo "  NVDA -> USDG on Uniswap v3 (pool 0xd4EB...14a3, about 3M USD of liquidity)." ;;
+  eth)  QUOTE_TOKENS=""; echo "  Launch pairs against ETH: creator fees arrive as ETH and swap ETH -> USDG." ;;
+  *) die "MESH_QUOTE must be nvda or eth" ;;
+esac
+[[ -z "$QUOTE_TOKENS" || "$(cast code "$NVDA" --rpc-url "$RPC" 2>/dev/null | wc -c)" -gt 4 ]] || die "no contract at NVDA $NVDA"
+echo "  Fees swap to USDG through Uniswap v3 SwapRouter02 if one is wired. Without it, fees wait in the vault"
+echo "  (nothing is lost) until the owner sets a route — but holders get no credits meanwhile."
+QUOTE_FEES=""
 ROUTER="${MESH_SWAP_ROUTER:-}"
 if [[ -z "$ROUTER" ]]; then
   echo "  Find SwapRouter02 on $EXPLORER (search: SwapRouter02; it starts 0xcaf6… and ends …5cb2 per Uniswap's playbook)."
@@ -122,8 +131,18 @@ if [[ -n "$ROUTER" ]]; then
   fi
   [[ -n "$pool" && "$pool" != "0x0000000000000000000000000000000000000000" ]] || die "no WETH/USDG v3 pool found through $ROUTER at fee 500/3000/10000/100 — skip the route (Enter) and set it later"
   ok "route: SwapRouter02 $ROUTER, WETH/USDG pool $pool (fee $POOL_FEE)"
+  if [[ -n "$QUOTE_TOKENS" ]]; then
+    qf=""
+    for f in 3000 500 10000 100; do
+      p="$(cast call "$fac" 'getPool(address,address,uint24)(address)' "$NVDA" "$USDG" "$f" --rpc-url "$RPC" 2>/dev/null || true)"
+      if [[ -n "$p" && "$p" != "0x0000000000000000000000000000000000000000" ]]; then qf="$f"; ok "route: NVDA/USDG pool $p (fee $f)"; break; fi
+    done
+    [[ -n "$qf" ]] || die "no NVDA/USDG v3 pool found through $ROUTER — the launch cannot sweep NVDA fees; stop and tell Claude"
+    QUOTE_FEES="$qf"
+  fi
 else
-  warn "no route: the vault starts without a swap path; set one before the first sweep (scripts/chain/launch-day.sh keeps the command in part 2)"
+  [[ -z "$QUOTE_TOKENS" ]] || die "an NVDA-paired launch needs the SwapRouter02 route now: without it NVDA fees cannot become USDG credits"
+  warn "no route: the vault starts without a swap path; set one before the first sweep (docs/LAUNCH-DAY.md)"
 fi
 
 # ---- 5. deploy -----------------------------------------------------------------------------------
@@ -136,8 +155,10 @@ cat <<EOF
   stable          USDG $USDG
   weth            $WETH
   holder share    $HOLDER_BPS bps
+  quote asset     ${QUOTE_TOKENS:-ETH only}
   route           ${ROUTER:-none}
 EOF
+export MESH_QUOTE_TOKENS="$QUOTE_TOKENS" MESH_QUOTE_POOL_FEES="${QUOTE_FEES:-}"
 export MESH_OWNER="$OWNER" MESH_SWEEPER="$SWEEPER" MESH_CREDIT_POOL="$CREDIT_POOL" MESH_TREASURY="$TREASURY"
 export MESH_STABLE="$USDG" MESH_WETH="$WETH" MESH_HOLDER_BPS="$HOLDER_BPS" MESH_PONS_ESCROW="$PONS_ESCROW" MESH_POOL_FEE="$POOL_FEE"
 [[ -n "$ROUTER" ]] && export MESH_SWAP_ROUTER="$ROUTER"
@@ -165,6 +186,7 @@ CFG="$here/config/deploy.robinhood.json"
 setk() { perl -0pi -e "s/(\"$1\"\s*:\s*)null/\$1\"$2\"/" "$CFG"; }
 setk feeVault "$VAULT"; setk creditPool "$CREDIT_POOL"; setk treasury "$TREASURY"; setk stable "$USDG"
 [[ -n "$ROUTER" ]] && setk swapRouter "$ROUTER"
+if [[ -n "$QUOTE_TOKENS" ]]; then perl -0pi -e 's/("quoteTokens"\s*:\s*)\[[^\]]*\]/$1["0x0000000000000000000000000000000000000000", "'"$QUOTE_TOKENS"'"]/' "$CFG"; fi
 grep -q "\"feeVault\": \"$VAULT\"" "$CFG" || warn "could not write feeVault into $CFG — paste it in Admin → Token instead"
 cd "$here" && git add config/deploy.robinhood.json contracts/evm/deployments/ && git -c user.name="Mesh" -c user.email="dev@mesh-network.ai" commit -q -m "launch: PonsFeeVault $VAULT on Robinhood Chain; credit pool, treasury, USDG and route in deploy.robinhood.json" && ok "committed (push when ready: git push)"
 
