@@ -28,9 +28,9 @@ limits), `CONTRIBUTING.md` (working in the repo).
  │   │  routes/nodes   register · heartbeat · jobs (long-poll) │   │ Chat, Network, Node  │  │
  │   │  routes/stats   /health /stats /epochs                  │   └──────────────────────┘  │
  │   │  routes/report  /report, /report/weekly/:isoWeek        │                             │
- │   │  routes/me      /me, /me/nodes                          │   ┌──────────────────────┐  │
+ │   │  routes/me, credits  /me, /me/nodes, /me/credits/buy    │   ┌──────────────────────┐  │
  │   │  routes/admin   run-epoch · fake-fees · credits · audit │   │ apps/node-agent      │  │
- │   │  jobs/distribute   hourly epoch (node-cron)             │   │ mesh-node CLI (Mac)  │  │
+ │   │  jobs/distribute   hourly epoch, then housekeeping      │   │ mesh-node CLI (Mac)  │  │
  │   │  network.ts        JobBroker + JobRelay (in-memory)     │◄──│ register · heartbeat │  │
  │   │  routing.ts        decideRoute · reputation             │   │ long-poll jobs       │  │
  │   │  upstream.ts       OpenRouter | Mock upstream           │──►│ Ollama :11434        │  │
@@ -62,22 +62,29 @@ backend of its own.
 
 ### 1a. Modules added for the open beta (October)
 
-The diagram above is the core. Four modules sit beside it in `apps/gateway/src`, each with its own
-doc; none changes the request or epoch lifecycle below, they hook into it.
+The diagram above is the core. The modules below sit beside it in `apps/gateway/src`, each with its
+own doc; they hook into the request and epoch lifecycles described below.
 
 | Module | Files | What it does | Hooks into | Doc |
 | --- | --- | --- | --- | --- |
-| **Catalogue** | `catalogue.ts`, `config/model-prices.json` (curated list + OpenRouter list prices, refreshed by `scripts/refresh-model-prices.mjs`), `config/model-policy.json` | `GET /v1/models`: network models (Ollama tag, short alias, `online` count) plus frontier / fast / open upstream rows, each with `listPrice`, `meshPrice` (flat network price on a node, list ± `requestPricing.upstreamDiscountBps` / `upstreamMarkupBps` upstream), `privacy`, `guestAllowed`; works without a key; `?guest=1` | `routes/v1.ts` billing uses the same `meshPricePerM()`; the web picker and guest chat read it | `docs/PRICING.md` §1–2 |
-| **Marketplace** | `market.ts` (mechanics), `routes/market.ts` (API), tables `market_listings`, `market_fills`, `prepaid_ledger`, `withdrawal_requests`, `pool_extra_micros` (migration 14) | List credit at 0–70 % off (escrow row in `credits_ledger`), fill any part from a prepaid USD balance, cancel / expire (sweep every minute), withdraw; 2.5 % fee: half to `pool_extra_micros`, half to `treasury_ledger` (`market_fee`) | the next epoch (§3) adds pending `pool_extra_micros` to the holder pool and stamps the rows; `/report` → `totals.marketplace`; admin `POST /admin/prepaid` is the beta settlement | `docs/MARKETPLACE.md` |
-| **Usage share (engine 2)** | `usage-share.ts`, table `usage_share_log`, config `usageShare` | When a **paid** request is recorded (both legs), compute the margin (network: price − node reward; upstream: billed − upstream cost); if `enabled` and positive, write `holderBps` of it to `pool_extra_micros` with `source = 'usage'`, log the split. Guests never count. Off as shipped: at the current network price every network request runs at a loss and upstream margin is zero, so there is nothing to share until the pricing decision | `relay.ts` after billing; the epoch pays it out with fee credits; `/stats` → `usageShareEnabled`, `usageShareToHolders24hUsd`; `/report` → `totals.usageShare` | `docs/PRICING.md` §3 |
-| **Starter credits** | `starter.ts`, tables `starter_grants`, `starter_settings` (migration 16), config `starterCredits` | On a wallet's first-ever successful `POST /auth/verify`, credit `amountUsd` (ledger kind `starter`), once per wallet, `maxWallets` total, 3 per peppered IP hash per day; runtime pause via `POST /admin/starter/toggle` | `routes/auth.ts`; `/stats` → `starterGrants`; admin page | `docs/SWITCHING.md` |
-| **Guest chat** | `routes/guest.ts`, config `guest` | `POST /v1/guest/chat` and `GET /v1/guest/quota`: a few free messages a day per IP, network + `allowedTiers` models only, no wallet; the treasury pays and it never feeds engine 2 | `routing.ts`, `upstream.ts`; cost shown on `/report` | `docs/PRICING.md` §4 |
+| **Catalogue** | `catalogue.ts`, `config/model-prices.json` (curated list + OpenRouter list prices, refreshed by `scripts/refresh-model-prices.mjs`), `config/model-policy.json` | `GET /v1/models`: network models (Ollama tag, short alias, `online` count) plus frontier / fast / open upstream rows, each with `listPrice`, `meshPrice` (flat network price on a node; upstream it is list plus `requestPricing.upstreamMarkupBps`, list × 1.06 as shipped, or list minus `upstreamDiscountBps` when a discount is configured), `privacy`, `guestAllowed`; works without a key; `?guest=1` | `routes/v1.ts` bills with `upstreamBilledMicros()`, the same rule `meshPricePerM()` applies to the catalogue; the web picker and guest chat read it | `docs/PRICING.md` §1–2 |
+| **Marketplace** | `market.ts` (mechanics), `routes/market.ts` (API), tables `market_listings`, `market_fills`, `prepaid_ledger`, `withdrawal_requests`, `pool_extra_micros` (migration 14) | List credit at 0–70 % off (escrow row in `credits_ledger`; unused starter credit is refused, `402 non_transferable`), fill any part from a prepaid USD balance, cancel / expire (sweep every minute), withdraw; 2.5 % fee: half to `pool_extra_micros`, half to `treasury_ledger` (`market_fee`) | the next epoch (§3) adds pending `pool_extra_micros` to the holder pool and stamps the rows; `/report` → `totals.marketplace`; admin `POST /admin/prepaid` is the beta settlement | `docs/MARKETPLACE.md` |
+| **Usage share (engine 2)** | `usage-share.ts`, table `usage_share_log`, config `usageShare` | When a **paid** request is recorded (both legs), compute the margin (network: price − node reward; upstream: billed − upstream cost, the cost being list plus `requestPricing.upstreamFeeBps`); if `enabled` and positive, write `holderBps` of it to `pool_extra_micros` with `source = 'usage'`, log the split. Guests never count. On as shipped: the network leg leaves $0.008–$0.02 per million tokens (the node reward is held at `nodeRewards.maxShareOfPriceBps`, 90 % of the price), the upstream leg 0.5 % of list (6 % markup over a 5.5 % upstream fee) | `relay.ts` after billing; the epoch pays it out with fee credits; `/stats` → `usageShareEnabled`, `usageShareToHolders24hUsd`; `/report` → `totals.usageShare` | `docs/PRICING.md` §3 |
+| **Starter credits** | `starter.ts`, tables `starter_grants`, `starter_settings` (migration 16), config `starterCredits` | On a successful `POST /auth/verify` by a wallet that holds at least `minHoldTokens` (`requireMinHold: true`), credit `amountUsd` (ledger kind `starter`), once per wallet, `maxWallets` total, 3 per peppered IP hash per day; runtime pause via `POST /admin/starter/toggle`. With `transferable: false` the unused part of the grant cannot be listed on the marketplace (`expiry.ts → nonTransferableMicros`) | `routes/auth.ts`; `routes/market.ts` (listing check); `/stats` → `starterGrants`, `starterRequiresHold`, `starterTransferable`; `/me` → `nonTransferableUsd`; admin page | `docs/SWITCHING.md` |
+| **Guest chat** | `routes/guest.ts`, config `guest` | `POST /v1/guest/chat` and `GET /v1/guest/quota`: a few free messages a day per IP, network + `allowedTiers` models only, no wallet; the treasury pays (an upstream-served message is booked at list plus `upstreamFeeBps`) and it never feeds engine 2 | `routing.ts`, `upstream.ts`; cost shown on `/report` | `docs/PRICING.md` §4 |
+| **Credit expiry** | `expiry.ts`, config `creditExpiry`, ledger kind `expiry` (migration 19) | Every credit lapses `days` (90) after it landed, whatever its source; the oldest credit is consumed first; `market_refund` keeps its original date. Derived from sums over `credits_ledger` (no lots) and debited with one `expiry` row | `jobs/housekeeping.ts` after every epoch (`expireAll`); lazily per wallet in `routes/v1.ts` (chat), `routes/me.ts`, `routes/market.ts` (`GET /me/market`, `POST /market/listings`); `/me` → `expiry`; `/report` → `totals.creditExpiry`; `/stats` → `creditExpiryDays` | `docs/PRICING.md` §6 |
+| **Direct sales** | `direct-sales.ts`, `routes/credits.ts`, config `directSales`, ledger kinds `purchase` (credits) and `credit_purchase` (prepaid) (migration 19) | `GET /credits/config` (public) and `POST /me/credits/buy {amountUsd}` (session): $1 of prepaid balance buys $1 of credit, in one transaction, within `minUsd`–`maxUsd`; 404 when disabled | the marketplace's `prepaid_ledger` (same balance, same top-ups and deposits); `/report` → `totals.directSales`; `/stats` → `directSalesEnabled` | `docs/PRICING.md` §7 |
+| **Credit reserve** | `reserve-report.ts` (named apart from `reserve.ts`, which holds credit for requests in flight), table `reserve_snapshots` (migration 19), config `reserve`, `PonsEvmAdapter.reserve()` | Once per epoch read the credit-pool wallet: its stablecoin is the held reserve, ETH next to it is recorded and not counted; publish held against credits owed (spendable + escrowed in open listings) with `coverage`, `surplusUsd` and `short`. Mock adapter: one `mock` row, nothing held. A failed read is stored as `unavailable` and logged (`reserve_read_failed`), never thrown | `jobs/housekeeping.ts`; `/report` → `totals.reserve`; `/stats` → `reserve`; `alerts.ts` → `reserve_short` | `docs/PRICING.md` §5 |
+| **Housekeeping job** | `jobs/housekeeping.ts` | `runHousekeeping`: `logSweepWarnings` (a sweep that left fees unswept for want of a fresh price is written to `errors_log` as `sweep_skipped`, which raises the `failed_sweep` alert), then `expireAll` (credit expiry), then `snapshotReserve` (reserve reading). Safe to run at any time | `index.ts` cron after every epoch, whether or not the sweep went through (a failure is logged as `housekeeping_failed`); `POST /admin/run-epoch` returns it as `housekeeping` | `docs/PRICING.md` §5–6 |
 | **Verification** | `verification.ts`, table `verifications`, config `verification` | Re-run `sampleRate` of network jobs on a second node from the same anonymised payload under the same tier, compare in memory, penalise mismatches, quarantine repeat offenders; neither output stored | `routing.ts` (quarantined nodes excluded), node rewards (mismatch forfeits the reward), admin clear | `docs/NODE_PROTOCOL.md` §10, `docs/PRIVACY.md` §3 |
 | **Privacy tiers** | `routing.ts` (tier resolution), `network.ts` (`sanitizeMessages`, trusted-only claims), `routes/nodes.ts` (pledge) | `trusted` (own nodes, allowlist, gold stake + pledge; falls back to the ZDR upstream, never another node), `network`, `upstream_zdr`; header > body > key default > config | every `/v1` request | `docs/PRIVACY.md` |
 
 Everything a holder is paid lands through one door: the hourly epoch. Trading fees are the pool's
 base; `pool_extra_micros` (marketplace fee share, usage share) is added to it before the pro-rata
 split, and both are reported separately on `/report` so the two engines can be audited apart.
+Credit also enters a wallet outside the epoch: bought on the marketplace (`market_buy`), bought from
+Mesh at face value (`purchase`), or granted (`starter`, `adjustment`). Whatever its door, it lapses
+after `creditExpiry.days`.
 
 ## 2. Request lifecycle: holder → gateway → node (or OpenRouter)
 
@@ -102,7 +109,8 @@ client (OpenAI SDK)            gateway (routes/v1.ts)                           
   │   Bearer mesh_sk_…           │ 2 lookupApiKey → api_keys row (401 if none)
   │   {model, messages, stream}  │ 3 isModelAllowed(model-policy) → 403 model_not_allowed
   │                              │ 4 keySpendExhausted → 429 key_spend_limit_reached
-  │                              │ 5 balanceMicros(wallet) ≤ 0 → 402 insufficient_quota
+  │                              │ 5 expireWallet (credit past creditExpiry.days lapses first), then
+  │                              │   balanceMicros(wallet) ≤ 0 → 402 insufficient_quota
   │                              │ 6 decideRoute(model):
   │                              │     preferNetwork? networkTagFor(model)? an online, idle,
   │                              │     reputable node advertising the tag? → 'node' else 'openrouter'
@@ -118,7 +126,8 @@ client (OpenAI SDK)            gateway (routes/v1.ts)                           
   │   x-mesh-route: node:<id>    │                              POST …/jobs/:jobId/chunk {seq,δ} ◄┤
   │        …                     │                              POST …/jobs/:jobId/done {tokens}  ◄┤
   │◄── final chunk {usage, mesh} │10 price = tokens × networkPricePerMTokens ($0.08/M)
-  │◄── data: [DONE]              │   reward = tokens × nodeRewards.usdPerMTokens ($0.06/M)
+  │◄── data: [DONE]              │   reward = tokens × nodeRewards.usdPerMTokens ($0.06/M) × stake multiplier,
+  │                              │   never above maxShareOfPriceBps (90 %) of price; 0 if self-served
   │                              │   one transaction: requests_log, credits_ledger(usage, −price),
   │                              │   api_keys.spent, node_rewards(+reward), treasury_ledger(−reward)
   │                              │   nodes.busy = 0, relay released
@@ -127,9 +136,12 @@ client (OpenAI SDK)            gateway (routes/v1.ts)                           
   │                              │   node fail): re-queue once excluding that node, else ↓
   │                              │ ── upstream path (or fallback, x-mesh-fallback: <reason>) ──
   │                              │11 upstream.chat(body) → OpenRouter (usage.include = true)
-  │◄── SSE passthrough ──────────│   SseUsageScanner reads the final usage/cost chunk
-  │                              │12 cost = usage.cost (or model-prices.json × markupBps)
+  │◄── SSE passthrough ──────────│   SseUsageScanner reads the final usage/cost chunk; with a markup or
+  │   usage.cost = charged       │   discount and a paying caller the usage chunk is repriced on the way
+  │   mesh.listCostUsd = list    │   through (usage.cost → billed, mesh.listCostUsd → list); else untouched
+  │                              │12 list = usage.cost (or model-prices.json); billed = list × (1 + upstreamMarkupBps)
   │                              │   requests_log + credits_ledger(usage) + api_keys.spent
+  │                              │   usage share: margin = billed − list × (1 + upstreamFeeBps)
   │                              │   upstream error / timeout → 502, nothing charged
 ```
 
@@ -177,12 +189,18 @@ runs or replays the same function. Epochs are keyed by `epoch_start` (unix secon
           UNIQUE(wallet, ref) on distributions makes a re-run a no-op even under a race
  8 on throw: errors_log code 'epoch_failed' → alerts.ts raises failed_sweep; the next tick
           retries the same epochStart because no epochs row was written
+ 9 housekeeping (jobs/housekeeping.ts), after the epoch whether it completed or threw:
+          logSweepWarnings errors_log code 'sweep_skipped' when the sweep left fees unswept (no fresh price)
+                          → alerts.ts raises failed_sweep
+          expireAll       credits_ledger (kind 'expiry') for credit older than creditExpiry.days
+          snapshotReserve reserve_snapshots row from the credit-pool wallet (mock adapter: one 'mock' row)
 ```
 
-Credits never expire and are not pooled: a wallet's balance is `SUM(delta_usd_micros)` over its
-`credits_ledger` rows (distribution + starter + adjustment + market_buy + market_refund − usage −
-market_escrow). Nothing on-chain happens for
-the holder; the fee sweep is the only transaction.
+Credits are not pooled: a wallet's balance is `SUM(delta_usd_micros)` over its `credits_ledger` rows
+(distribution + starter + adjustment + market_buy + market_refund + purchase − usage − market_escrow
+− expiry). Each credit lapses `creditExpiry.days` (90) after it landed, oldest first
+(`docs/PRICING.md` §6). Nothing on-chain happens for the holder; the fee sweep is the only
+transaction.
 
 ### 3a. Fee source: Robinhood Chain via Pons (`PonsEvmAdapter`)
 
@@ -198,12 +216,24 @@ trade on Pons curve / v4 pool
         └─ Fee Escrow: balanceOf(PonsFeeVault) += creator fee (ETH)        ← accrues between epochs
 epoch (jobs/distribute.ts → adapter.collectFees())
    1. read escrow.balanceOf(vault) (+ balanceOfToken for each quote token) and the vault's held balances
-   2. PonsFeeVault.pull()            sweeper tx: escrow.claim() / claimToken(q) → vault
-   3. per asset: PonsFeeVault.sweep(asset, minOut)   swap → stable via route, split holderShareBps → creditPool, rest → treasury   (sweepMode "swap")
-             or  PonsFeeVault.sweepRaw(asset)        no swap, same split in the asset                                             (sweepMode "raw")
-   4. value in USD: stable received (swap) or amount × Chainlink ETH/USD | fixedEthUsd (raw) → feesUsdMicros
-   5. holder balances: same Transfer-log indexer as EvmAdapter, excluding Pons escrow/factory/hook/locker/buyback vault, curve, pool, creditPool, vault, treasury, sweeper
+   2. price: Chainlink ETH/USD (priceFeed); stale (> priceMaxAgeSec, 3600 s) or unreadable → no price; fixedEthUsd only when no feed is configured.
+             an asset without a price is left unswept this epoch (in the escrow or the vault), no credits minted for it; a later epoch sweeps it
+   3. PonsFeeVault.pull()            sweeper tx: escrow.claim() / claimToken(q) → vault
+   4. per asset: PonsFeeVault.sweep(asset, minOut)   swap → stable via route, split holderShareBps → creditPool, rest → treasury   (sweepMode "swap": production)
+                                                     minOut = expected USD × (1 − slippageBps); the swap reverts rather than settle below it
+             or  PonsFeeVault.sweepRaw(asset)        no swap, same split in the asset                                             (sweepMode "raw": testnet rehearsal only)
+   5. value in USD: stable received (swap) or amount × ETH/USD (raw) → feesUsdMicros
+   6. holder balances: same Transfer-log indexer as EvmAdapter, excluding Pons escrow/factory/hook/locker/buyback vault, curve, pool, creditPool, vault, treasury, sweeper
+after the epoch (jobs/housekeeping.ts → adapter.reserve())
+   7. read creditPool: stable balance = held reserve, ETH balance reported apart → reserve_snapshots → GET /report totals.reserve
 ```
+
+`config/deploy.robinhood.json` ships `sweepMode: "swap"`, so the holder share reaches `creditPool` in
+the stablecoin and backs the USD credits it mints 1:1; that wallet is the credit reserve and is kept
+apart from the treasury (`docs/PRICING.md` §5). `raw` is left for the testnet rehearsal
+(`config/deploy.robinhood-testnet.json`). The contract itself was not changed: `sweepRaw()` still
+exists on chain and the sweeper role may call it; swap-only is enforced by the gateway's config and
+adapter, and **Check on chain** warns when `sweepMode` is `raw`.
 
 Roles on the vault: `owner` (multisig; Ownable2Step) sets recipients, shares, routes, pause; `sweeper`
 (gateway hot wallet, `MESH_EVM_PRIVATE_KEY`) can only drive `pull / sweep / sweepRaw`. Funds can only
@@ -234,12 +264,13 @@ all `*_at`/`ts` columns are unix seconds and `*_ms` are unix milliseconds.
 | --- | --- | --- |
 | `wallets` | every wallet that signed in or received credits | `wallet` PK, `chain`, `created_at`, `last_login` |
 | `api_keys` | holder API keys | `key_hash` (sha256, unique), `key_prefix`, `wallet`, `name`, `spend_limit_usd_micros`, `spent_usd_micros`, `revoked` |
-| `credits_ledger` | the holder balance, append-only | `wallet`, `delta_usd_micros`, `kind` ∈ distribution/usage/adjustment/starter/market_escrow/market_buy/market_refund, `ref`; unique `(wallet, ref)` for distributions |
+| `credits_ledger` | the holder balance, append-only | `wallet`, `delta_usd_micros`, `kind` ∈ distribution/usage/adjustment/starter/market_escrow/market_buy/market_refund/purchase/expiry (the last two since migration 19), `ref`; unique `(wallet, ref)` for distributions |
 | `market_listings`, `market_fills` | credit marketplace book and trades | listing: `seller_wallet`, `amount_micros`, `remaining_micros`, `discount_bps`, `price_micros_per_usd`, `status` ∈ open/filled/cancelled/expired, `expires_at`; fill: `listing_id`, `buyer_wallet`, `credits_micros`, `paid_micros`, `fee_micros`, `fee_to_holders_micros`, `fee_to_treasury_micros`, `settlement` ∈ prepaid/external |
-| `prepaid_ledger`, `withdrawal_requests` | marketplace settlement (USD, off-chain during the beta) | `wallet`, `delta_micros`, `kind` ∈ topup/market_buy/market_sale/withdrawal/withdrawal_refund/adjustment, `ref`; withdrawal `amount_micros`, `status` ∈ pending/paid, `tx_ref` |
+| `prepaid_ledger`, `withdrawal_requests` | marketplace and direct-sale settlement (USD, off-chain during the beta) | `wallet`, `delta_micros`, `kind` ∈ topup/market_buy/market_sale/withdrawal/withdrawal_refund/adjustment/credit_purchase (the last since migration 19), `ref`; withdrawal `amount_micros`, `status` ∈ pending/paid, `tx_ref` |
+| `reserve_snapshots` | what the credit-pool wallet held each time the gateway read it, once per epoch (migration 19) | `source` ∈ chain/mock/unavailable, `asset` (stablecoin address), `held_usd_micros` (NULL when there is nothing to read), `stable_usd_micros`, `other_usd_micros` (ETH, not counted), `note`, `created_at` |
 | `pool_extra_micros` | money owed to the next holder pool from the marketplace fee and engine 2 | `source`, `usd_micros`, `ref` (unique), `epoch_start` (null until an epoch pays it) |
 | `usage_share_log` | audit of engine 2 per paid request | `source` ∈ network/upstream, `ref`, `wallet`, `model`, `billed_micros`, `cost_micros`, `margin_micros`, `holder_micros`, `treasury_micros` |
-| `starter_grants`, `starter_settings` | first-connect starter credits | `wallet` PK, `amount_micros`, `granted_at`, `ip_hash`; runtime enabled override as a key/value row |
+| `starter_grants`, `starter_settings` | starter credits granted at sign-in to wallets that hold `minHoldTokens` | `wallet` PK, `amount_micros`, `granted_at`, `ip_hash`; runtime enabled override as a key/value row |
 | `chain_settings` | Admin → Token overrides of `config/deploy.<network>.json` (migration 17) | `key` PK (token, feeVault, creditPool, treasury, stable, swapRouter, priceFeed, deployBlock, excludeWallets), JSON `value`, `updated_at`, `updated_by`; history in `admin_actions` (`chain-settings`) |
 | `verifications` | spot checks of node answers | `job_id`, `check_job_id`, `primary_node`, `check_node`, `score`, `verdict` ∈ ok/suspect/mismatch/inconclusive, `reasons`, token counts; no output text |
 | `epochs` | one row per processed hour | `epoch_start` PK, `epoch_end`, `fees_usd_micros`, `holder_pool_usd_micros`, `treasury_usd_micros`, `eligible_holders`, `fee_tx_id`, `status` ∈ complete/empty/failed |
@@ -248,7 +279,7 @@ all `*_at`/`ts` columns are unix seconds and `*_ms` are unix milliseconds.
 | `heartbeats` | 48 h of heartbeats, drives `uptimePct24h` | `node_id`, `ts`, `busy` |
 | `jobs` | network job queue + history | `job_id` PK, `model`, `tag`, `wallet`, `api_key_id`, `status` ∈ queued/running/done/failed/fallback, `payload` (JSON), `max_tokens`, `deadline_ms`, `node_id`, `exclude_node_id`, `parent_job_id`, `attempt`, token counts, `error`, `node_fault`, `created_ms`/`claimed_ms`/`first_chunk_ms`/`finished_ms` |
 | `node_rewards` | what nodes earned, append-only | `wallet`, `node_id`, `job_id` (unique), `kind` ∈ node_reward/payout, `tokens`, `usd_micros` |
-| `treasury_ledger` | treasury view for `/report` | `kind` ∈ fee_share/node_reward_accrual/buyback/ops/other, `usd_micros`, `ref` (unique per kind) |
+| `treasury_ledger` | treasury view for `/report` | `kind` ∈ fee_share/node_reward_accrual/buyback/ops/other/guest_chat/market_fee, `usd_micros`, `ref` (unique per kind) |
 | `holder_age` | hold-since cache for holding-age weighting | `wallet` PK, `hold_since`, `last_balance` |
 | `auth_nonces` | sign-in and node-registration challenges | `nonce` PK, `wallet`, `domain` (`<AUTH_DOMAIN>` or `<AUTH_DOMAIN>#node-register`), `expires_at`, `used_at` |
 | `node_link_codes` | one-time codes from `POST /nodes/link` | `code_hash` PK, `wallet`, `chain`, `expires_at`, `used_at`, `used_node_id` |
@@ -256,9 +287,14 @@ all `*_at`/`ts` columns are unix seconds and `*_ms` are unix milliseconds.
 | `errors_log` | 5xx and upstream failures | `route`, `status`, `code`, `message` |
 | `schema_migrations` | applied migration ids | `id`, `applied_at` |
 
-Derived, not stored: wallet balance (`SUM` over `credits_ledger`), node reputation (last 100
-scored `jobs` rows per node), `/stats` series (hourly buckets over `epochs`, `credits_ledger`,
-`requests_log`; cached `STATS_CACHE_MS`).
+Derived, not stored: wallet balance (`SUM` over `credits_ledger`), credit due to lapse and unused
+starter credit (sums over the same ledger, `expiry.ts`), reserve coverage (latest `reserve_snapshots`
+row against the ledger and open listings), node reputation (last 100 scored `jobs` rows per node),
+`/stats` series (hourly buckets over `epochs`, `credits_ledger`, `requests_log`; cached
+`STATS_CACHE_MS`).
+
+Migration 19 rebuilds `credits_ledger` and `prepaid_ledger` in place to widen their `kind` CHECK
+(SQLite cannot alter a CHECK; same pattern as migration 14) and creates `reserve_snapshots`.
 
 Hot state that is **not** in SQLite: `JobBroker.relays` (per-job event queues carrying chunks from
 the node's POSTs to the waiting client handler) and `JobBroker.waiters` (nodes parked in a
@@ -268,10 +304,10 @@ long-poll). Both are plain in-memory maps in the gateway process; see §8.
 
 | File | What it controls | Read when |
 | --- | --- | --- |
-| `tokenomics.json` | token name/ticker/chain (the chain value is a default; the team decides on launch day), `tradeFeeBps`, `holderShareBps`/`treasuryShareBps`, `minHoldTokens`, `epochSeconds`, `creditUsdPerFeeUsd`, `requestPricing` {`upstreamDiscountBps` \| `upstreamMarkupBps` (one non-zero at most), `networkPricePerMTokens`, `showSavings`}, `nodeRewards.usdPerMTokens`, `usageShare` {`enabled`, `holderBps`, `treasuryBps`, `sources`}, `marketplace` {`enabled`, `feeBps`, `feeToHoldersBps`, `minListingUsd`, `maxDiscountBps`, `listingTtlHours`}, `starterCredits`, `guest`, `beta`, `privacy`, `verification`, `points`, `stakeTiers`, `distribution.holdingAge`, `geoBlock` (ISO country codes, empty = none), `routing` {`preferNetwork`, `firstTokenTimeoutMs`, `stallTimeoutMs`, `jobTimeoutMs`, `defaultMaxTokens`, `minSuccessRate`, `reputationMinJobs`, queue settings}, `nodes` {`requireSignature`, `maxPerWallet`}, `meta` | gateway start (`createContext`); tests inject their own; the web app bundles the same file for every number it prints |
+| `tokenomics.json` | token name/ticker/chain (the chain value is a default; the team decides on launch day), `tradeFeeBps`, `holderShareBps`/`treasuryShareBps`, `minHoldTokens`, `epochSeconds`, `creditUsdPerFeeUsd`, `requestPricing` {`upstreamMarkupBps` \| `upstreamDiscountBps` (one non-zero at most), `upstreamFeeBps`, `networkPricePerMTokens`, `showSavings`}, `nodeRewards` {`usdPerMTokens`, `maxShareOfPriceBps`}, `usageShare` {`enabled`, `holderBps`, `treasuryBps`, `sources`}, `marketplace` {`enabled`, `feeBps`, `feeToHoldersBps`, `minListingUsd`, `maxDiscountBps`, `listingTtlHours`, `deposits`}, `starterCredits` {`enabled`, `amountUsd`, `maxWallets`, `requireMinHold`, `transferable`}, `creditExpiry` {`enabled`, `days`}, `directSales` {`enabled`, `minUsd`, `maxUsd`}, `reserve.minCoverageBps`, `guest`, `beta`, `privacy`, `verification`, `points`, `stakeTiers`, `distribution.holdingAge`, `geoBlock` (ISO country codes, empty = none), `routing` {`preferNetwork`, `firstTokenTimeoutMs`, `stallTimeoutMs`, `jobTimeoutMs`, `defaultMaxTokens`, `minSuccessRate`, `reputationMinJobs`, queue settings}, `nodes` {`requireSignature`, `maxPerWallet`}, `meta` | gateway start (`createContext`); tests inject their own; the web app bundles the same file for every number it prints |
 | `model-policy.json` | `allow` / `deny` patterns (trailing `*`), `networkModels` {client name → Ollama tag} | gateway start |
 | `model-prices.json` | the curated catalogue (`tier`, `vendor`, `displayName`) with OpenRouter list prices per 1M tokens: what `GET /v1/models` shows as `listPrice`, the fallback when the upstream does not report `usage.cost`, and the list price savings are measured against; refreshed by `node scripts/refresh-model-prices.mjs` | gateway start |
-| `deploy.<network>.json` | addresses the live adapters need (token, fee vault, treasury, `deployBlock`, staking; for `feeSource: "pons"` also the Pons contracts, `creditPool`, `quoteTokens`, `stable`, `sweepMode`, `priceFeed`). `deploy.robinhood.json` is a committed template whose nulls the Admin → Token panel fills (`chain_settings` wins) | adapter construction when `MESH_ADAPTER=chain|evm`; `tokenomics.deployNetwork` / `MESH_DEPLOY_NETWORK` picks the file |
+| `deploy.<network>.json` | addresses the live adapters need (token, fee vault, treasury, `deployBlock`, staking; for `feeSource: "pons"` also the Pons contracts, `creditPool`, `quoteTokens`, `stable`, `sweepMode` (`swap` in `deploy.robinhood.json`, `raw` in the testnet twin), `priceFeed`, `fixedEthUsd`, `slippageBps`). `deploy.robinhood.json` is a committed template whose nulls the Admin → Token panel fills (`chain_settings` wins) | adapter construction when `MESH_ADAPTER=chain|evm`; `tokenomics.deployNetwork` / `MESH_DEPLOY_NETWORK` picks the file |
 
 Env overrides a handful of config values for dev/demo (`NODES_REQUIRE_SIGNATURE`,
 `GEO_BLOCK_ENFORCE`); everything else about *economics* lives in JSON so it is diffable and
@@ -311,7 +347,7 @@ Gateway (`apps/gateway/src/env.ts`, zod-validated at boot; `.env.example` docume
 Chain adapter (`MESH_ADAPTER=chain`; read by `packages/chain-adapter` and `scripts/chain/*`):
 `MESH_DEPLOY_NETWORK`, `MESH_SOLANA_RPC_URL`, `MESH_SOLANA_KEYPAIR`, `MESH_HELIUS_API_KEY`,
 `MESH_JUPITER_API_KEY`, `MESH_JUPITER_BASE_URL`, `MESH_EVM_RPC_URL`, `MESH_EVM_CHAIN_ID`,
-`MESH_EVM_PRIVATE_KEY`, `MESH_FIXED_ETH_USD` (ETH/USD when no Chainlink feed is configured), `MESH_HOLD_SINCE_LOOKBACK_SEC`, `MESH_DRY_RUN`. Foundry
+`MESH_EVM_PRIVATE_KEY`, `MESH_FIXED_ETH_USD` (ETH/USD used only when no Chainlink feed is configured; it never stands in for a feed that is stale or unreadable), `MESH_HOLD_SINCE_LOOKBACK_SEC`, `MESH_DRY_RUN`. Foundry
 (`contracts/evm/foundry.toml`): `BASE_SEPOLIA_RPC_URL`, `ROBINHOOD_RPC_URL`,
 `ROBINHOOD_TESTNET_RPC_URL`, `BASESCAN_API_KEY`, `FOUNDRY_SOLC`.
 
@@ -345,7 +381,8 @@ Everything in the gateway assumes **exactly one process** per deployment:
    through gateway A and polls gateway B would claim a job whose client waits on A.
 3. **Epoch cron** — `node-cron` inside the process; two processes would both try to run the hour
    (the `UNIQUE(wallet, ref)` index and the `epochs` PK make the second a no-op, but it would still
-   call `collectFees()` twice).
+   call `collectFees()` twice). The housekeeping that follows each epoch (credit expiry, reserve
+   reading) runs in the same tick.
 4. **Rate limiters** — `@fastify/rate-limit` in-memory store and the `fixedWindowLimiter` used by
    `/auth` and `/nodes/register`; per-process counters.
 5. **`NonceStore`** is in SQLite (fine), but **`/stats` cache** and **AlertMonitor** state are

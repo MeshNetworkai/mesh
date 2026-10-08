@@ -1,14 +1,16 @@
 // Fake credit marketplace for VITE_MOCK=1. Module-scope state so listing, buying and withdrawing behave like the gateway.
 import { ApiError } from './api';
 import { mockAccount } from './mock';
-import type { Book, CreatedListing, Fill, FillResult, Listing, MarketConfig, MarketStats, MyMarket, OpenListings, PrepaidRow, Withdrawal } from './market';
+import { TOKENOMICS } from '../config';
+import type { Book, CreatedListing, CreditsConfig, Fill, FillResult, Listing, MarketConfig, MarketStats, MyMarket, OpenListings, PrepaidRow, Purchase, Withdrawal } from './market';
 import { quoteLocal } from './marketMath';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const now = () => Math.floor(Date.now() / 1000);
 const HOUR = 3_600;
 const DAY = 86_400;
-const CFG: MarketConfig = { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDC', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
+const EXPIRY_DAYS = TOKENOMICS.creditExpiry.enabled ? TOKENOMICS.creditExpiry.days : null;
+const CFG: MarketConfig = { starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDC', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
 const ME = mockAccount.wallet;
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -160,6 +162,10 @@ export const mockCreateListing = async (input: { amountUsd: number; discountBps:
   if (input.amountUsd < CFG.minListingUsd) throw new ApiError(400, `listings start at $${CFG.minListingUsd}`, 'below_minimum');
   if (input.discountBps > CFG.maxDiscountBps) throw new ApiError(400, `the deepest discount allowed is ${CFG.maxDiscountBps / 100}%`, 'discount_too_deep');
   if (mockAccount.balanceMicros < micros) throw new ApiError(402, `spendable balance is $${(mockAccount.balanceMicros / 1e6).toFixed(2)}; cannot list $${input.amountUsd.toFixed(2)}`, 'insufficient_credits');
+  const locked = CFG.starterTransferable === false ? mockAccount.nonTransferableMicros : 0;
+  if (mockAccount.balanceMicros - locked < micros) {
+    throw new ApiError(402, `$${(locked / 1e6).toFixed(2)} of this balance is starter credit, which can be spent on requests but not sold; $${(Math.max(0, mockAccount.balanceMicros - locked) / 1e6).toFixed(2)} can be listed`, 'non_transferable');
+  }
   const l = seedListing(ME, r6(input.amountUsd), input.discountBps, 0);
   mockAccount.adjust(-micros, 'market_escrow', `listing:${l.id}`);
   const q = quoteLocal(l.amountUsd, l.discountBps);
@@ -230,6 +236,8 @@ export const mockMyMarket = async (): Promise<MyMarket> => {
   return {
     wallet: ME,
     creditBalanceUsd: mockAccount.balanceMicros / 1e6,
+    nonTransferableUsd: CFG.starterTransferable === false ? mockAccount.nonTransferableMicros / 1e6 : 0,
+    listableUsd: Math.max(0, mockAccount.balanceMicros - (CFG.starterTransferable === false ? mockAccount.nonTransferableMicros : 0)) / 1e6,
     prepaid: { usd: prepaidBalance(), usdMicros: Math.round(prepaidBalance() * 1e6), ledger: prepaidLedger.slice(0, 20) },
     listings: listings.filter((l) => l.seller === ME).sort((a, b) => b.created_at - a.created_at),
     fills: { asBuyer: fills.filter((f) => f.buyer === ME), asSeller: fills.filter((f) => f.seller === ME) },
@@ -251,3 +259,31 @@ export const mockWithdraw = async (amountUsd: number): Promise<Withdrawal & { pr
 };
 
 export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: 'USDC', blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });
+
+// ---------- direct sales (POST /me/credits/buy) ----------
+
+const DIRECT = TOKENOMICS.directSales;
+const sold = { usd: 1_250, purchases: 37 };
+
+export const mockCreditsConfig = async (): Promise<CreditsConfig | null> => {
+  await sleep(150);
+  if (!DIRECT.enabled) return null;
+  return { enabled: true, pricePerUsd: 1, minUsd: DIRECT.minUsd, maxUsd: DIRECT.maxUsd, settlement: 'prepaid', deposits: CFG.deposits, creditExpiryDays: EXPIRY_DAYS, soldUsd: sold.usd, purchases: sold.purchases };
+};
+
+export const mockBuyCredits = async (amountUsd: number): Promise<Purchase> => {
+  await sleep(400);
+  const amt = r6(amountUsd);
+  if (!(amt > 0)) throw new ApiError(400, 'amount must be a positive number of USD', 'bad_amount');
+  if (amt < DIRECT.minUsd) throw new ApiError(400, `purchases start at $${DIRECT.minUsd}`, 'below_minimum');
+  if (amt > DIRECT.maxUsd) throw new ApiError(400, `one purchase is at most $${DIRECT.maxUsd}`, 'above_maximum');
+  const bal = prepaidBalance();
+  if (bal + 1e-9 < amt) throw new ApiError(402, `prepaid balance is $${bal.toFixed(2)}; this purchase costs $${amt.toFixed(2)}`, 'insufficient_prepaid');
+  const pid = id('buy');
+  prepaidAdd('credit_purchase', -amt, `purchase:${pid}`);
+  mockAccount.adjust(Math.round(amt * 1e6), 'purchase', `purchase:${pid}`);
+  sold.usd += amt;
+  sold.purchases += 1;
+  const at = now();
+  return { id: pid, creditsUsd: amt, paidUsd: amt, created_at: at, expires_at: EXPIRY_DAYS === null ? null : at + EXPIRY_DAYS * DAY, creditBalanceUsd: mockAccount.balanceMicros / 1e6, prepaidBalanceUsd: prepaidBalance() };
+};

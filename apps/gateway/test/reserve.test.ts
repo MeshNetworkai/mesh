@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Reservations, planSpend, reservePrice, walletHold } from '../src/reserve.js';
 import { SseUsageScanner, estimateUsage, type ChatOptions, type Upstream } from '../src/upstream.js';
-import { ADMIN, testConfig, testServer } from './helpers.js';
+import { ADMIN, grantCredit, testConfig, testServer } from './helpers.js';
 
 /**
  * Balance reservation (reserve.ts) and billing of streams that end without a usage chunk (relay.ts):
@@ -69,7 +69,7 @@ class NoUsageUpstream implements Upstream {
 async function boot(upstream: Upstream, creditUsd: number) {
   const { app } = await testServer({ holders: { alice: 10_000 }, context: { upstream } });
   apps.push(app);
-  await app.inject({ method: 'POST', url: '/admin/starter-credit', headers: ADMIN, payload: { wallet: 'alice', amountUsd: creditUsd } });
+  grantCredit(app.ctx.db, 'alice', creditUsd);
   const jwt = (await app.inject({ method: 'POST', url: '/admin/dev-login', headers: ADMIN, payload: { wallet: 'alice' } })).json().token as string;
   const key = (await app.inject({ method: 'POST', url: '/keys', headers: { authorization: `Bearer ${jwt}` } })).json().key as string;
   const balance = async () => (await app.inject({ method: 'GET', url: '/me', headers: { authorization: `Bearer ${jwt}` } })).json().balance.usdMicros as number;

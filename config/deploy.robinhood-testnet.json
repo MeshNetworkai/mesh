@@ -32,6 +32,7 @@
   "stableDecimals": 6,
   "swapRouter": null,
   "sweepMode": "raw",
+  "_comment_sweepMode": "Rehearsal only: the testnet has no stable route, so ETH is forwarded and valued at fixedEthUsd. Mainnet runs swap (config/deploy.robinhood.json).",
   "priceFeed": null,
   "fixedEthUsd": 3000,
   "_comment_fixedEthUsd": "Testnet ETH has no price; a fixed number makes the USD arithmetic visible.",

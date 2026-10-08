@@ -29,6 +29,12 @@ pnpm install && pnpm -r typecheck && pnpm -r build && pnpm test && pnpm --filter
   `meta.totalSupply`, `chain: "solana"` filled; Helius/RPC URL and the sweep signer keypair ready.
 - **[EVM]** token + fee receiver deployed, same `meta` fields with `chain: "evm"`; RPC URL and the
   sweep signer private key ready.
+- **[Robinhood Chain via Pons]** `PonsFeeVault` deployed and set as the Pons `creatorFeeRecipient`.
+  `config/deploy.robinhood.json` ships `sweepMode: "swap"`, so three things must exist **before the
+  first live sweep**: the settlement stablecoin (`setStable` on the vault, `stable` in Admin → Token),
+  a swap route for every fee asset (`setRoute` on the vault; ETH is `address(0)`), and a Chainlink
+  ETH/USD feed (`priceFeed`). The `creditPool` wallet is a separate address from the treasury. See the
+  chain pre-flight in §6.
 - If the chain adapter is **not** wired yet, you launch with `MESH_ADAPTER=mock` and feed fees by
   hand (`/admin/fake-fees`); say so in the launch thread (see the internal docs repo, risk paragraph).
 
@@ -123,6 +129,11 @@ SOLANA_SWEEP_KEYPAIR=/data/sweep.json        # mount it into the volume; chmod 6
 MESH_ADAPTER=chain
 EVM_RPC_URL=https://...
 EVM_SWEEP_PRIVATE_KEY=0x...
+# [Robinhood Chain via Pons] (variable names as read by packages/chain-adapter)
+MESH_ADAPTER=evm
+MESH_EVM_RPC_URL=https://...
+MESH_EVM_PRIVATE_KEY=0x...                   # the vault's sweeper
+# MESH_FIXED_ETH_USD is for the testnet rehearsal only: it is ignored whenever a priceFeed is configured
 # [not wired yet]
 MESH_ADAPTER=mock
 ```
@@ -219,6 +230,32 @@ Chain pre-flight:
 curl -s -X POST $G/admin/fake-fees -H "$A" -H "$J" -d '{"amountUsd":50}' | jq
 ```
 
+**[Robinhood Chain via Pons]** the stablecoin, the route and the price feed, before the first sweep:
+
+```sh
+# what the gateway will use (file + Admin → Token overrides); sweepMode must say "swap"
+curl -s $G/admin/chain -H "$A" | jq '.adapter.status, (.effective | {creditPool, treasury, stable, priceFeed, sweepMode, fixedEthUsd})'
+# the same check as Admin → Token → "Check on chain": anything that is not ok
+curl -s -X POST $G/admin/chain/check -H "$A" -H "$J" -d '{}' | jq -r '.ok, (.items[] | select(.status=="fail" or .status=="warn") | "\(.status)\t\(.check)\t\(.detail)")'
+# the check does not read the swap route or the age of the feed: look at both on chain
+cast call <VAULT> "stable()(address)" --rpc-url $MESH_EVM_RPC_URL
+cast call <VAULT> "routeOf(address)((uint8,address,uint24,bytes))" 0x0000000000000000000000000000000000000000 --rpc-url $MESH_EVM_RPC_URL   # kind 0 = no route
+cast call <PRICE_FEED> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url $MESH_EVM_RPC_URL                     # 4th value = updatedAt
+# the reserve line (after the first epoch on the live adapter: source "chain")
+curl -s $G/report | jq '.totals.reserve'
+```
+
+Expect from the check: `sweepMode "swap": fees settle in the stablecoin on chain` as `ok`, no
+`feeVault.stable` warning (`vault has no stable set` means `sweep()` will revert) and no `priceFeed`
+warning. A `sweepMode is "raw"` warning on mainnet is a no-go: raw is for the testnet rehearsal. What
+happens if one of the three is missing at the first sweep:
+
+| Missing | What the epoch does | Lost? |
+| --- | --- | --- |
+| stablecoin or route on the vault | `sweep()` reverts, the epoch fails (`failed_sweep`, §11a) | no: the fees stay in the vault and nothing is minted |
+| price feed (none configured, no `fixedEthUsd`) | ETH fees are left unswept, the epoch records $0 of fees for them | no: a later epoch sweeps them (§11h) |
+| price feed stale (answer older than an hour) or unreadable | the same: left unswept; logged as `sweep_skipped`, which raises `failed_sweep` | no (§11h) |
+
 Dry-run one epoch **before** announcing (idempotent per hour; a second call returns `skipped`):
 
 ```sh
@@ -241,13 +278,15 @@ Go only if **all** are true:
 | OpenRouter spend cap set; `.env` is `chmod 600`; secrets are random | ☐ |
 | Geo spoof test returned 200 (header stripped) or you are behind Cloudflare | ☐ |
 | **[Solana]/[EVM]** sweep signer funded, vault/receiver readable, snapshot non-empty | ☐ |
+| **[Pons]** `sweepMode` is `swap`; stablecoin and route set on the vault; price feed answered within the hour; `creditPool` ≠ treasury | ☐ |
 
 Any ☐ left → **no-go**; post "launch moved to <time>" rather than launching half-ready.
 
 ## 8. Launch (T0)
 
 ```sh
-# starter credits for the friends list (one audited batch)
+# starter credits for the friends list (one audited batch). Admin grants skip the holding check, but they are
+# starter credit like any other: spendable on requests, not listable on the marketplace, gone after 90 days.
 curl -s -X POST $G/admin/starter-credits -H "$A" -H "$J" \
   -d '{"note":"launch","items":[{"wallet":"<w1>","amountUsd":2},{"wallet":"<w2>","amountUsd":2}]}' | jq '.count, .totalUsd'
 # post the thread (the internal docs repo), send the node operator invite
@@ -263,7 +302,9 @@ Every hour (set a timer for :05):
 curl -s $G/epochs?limit=1 | jq -c '.epochs[0] | {epochStart, status, feesUsd, eligibleHolders}'
 curl -s $G/admin/overview -H "$A" | jq -c '.totals, (.recentErrors[:5] | map({code, created_at}))'
 curl -s $G/health/alerts -H "$A" | jq -c '[.alerts[] | select(.firing) | .key]'
+curl -s $G/report | jq -c '.totals.reserve | {source, heldUsd, requiredUsd, coverage, surplusUsd, short, asOf}'
 docker compose logs --since 1h gateway | grep -c -E '"level":(50|60)'      # error lines
+docker compose logs --since 1h gateway | grep '"msg":"housekeeping"' | tail -1   # expiredWallets, expiredUsd, reserve
 df -h /var/lib/docker | tail -1
 ```
 
@@ -271,8 +312,17 @@ Expect: one new epoch per hour (`complete`, or `empty` if no trades), `requests2
 `recentErrors` mostly `upstream_*` at a low rate, no alert firing, disk flat. The daily digest
 arrives at 09:00 Dubai with fees, credits, requests, nodes and errors for the last 24 h.
 
-Alert → playbook map: `missed_epoch`/`failed_sweep` → §11a; `upstream_error_rate` → §11b;
-`fleet_drop` → §11c; `db_size`/`disk_low` → §11e (grow the disk or prune `heartbeats`/`requests_log`).
+The reserve line: `source: "chain"` once the live adapter runs, `asOf` within the last hour,
+`coverage` ≥ 1 and `short: false`. `source: "mock"` means the gateway is still on the mock adapter
+(nothing is held, the alert is silent); `source: "unavailable"` means the last read of the pool
+wallet failed (`reserve_read_failed` in `recentErrors`), usually the RPC. An hour with trades whose
+epoch shows `feesUsd: 0` together with a `sweep_skipped` row in `recentErrors` (and a `failed_sweep`
+alert) is a stale price feed (§11h).
+
+Alert → playbook map: `missed_epoch`/`failed_sweep` → §11a (when its text says "left unswept" it is a
+stale price feed: §11h); `upstream_error_rate` → §11b;
+`fleet_drop` → §11c; `db_size`/`disk_low` → §11e (grow the disk or prune `heartbeats`/`requests_log`);
+`reserve_short` → §11g.
 
 Backup at T+2h and T+24h (then daily via cron):
 
@@ -328,6 +378,7 @@ below stay green. Space batches at least a few hours apart so a bad batch is att
 | `nodesOnline`, `servedByNetworkPercent` | both rising with the operator invites | share falls while requests rise → you admitted users faster than operators; send the operator invite (LAUNCH_COPY §4) before the next user batch |
 | `verification` (`mismatch`, `quarantinedNodes`, `docs/NODE_PROTOCOL.md` §10) | mismatches rare, quarantines explainable | a quarantine per batch → look at the nodes before inviting more operators; clear only after you understand why |
 | Credits: `creditsOutstandingUsd` vs. fees | outstanding grows slower than fees | starter credits dwarf earned ones → stop handing out starters |
+| Reserve: `totals.reserve` (`coverage`, `short`) | `coverage` ≥ 1 | `short: true` or `reserve_short` → §11g. Every starter grant and direct sale raises what is owed without adding to the pool |
 | Waitlist `waiting` | shrinking | growing faster than you admit for a week → bigger batches, or open fully |
 | Disk, DB size | flat | §11e |
 
@@ -372,7 +423,11 @@ is because of bad ledger writes, see §11e (DB restore) **first**, then roll the
    - RPC/indexer down → wait or switch `*_RPC_URL`, `docker compose up -d`.
    - **[Solana]** signer out of SOL / **[EVM]** signer out of gas → fund it (`solana transfer` /
      `cast send`), then re-run.
-   - Price source failure (USD valuation) → same; do not guess a price.
+   - **[Pons]** the swap reverted: no stablecoin or no route on the vault (set them, §6), or the pool
+     could not meet the slippage floor (`slippageBps`, 1 % below the feed price). The fees stay in the
+     vault; fix the cause and re-run.
+   - A stale or unreadable price feed does **not** fail the sweep: the fees are left unswept and the
+     epoch records nothing for them (§11h). Do not guess a price.
    - Cron silently not firing (`missed_epoch` without `failed_sweep`) → `docker compose restart gateway`,
      check `EPOCH_CRON` in `.env` and the container clock (`docker compose exec gateway date`).
 4. Re-run the missed hour explicitly (idempotent; `epochStart` = unix seconds of that hour):
@@ -397,7 +452,7 @@ is because of bad ledger writes, see §11e (DB restore) **first**, then roll the
 
 1. Confirm: `curl -s $G/nodes | jq '{online,total,models}'` and `jq '.nodes | map({nodeId, online, lastSeen})'` on the overview.
 2. Requests fall back to OpenRouter automatically (`x-mesh-route: openrouter`, `x-mesh-fallback`);
-   cost per request rises from `$0.08/M` to passthrough. No action needed for users.
+   cost per request rises from `$0.08/M` to the upstream price (list plus 6 %). No action needed for users.
 3. If **all** nodes dropped at once the gateway side is the suspect: a deploy that changed the node
    token hashing, `NODES_REQUIRE_SIGNATURE` flipped, or Caddy rejecting long-polls (`read_timeout`).
    Check `docker compose logs --since 30m gateway | grep -E 'unauthorized|node'`.
@@ -415,7 +470,8 @@ API key:
 2. Revoke: the holder clicks Revoke in the app (immediate), or you run
    `UPDATE api_keys SET revoked = 1 WHERE id = <id>;`. Requests using it fail with 401 at once.
 3. Damage: `SELECT COUNT(*), SUM(cost_usd_micros) FROM requests_log WHERE api_key_id = <id> AND created_at > <leak_ts>;`
-   Refund abused spend with `/admin/starter-credit` if it was not the holder's fault.
+   Refund abused spend with `/admin/starter-credit` if it was not the holder's fault (the refund is
+   starter credit: spendable, not listable on the marketplace, and it lapses after 90 days).
 
 Admin token:
 1. `sed -i "s/^ADMIN_TOKEN=.*/ADMIN_TOKEN=$(openssl rand -hex 24)/" .env && docker compose up -d`
@@ -465,6 +521,94 @@ docker compose start gateway && curl -s $G/health | jq .ok
 `docker compose up -d`. `invalid EPOCH_CRON` → fix the expression. `NotWiredError` → the adapter for
 `MESH_ADAPTER=chain` is not implemented in this build; use `mock` or deploy the build that has it.
 
+### 11g. Reserve short (`reserve_short`), and moving money in and out of the credit pool
+
+The alert means: at the last hourly reading the credit-pool wallet held less stablecoin than
+`reserve.minCoverageBps` (10000 = 100 %) of the credits owed. The message carries the numbers, for
+example `credit pool holds $60.00 against $100.00 of credits owed (60.0 %, min 100 %)`. It stays
+silent while there is nothing to compare (`source` `mock` or `unavailable`). Background:
+`docs/PRICING.md` §5.
+
+1. Read the block: `curl -s $G/report | jq .totals.reserve`. `requiredUsd` is every spendable credit
+   plus credit escrowed in open listings; `heldUsd` is the stablecoin in the pool wallet and nothing
+   else (ETH there is `otherUsd`, not counted); the shortfall is `−surplusUsd`.
+2. Find where the gap came from. The pool wallet receives the holder share of each sweep on its own
+   and nothing more; the gateway reads it and never moves money into it. Credit from any other
+   source raises `requiredUsd` with no stablecoin arriving:
+   - direct sales (`jq .totals.directSales`): the buyer's payment reached the deposit receiver
+     (`marketplace.deposits.receiver`) or the team off-chain, not the pool;
+   - starter credits and admin grants (`curl -s $G/admin/starter -H "$A" | jq '.granted, .grantedUsd'`,
+     and `starter-credit(s)` rows in `recentAdminActions`);
+   - the usage share and the marketplace fee share that joined an hourly pool
+     (`jq '.totals.usageShare.toHoldersUsd, .totals.marketplace'`);
+   - stablecoin taken out of the pool beyond the surplus;
+   - a `raw` sweep, which delivers the holder share as ETH (mainnet runs `swap`; expect this only in
+     the testnet rehearsal).
+3. Close it: send the shortfall in the settlement stablecoin to the `creditPool` address, direct-sale
+   proceeds from the deposit receiver and the rest from the treasury.
+4. Re-read without waiting for the hour: `POST /admin/run-epoch` runs the hourly chores even when
+   the epoch itself answers `skipped`; `.housekeeping.reserveHeldUsd` is the new reading. The alert
+   resolves at the next check after a covered reading.
+
+Two standing duties, alert or not:
+
+- **Direct-sale proceeds go to the pool.** A direct purchase mints credit against the buyer's prepaid
+  balance; the stablecoin behind that balance sits at the deposit receiver (or wherever the team took
+  the payment). Move it to the credit pool. `totals.directSales.soldUsd` is the running total that
+  must have been moved; reconcile it daily.
+- **Only the surplus leaves the pool.** `surplusUsd` is what the pool holds beyond the credits owed:
+  the backing of credit that has been spent or has lapsed. That amount, and no more, may be moved
+  from the pool to the treasury, and only when `source` is `chain` and `asOf` is recent. Check that
+  the next reading still shows `coverage` ≥ 1.
+
+### 11h. Price feed stale or down
+
+What it looks like: the epoch does not fail, it comes up short. `PonsEvmAdapter` takes ETH/USD from
+the Chainlink feed in `priceFeed` only; an answer older than an hour (`priceMaxAgeSec`, 3600 s) or a
+failed read gives no price, and the sweep leaves ETH fees where they are instead of minting credits
+against a guess. The hour's epoch records only what could be priced (usually `feesUsd: 0`, status
+`empty`) and there is no `epoch_failed` row. The chores that run after the epoch
+(`jobs/housekeeping.ts`) read the adapter's `lastSweep.warnings` and write one `errors_log` row with
+code `sweep_skipped` per asset left behind; the `failed_sweep` alert fires on it, the row shows under
+recent errors in `/admin/overview`, and `POST /admin/run-epoch` returns the text in
+`.housekeeping.sweepWarnings`. The fees keep accumulating in the Pons escrow (or in the vault if an
+earlier `pull()` claimed them). Stablecoin fees are swept as usual.
+
+Nothing is lost. The first epoch after the feed is fresh again sweeps the whole balance and mints
+credits for it to the holders of that hour, so the fees of the stale hours reach whoever holds then,
+not whoever held during them. Say so in the channel if it lasted more than an hour or two.
+
+1. Confirm: the escrow balance is growing while epochs show no fees
+   (`curl -s -X POST $G/admin/chain/check -H "$A" -H "$J" -d '{}' | jq -r '.items[] | select(.check=="escrow.balance") | .detail'`),
+   and the feed is old:
+   `cast call <PRICE_FEED> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url $MESH_EVM_RPC_URL`
+   (fourth value is `updatedAt`, unix seconds).
+2. If the RPC is the problem (the read fails), fix `MESH_EVM_RPC_URL` and restart.
+3. If the feed itself has stopped, point `priceFeed` at a live ETH/USD aggregator in Admin → Token and
+   restart. `fixedEthUsd` / `MESH_FIXED_ETH_USD` is not a way out: it is used only when no feed is
+   configured at all, and it exists for the testnet rehearsal.
+4. Nothing to replay. The empty epochs are recorded as they were; the fees arrive with a later epoch.
+
+### 11i. Credit expiry
+
+Every credit lapses `creditExpiry.days` (90) days after it landed, oldest spent first
+(`docs/PRICING.md` §6). The sweep runs after every epoch and writes one `expiry` row per wallet that
+had something to lapse; the request path, `GET /me`, `GET /me/market` and `POST /market/listings`
+lapse a single wallet on the spot.
+
+- What ran: the `housekeeping` log line each hour (`expiredWallets`, `expiredUsd`), `.housekeeping`
+  in the `POST /admin/run-epoch` response, and `curl -s $G/report | jq .totals.creditExpiry`.
+- First run after upgrading to this build: the rule applies to credit already in the ledger, so
+  anything that landed more than 90 days ago lapses in the first hourly sweep. Check
+  `sqlite3 mesh.db "SELECT MIN(created_at) FROM credits_ledger WHERE delta_usd_micros > 0;"` on a
+  backup copy before the deploy if the database is that old.
+- "My credits are gone": the wallet's `GET /me` ledger shows the `expiry` row (ref
+  `expiry:<cutoff timestamp>`), and `expiry.next` shows what lapses next. There is no un-expire. A
+  goodwill grant with `/admin/starter-credit` is starter credit with a fresh 90 days.
+- Lapsed credit lowers `requiredUsd`, so its backing appears as reserve surplus (§11g).
+- Switching it off is `creditExpiry.enabled: false` and a rebuild; credit that already lapsed stays
+  lapsed.
+
 ---
 
 ## Appendix: endpoints an operator uses
@@ -474,7 +618,10 @@ docker compose start gateway && curl -s $G/health | jq .ok
 | Liveness | `GET /health` |
 | Alert state | `GET /health/alerts` (admin) |
 | Everything on one screen | `GET /admin/overview` (admin) |
-| Force / replay an epoch | `POST /admin/run-epoch {epochStart?}` (admin) |
+| Force / replay an epoch (also runs credit expiry and the reserve reading) | `POST /admin/run-epoch {epochStart?}` (admin) → `.housekeeping` |
+| Credit reserve, lapsed credit, direct sales | `GET /report` → `totals.reserve`, `totals.creditExpiry`, `totals.directSales` |
+| Chain config and on-chain check | `GET /admin/chain`, `POST /admin/chain/check` (admin) |
+| Top up a prepaid balance (marketplace and direct purchases) | `POST /admin/prepaid {wallet, amountUsd, note, ref?}` (admin) |
 | Credits for friends | `POST /admin/starter-credits {items:[{wallet, amountUsd}], note}` (admin) |
 | Beta: mint invite codes | `POST /admin/invites {count, uses}` (admin) → `codes[]` |
 | Beta: admit next waitlist batch | `POST /admin/waitlist/admit {n?}` (admin) → `entries[] {email|wallet, code}` |

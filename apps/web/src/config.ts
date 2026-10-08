@@ -46,16 +46,39 @@ export const TOKENOMICS = {
   /** Flat USD per 1M total tokens billed when a Mesh node serves the request ("network credits"). */
   networkPricePerMTokens: Number(tokenomics.requestPricing?.networkPricePerMTokens ?? 0.02),
   showSavings: tokenomics.requestPricing?.showSavings !== false,
-  /** USD per 1M total tokens accrued to the node that served a request (paid from the treasury share). */
+  /** USD per 1M total tokens accrued to the node that served a request (the base rate, before any stake multiplier). */
   nodeRewardUsdPerMTokens: Number(tokenomics.nodeRewards?.usdPerMTokens ?? 0.06),
-  /** Upstream (frontier/fast) pricing: list minus this discount, or plus this markup, in bps (exactly one is non-zero). */
+  /** Most a job may pay its node, as a share of what the user was billed (bps). A stake multiplier lifts a reward up to here and no further. */
+  nodeRewardMaxShareBps: Number(tokenomics.nodeRewards?.maxShareOfPriceBps ?? 10_000),
+  /** Upstream (frontier/fast) pricing: list plus this markup, or minus this discount, in bps (exactly one is non-zero). */
   upstreamDiscountBps: Number(tokenomics.requestPricing?.upstreamDiscountBps ?? 0),
   upstreamMarkupBps: Number(tokenomics.requestPricing?.upstreamMarkupBps ?? 0),
-  /** Starter credits on first connect (docs/SWITCHING.md): what a wallet gets on its first-ever sign-in while the programme runs. */
+  /** What the upstream charges Mesh on top of list when it buys inference (bps). The markup covers this before anything is margin. */
+  upstreamFeeBps: Number(tokenomics.requestPricing?.upstreamFeeBps ?? 0),
+  /** Starter credits (docs/SWITCHING.md): what a wallet gets on its first-ever sign-in while the programme runs. */
   starterCredits: {
     enabled: tokenomics.starterCredits?.enabled === true,
     amountUsd: Number(tokenomics.starterCredits?.amountUsd ?? 0),
     maxWallets: Number(tokenomics.starterCredits?.maxWallets ?? 0),
+    /** True: only a wallet holding at least `minHoldTokens` receives it. */
+    requireMinHold: tokenomics.starterCredits?.requireMinHold === true,
+    /** False: it can be spent on requests but not listed on the marketplace. */
+    transferable: tokenomics.starterCredits?.transferable !== false,
+  },
+  /** Credit expiry (docs/PRICING.md §6): every credit lapses `days` after it landed, oldest spent first. */
+  creditExpiry: {
+    enabled: tokenomics.creditExpiry?.enabled === true,
+    days: Number(tokenomics.creditExpiry?.days ?? 90),
+  },
+  /** Direct sales (docs/PRICING.md §7): credits bought from Mesh at face value with the prepaid balance. */
+  directSales: {
+    enabled: tokenomics.directSales?.enabled === true,
+    minUsd: Number(tokenomics.directSales?.minUsd ?? 1),
+    maxUsd: Number(tokenomics.directSales?.maxUsd ?? 10_000),
+  },
+  /** Credit reserve (docs/PRICING.md §5): coverage below this is reported as short. */
+  reserve: {
+    minCoverageBps: Number(tokenomics.reserve?.minCoverageBps ?? 10_000),
   },
   /** Credit marketplace (docs/MARKETPLACE.md). The live values are also on GET /market/config. */
   marketplace: {
@@ -99,6 +122,34 @@ export const TOKENOMICS = {
 
 /** "2.5%" from bps, trimmed ("2.5%", "30%", "1.25%"). */
 export const pctFromBps = (bps: number): string => `${Number((bps / 100).toFixed(2))}%`;
+
+/**
+ * How upstream (frontier and fast) models are priced against the upstream's list, in words: "list plus 6%",
+ * "list minus 20%" or "list price". Pass the live values from GET /v1/models or GET /stats when they are in.
+ */
+export function frontierPriceWords(markupBps = TOKENOMICS.upstreamMarkupBps, discountBps = TOKENOMICS.upstreamDiscountBps): string {
+  if (discountBps > 0) return `list minus ${pctFromBps(discountBps)}`;
+  if (markupBps > 0) return `list plus ${pctFromBps(markupBps)}`;
+  return 'list price';
+}
+
+/** The same as a short tag for diagrams and pills: "list + 6%", "list − 20%", "list price". */
+export function frontierPriceTag(markupBps = TOKENOMICS.upstreamMarkupBps, discountBps = TOKENOMICS.upstreamDiscountBps): string {
+  if (discountBps > 0) return `list − ${pctFromBps(discountBps)}`;
+  if (markupBps > 0) return `list + ${pctFromBps(markupBps)}`;
+  return 'list price';
+}
+
+/** The most a node can earn per 1M tokens whatever its stake: the reward ceiling applied to the network price. */
+export const NODE_REWARD_CEILING_PER_M: number = Math.round(TOKENOMICS.networkPricePerMTokens * TOKENOMICS.nodeRewardMaxShareBps) / 10_000;
+
+/** What a node with stake multiplier `m` earns per 1M tokens: the base rate × m, held at the ceiling. */
+export function nodeRewardPerM(multiplier = 1): number {
+  return Math.min(Math.round(TOKENOMICS.nodeRewardUsdPerMTokens * multiplier * 1e6) / 1e6, NODE_REWARD_CEILING_PER_M);
+}
+
+/** Which way the fee sweep settles on the configured network: `swap` (to the stablecoin, on chain) or `raw`. */
+export const SWEEP_MODE: string = String(((DEPLOY_NETWORK === 'robinhood-testnet' ? deployRobinhoodTestnet : deployRobinhood) as { sweepMode?: string }).sweepMode ?? 'swap');
 
 export const MOCK = import.meta.env.VITE_MOCK === '1' || import.meta.env.VITE_MOCK === 'true';
 

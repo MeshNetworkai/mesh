@@ -123,7 +123,9 @@ function epochs(limit: number): EpochSummary[] {
 const mask = (prefix: string) => `${prefix}${'•'.repeat(24)}`;
 
 /** Flat network price (config/tokenomics.json requestPricing.networkPricePerMTokens), USD per 1M total tokens. */
-const NETWORK_USD_PER_M = 0.02;
+const NETWORK_USD_PER_M = TOKENOMICS.networkPricePerMTokens;
+/** Upstream billing as shipped: list × (1 + markup) or × (1 − discount). */
+const UPSTREAM_FACTOR = TOKENOMICS.upstreamDiscountBps > 0 ? 1 - TOKENOMICS.upstreamDiscountBps / 10_000 : 1 + TOKENOMICS.upstreamMarkupBps / 10_000;
 /** List prices (USD per 1M prompt / completion tokens) the upstream would charge; mirrors config/model-prices.json. */
 const LIST_PRICES: Record<string, { prompt: number; completion: number }> = {
   'meta-llama/llama-3.1-8b-instruct': { prompt: 0.05, completion: 0.08 },
@@ -136,6 +138,8 @@ const DEFAULT_LIST = { prompt: 1.0, completion: 3.0 };
 
 const state = {
   balanceMicros: 29_999_000,
+  /** What is left of the wallet's $2 starter grant: spendable, not sellable; requests use it first. */
+  starterLeftMicros: 1_240_000,
   // Network credits so far: ~1.9k requests, 71% served by nodes, list $18.40 vs $7.66 paid on those.
   savings: { savedMicros24h: 1_184_000, savedMicrosTotal: 10_742_000, networkListMicros: 18_402_000, networkSpendMicros: 7_660_000, networkRequests: 1_312, requests: 1_848 },
   keys: [
@@ -225,9 +229,16 @@ export const mockStats = async (): Promise<Stats> => {
     verificationEnabled: true,
     starterGrants: { enabled: mockStarter.enabled, amountUsd: TOKENOMICS.starterCredits.amountUsd, granted: mockStarter.grants.length, remaining: Math.max(0, TOKENOMICS.starterCredits.maxWallets - mockStarter.grants.length) },
     usageShareEnabled: MOCK_USAGE_SHARE_ON,
-    usageShareToHolders24hUsd: MOCK_USAGE_SHARE_ON ? 61.2 : 0,
+    usageShareToHolders24hUsd: MOCK_USAGE_SHARE_ON ? 0.05 : 0,
     upstreamDiscountBps: TOKENOMICS.upstreamDiscountBps,
     upstreamMarkupBps: TOKENOMICS.upstreamMarkupBps,
+    upstreamFeeBps: TOKENOMICS.upstreamFeeBps,
+    creditExpiryDays: TOKENOMICS.creditExpiry.enabled ? TOKENOMICS.creditExpiry.days : null,
+    directSalesEnabled: TOKENOMICS.directSales.enabled,
+    starterTransferable: TOKENOMICS.starterCredits.transferable,
+    starterRequiresHold: TOKENOMICS.starterCredits.requireMinHold,
+    nodeRewardMaxShareBps: TOKENOMICS.nodeRewardMaxShareBps,
+    reserve: mockReserve(),
     series24h: s,
     epochSeconds: EPOCH,
     upstream: 'mock',
@@ -383,8 +394,42 @@ export const mockMe = async (): Promise<Me> => {
     ledger: [...state.ledger].sort((a, b) => b.created_at - a.created_at).slice(0, 20),
     apiKeys: state.keys,
     savings: mockSavings(),
+    expiry: mockExpiry(),
+    nonTransferableUsd: TOKENOMICS.starterCredits.transferable ? 0 : Math.min(state.starterLeftMicros, Math.max(0, state.balanceMicros)) / 1e6,
   };
 };
+
+/** Mock expiry outlook: the starter remainder lapses first, a slice of early distributions within the month. */
+function mockExpiry() {
+  const cfg = TOKENOMICS.creditExpiry;
+  if (!cfg.enabled) return { enabled: false, days: cfg.days, next: null, within7dUsd: 0, within30dUsd: 0 };
+  const soon = Math.min(state.starterLeftMicros, Math.max(0, state.balanceMicros)) / 1e6;
+  const month = Math.min(state.balanceMicros / 1e6, soon + 6.4);
+  const at = Math.floor(now() / 3600) * 3600 + 5 * 86_400;
+  return { enabled: true, days: cfg.days, next: soon > 0 ? { usd: soon, at } : { usd: 6.4, at: at + 14 * 86_400 }, within7dUsd: soon, within30dUsd: Math.round(month * 1e6) / 1e6 };
+}
+
+/** Mock reserve: a live token whose credit pool covers the credits owed with a little to spare. */
+function mockReserve(spendableUsd = 22_887.27) {
+  const escrowed = 1_526; // the mock book's open depth
+  const requiredUsd = Math.round((spendableUsd + escrowed) * 100) / 100;
+  const heldUsd = Math.round(requiredUsd * 1.0523 * 100) / 100;
+  return {
+    source: 'chain' as const,
+    asset: '0x5fbd…USDG',
+    heldUsd,
+    otherUsd: 0,
+    creditsSpendableUsd: spendableUsd,
+    creditsInEscrowUsd: escrowed,
+    requiredUsd,
+    coverage: Math.round((heldUsd / requiredUsd) * 10_000) / 10_000,
+    surplusUsd: Math.round((heldUsd - requiredUsd) * 100) / 100,
+    short: false,
+    minCoverageBps: TOKENOMICS.reserve.minCoverageBps,
+    note: null,
+    asOf: Math.floor(now() / 3600) * 3600 + 40,
+  };
+}
 
 function mockSavings() {
   const sv = state.savings;
@@ -505,11 +550,13 @@ export async function* mockChatStream(
   const list = LIST_PRICES[model] ?? DEFAULT_LIST;
   const listMicros = Math.round(prompt_tokens * list.prompt + completion_tokens * list.completion);
   if (privacy === 'upstream_zdr') {
-    // Skipped the network: list price, no savings, no node.
-    const cost = listMicros / 1e6;
-    state.balanceMicros -= listMicros;
+    // Skipped the network: the upstream price (list plus the markup), no savings, no node.
+    const billedMicros = Math.round(listMicros * UPSTREAM_FACTOR);
+    const cost = billedMicros / 1e6;
+    state.balanceMicros -= billedMicros;
+    state.starterLeftMicros = Math.max(0, state.starterLeftMicros - billedMicros);
     state.savings.requests += 1;
-    state.ledger.unshift({ id: 9000 + state.ledger.length, kind: 'usage', deltaUsd: -cost, deltaUsdMicros: -listMicros, ref: `req:${1300 + state.ledger.length} · ${model}`, created_at: now() });
+    state.ledger.unshift({ id: 9000 + state.ledger.length, kind: 'usage', deltaUsd: -cost, deltaUsdMicros: -billedMicros, ref: `req:${1300 + state.ledger.length} · ${model}`, created_at: now() });
     yield { usage: { prompt_tokens, completion_tokens, total_tokens: total, cost }, model, mesh: { route: 'openrouter', privacy: 'upstream_zdr', servedBy: 'upstream (ZDR)' } };
     return;
   }
@@ -518,6 +565,7 @@ export async function* mockChatStream(
   const savedMicros = Math.max(0, listMicros - costMicros);
   const cost = costMicros / 1e6;
   state.balanceMicros -= costMicros;
+  state.starterLeftMicros = Math.max(0, state.starterLeftMicros - costMicros);
   state.savings.savedMicros24h += savedMicros;
   state.savings.savedMicrosTotal += savedMicros;
   state.savings.networkListMicros += listMicros;
@@ -767,6 +815,10 @@ const REPORT_METHOD = {
   treasury:
     'treasuryBalanceUsd = treasury share received − node rewards accrued − buybacks − ops, from the treasury ledger. Node rewards accrue in USD when a Mesh node completes a job and are paid from the treasury share.',
   network: 'servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period (requests_log).',
+  reserve:
+    "Credit reserve: the holder share of every sweep is swapped to the stablecoin on chain and held in the credit-pool wallet, apart from the treasury. heldUsd is that wallet's stablecoin balance at the last hourly reading; requiredUsd is every credit a wallet could spend plus credit escrowed in open listings; coverage = heldUsd ÷ requiredUsd.",
+  creditExpiry: 'Credit expiry: every credit lapses creditExpiry.days after it landed, oldest first; expiredUsd is the total debited so far. Lapsed credit lowers requiredUsd, so the reserve that backed it shows up as surplus.',
+  directSales: 'Direct sales: credits bought from Mesh at face value with a prepaid balance. The payment backs the credit 1:1; it is not treasury income until the credit is spent and leaves a margin.',
 };
 
 export const mockReport = async (): Promise<Report> => {
@@ -794,16 +846,21 @@ export const mockReport = async (): Promise<Report> => {
         enabled: MOCK_USAGE_SHARE_ON,
         holderBps: 3000,
         treasuryBps: 7000,
-        marginUsd: MOCK_USAGE_SHARE_ON ? 2_140.4 : 0,
-        toHoldersUsd: MOCK_USAGE_SHARE_ON ? 642.12 : 0,
-        toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 1_498.28 : 0,
+        // Sized to the shipped prices: about $0.00003 of margin per network request (1,500 tokens at $0.02/M) and
+        // 0.5% of list on an upstream request, so the usage share is small next to the fee credits above.
+        marginUsd: MOCK_USAGE_SHARE_ON ? 4.99 : 0,
+        toHoldersUsd: MOCK_USAGE_SHARE_ON ? 1.5 : 0,
+        toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 3.49 : 0,
         requests: MOCK_USAGE_SHARE_ON ? 184_200 : 0,
         bySource: {
-          network: { marginUsd: MOCK_USAGE_SHARE_ON ? 1_610.4 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 483.12 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 1_127.28 : 0, requests: MOCK_USAGE_SHARE_ON ? 131_000 : 0 },
-          upstream: { marginUsd: MOCK_USAGE_SHARE_ON ? 530 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 159 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 371 : 0, requests: MOCK_USAGE_SHARE_ON ? 53_200 : 0 },
+          network: { marginUsd: MOCK_USAGE_SHARE_ON ? 3.93 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 1.18 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 2.75 : 0, requests: MOCK_USAGE_SHARE_ON ? 131_000 : 0 },
+          upstream: { marginUsd: MOCK_USAGE_SHARE_ON ? 1.06 : 0, toHoldersUsd: MOCK_USAGE_SHARE_ON ? 0.32 : 0, toTreasuryUsd: MOCK_USAGE_SHARE_ON ? 0.74 : 0, requests: MOCK_USAGE_SHARE_ON ? 53_200 : 0 },
           marketplaceFee: { toHoldersUsd: 61.18, counted: true },
         },
       },
+      reserve: mockReserve(round2(totals.creditsOutUsd + totals.starterCreditsUsd - totals.creditsUsedUsd)),
+      creditExpiry: { enabled: TOKENOMICS.creditExpiry.enabled, days: TOKENOMICS.creditExpiry.days, expiredUsd: TOKENOMICS.creditExpiry.enabled ? 1_184.3 : 0, wallets: TOKENOMICS.creditExpiry.enabled ? 96 : 0, last30dUsd: TOKENOMICS.creditExpiry.enabled ? 412.75 : 0 },
+      directSales: { enabled: TOKENOMICS.directSales.enabled, soldUsd: TOKENOMICS.directSales.enabled ? 1_250 : 0, purchases: TOKENOMICS.directSales.enabled ? 37 : 0, wallets: TOKENOMICS.directSales.enabled ? 21 : 0, last30dUsd: TOKENOMICS.directSales.enabled ? 640 : 0 },
     },
     last7d,
     last30d,
@@ -1396,6 +1453,10 @@ export const mockAccount = {
   get balanceMicros() {
     return state.balanceMicros;
   },
+  /** Unused starter credit: spendable on requests, not sellable (GET /me nonTransferableUsd). */
+  get nonTransferableMicros() {
+    return Math.min(state.starterLeftMicros, Math.max(0, state.balanceMicros));
+  },
   adjust(deltaMicros: number, kind: string, ref: string) {
     state.balanceMicros += deltaMicros;
     state.ledger.push({ id: 9000 + state.ledger.length, kind, deltaUsd: deltaMicros / 1e6, deltaUsdMicros: deltaMicros, ref, created_at: now() });
@@ -1425,13 +1486,14 @@ const MOCK_CATALOGUE: MockCatalogueRow[] = [
   ['meta-llama/llama-3.3-70b-instruct', 'Llama 3.3 70B', 'Meta', 'open', 0.1, 0.32, 'upstream', 0],
   ['qwen/qwen-2.5-72b-instruct', 'Qwen 2.5 72B', 'Qwen', 'open', 0.12, 0.39, 'upstream', 0],
 ];
-/** Mock gateway runs a 20% upstream discount so the picker shows "mesh price vs list" on frontier rows too. */
-const MOCK_UPSTREAM_DISCOUNT_BPS = 2000;
+/** The mock gateway prices upstream models as config/tokenomics.json ships them (list plus the markup). */
+const MOCK_UPSTREAM_DISCOUNT_BPS = TOKENOMICS.upstreamDiscountBps;
+const MOCK_UPSTREAM_MARKUP_BPS = TOKENOMICS.upstreamMarkupBps;
 const MOCK_GUEST_TIERS: Array<'frontier' | 'fast' | 'open'> = ['open', 'fast'];
 
 export const mockCatalogue = async (guest = false): Promise<Catalogue> => {
   await sleep(200);
-  const disc = 1 - MOCK_UPSTREAM_DISCOUNT_BPS / 10_000;
+  const disc = UPSTREAM_FACTOR;
   const rows: CatalogueModel[] = MOCK_CATALOGUE.map(([id, displayName, vendor, tier, prompt, completion, served, online]) => {
     const network = served !== 'upstream';
     return {
@@ -1456,7 +1518,7 @@ export const mockCatalogue = async (guest = false): Promise<Catalogue> => {
   return {
     object: 'list',
     data: guest ? rows.filter((r) => r.guestAllowed) : rows,
-    pricing: { networkPricePerMTokens: NETWORK_USD_PER_M, upstreamDiscountBps: MOCK_UPSTREAM_DISCOUNT_BPS, upstreamMarkupBps: 0, guestTiers: MOCK_GUEST_TIERS },
+    pricing: { networkPricePerMTokens: NETWORK_USD_PER_M, upstreamDiscountBps: MOCK_UPSTREAM_DISCOUNT_BPS, upstreamMarkupBps: MOCK_UPSTREAM_MARKUP_BPS, guestTiers: MOCK_GUEST_TIERS },
   };
 };
 

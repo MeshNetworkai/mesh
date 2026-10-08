@@ -17,6 +17,7 @@ node                                        gateway                             
  │ POST .../jobs/:jobId/chunk {seq, delta} ───►│───── SSE data: {delta} ────────────────►│
  │ POST .../jobs/:jobId/done {tokens…} ───────►│───── SSE final chunk {usage, mesh} ────►│
  │                                             │  bill user $0.08/M · credit node $0.06/M│
+ │                                             │  a stake lifts it to $0.072/M at most   │
 ```
 
 ## 1. Registration
@@ -258,7 +259,11 @@ The gateway relays your chunks as standard OpenAI SSE (`chat.completion.chunk` w
 `privacy` is the tier the reply was served under (`trusted | network | upstream_zdr`) and `servedBy`
 the label for it (`trusted node`, `network node`, `upstream (ZDR)`, `upstream`). Upstream-served
 replies (fallback or `upstream_zdr`) carry `"mesh": {"route": "openrouter", "privacy": …, "servedBy": …}`
-in a final chunk the gateway adds before `[DONE]` (it repeats the upstream's `usage`).
+in a final chunk the gateway adds before `[DONE]` (it repeats the upstream's `usage`). When an
+upstream markup or discount is configured and the caller pays, `usage.cost` in that chunk, in the
+upstream's own usage chunk and in a non-streamed body is rewritten to what the wallet was charged, and
+the upstream's list figure is added as `mesh.listCostUsd`; at list, and for guests, the upstream's
+usage is passed through untouched.
 
 Response headers: `x-mesh-route: node:<nodeId>` (or `openrouter`/`mock`), `x-mesh-privacy`,
 `x-mesh-served-by` and, after a fallback, `x-mesh-fallback: <reason>` (`no_trusted_node` when a
@@ -297,6 +302,15 @@ failures to `scored`; a quarantined node is excluded regardless of its rate.
   are USD-denominated accruals; on-chain payout from the treasury share is a later step
   (`kind='payout'` rows will offset them). Failed / fallback jobs earn nothing. A job whose spot check
   (§10) came back `mismatch` has its row set to `status='withheld'` and earns nothing either.
+- **Stake multiplier and ceiling**: the reward wallet's stake tier multiplies the base reward
+  (`stakeTiers[].multiplier`: 1×, 1.5×, 2×; `docs/STAKING.md`), but a job never pays its node more
+  than `nodeRewards.maxShareOfPriceBps` (9000 = 90 %) of what the user was billed for it:
+  `reward = min(floor(price × 0.9), round(base × multiplier))` in micro-USD. At the shipped prices that
+  is $0.06 per 1M tokens unstaked (75 % of the price) and $0.072 for silver and gold alike, so a
+  stake changes routing priority and trusted status more than pay.
+- **What the job leaves**: the user price minus the reward, $0.02 per 1M tokens unstaked and $0.008 at
+  the ceiling. `usageShare.holderBps` (30 %) of it joins the next hourly holder pool, the rest stays
+  with the treasury (`docs/PRICING.md` §3).
 
 ## 8. Stats
 
@@ -309,7 +323,7 @@ failures to `scored`; a quarantined node is excluded regardless of its rate.
   `servedByNetworkPercent`. A node counts as `busy` only when every slot is taken (or it pinned itself). No wallets or tokens.
 - Verification counters per node: §10.
 - `GET /stats` (public) — `servedByNetworkPercent` (24 h, real), `servedByNetwork24h`, `jobs24h`,
-  `networkTokens24h`, `networkPricePerMTokens`, `nodeRewardUsdPerMTokens`.
+  `networkTokens24h`, `networkPricePerMTokens`, `nodeRewardUsdPerMTokens`, `nodeRewardMaxShareBps`.
 
 ## 10. Spot-check verification
 

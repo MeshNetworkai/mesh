@@ -1,10 +1,15 @@
 # Robinhood Chain testnet rehearsal (Pons fee path)
 
-Goal: prove the mainnet shape — Pons escrow → `PonsFeeVault.pull()` → `sweep`/`sweepRaw` → credit pool +
+Goal: prove the mainnet shape — Pons escrow → `PonsFeeVault.pull()` → sweep → credit pool +
 treasury → gateway epoch — on Robinhood Chain **testnet** (chainId 46630) before the dev launches on Pons.
 Pons itself is not deployed on the testnet, so a `MockPonsEscrow` with the same selectors stands in for
 the Fee Escrow, and a plain `MockERC20` "MESH-test" stands in for the Pons-minted token. The vault and
 the adapter are the real ones.
+
+One difference from mainnet is deliberate: the rehearsal sweeps in `raw` mode (`sweepRaw()`, ETH valued
+at a fixed price) because the testnet has no stablecoin route. Mainnet runs `sweepMode: "swap"` from the
+first sweep (`config/deploy.robinhood.json`), so fees settle in the stablecoin and the credit pool holds
+dollars; `raw` exists for this rehearsal only (`docs/PRICING.md` §5).
 
 Script: `scripts/chain/robinhood-testnet-rehearsal.ts` (≈ 10 transactions, well under 0.01 testnet ETH).
 
@@ -57,8 +62,10 @@ What it does, in order (each step prints explorer links):
    Prints balances before/after and `pendingFeesUsd` going 3 → 0.
 5. **Holder balances** over the last 10 minutes: alice appears time-weighted, curve / vault / creditPool /
    treasury do not.
-6. **Check report** — the same `checkPonsConfig` the admin panel runs; expect `ok=true` with one `warn`
-   (fixed price, no Chainlink feed).
+6. **Check report** — the same `checkPonsConfig` the admin panel runs; expect `ok=true` with three
+   `warn` lines, all of them the rehearsal's shortcuts: `feeVault.stable` (the vault has no stablecoin
+   set), `priceFeed` (fixed price, no Chainlink feed) and `sweepMode` (`raw`: the holder share reaches
+   the credit pool as ETH). None of the three may appear on mainnet.
 7. Writes the addresses into `config/deploy.robinhood-testnet.json` (skip with `--no-write`).
 
 Expected output shape (from a local anvil run with the same script):
@@ -91,11 +98,25 @@ curl -s -X POST -H "x-admin-token: $ADMIN_TOKEN" localhost:8787/admin/run-epoch 
 Or paste the printed addresses into **Admin → Token** instead of using the JSON the script wrote, press
 **Check on chain**, and confirm the same report appears in the UI — that is exactly the mainnet motion.
 
+The run-epoch response also carries `housekeeping` (credit expiry and the reserve reading). Against the
+rehearsal `curl -s localhost:8787/report | jq .totals.reserve` shows `source: "chain"`, `heldUsd: 0`,
+the pool's ETH under `otherUsd` and the note `no settlement stablecoin configured`: only the stablecoin
+counts as held reserve, so once credits have been distributed `short` is `true` and the
+`reserve_short` alert fires (in the log, unless Telegram is configured). That is the expected picture
+of a raw sweep and the reason mainnet does not run one.
+
 ## 4. What this does NOT rehearse
 
 - The real Pons escrow's selectors (step 0 covers that by inspection) and its event shapes.
-- A `swap` route: the testnet has no USDG/USDC pool we know of. The swap path is covered by the Foundry tests
-  (`PonsFeeVault.t.sol`: V3Single, V3Path, Adapter routes against `MockSwapRouter`) and the anvil test
-  (`packages/chain-adapter/test/pons.anvil.test.ts`). On mainnet start in `raw` mode and switch to `swap`
-  once a stable route exists (`setStable` + `setRoute` on the vault, `sweepMode: "swap"` in the JSON).
-- Chainlink pricing: no feed on the testnet; `fixedEthUsd` is used. Same fallback exists on mainnet.
+- A `swap` route, which is what mainnet runs: the testnet has no USDG/USDC pool we know of. The swap path is
+  covered by the Foundry tests (`PonsFeeVault.t.sol`: V3Single, V3Path, Adapter routes against
+  `MockSwapRouter`) and the anvil test (`packages/chain-adapter/test/pons.anvil.test.ts`). Mainnet does not
+  start in `raw` mode: `config/deploy.robinhood.json` ships `sweepMode: "swap"`, so the stablecoin and the
+  route have to be on the vault (`setStable` + `setRoute`) and `stable` in the config before the first
+  sweep (`docs/RUNBOOK.md` §6). Without them `sweep()` reverts and the fees wait in the vault.
+- Chainlink pricing: no feed on the testnet, so `fixedEthUsd` is used. On mainnet a feed is configured and
+  is then the only price source: `fixedEthUsd` / `MESH_FIXED_ETH_USD` applies only when no feed is
+  configured at all, and a stale or unreadable feed leaves ETH fees unswept until it is fresh
+  (`docs/RUNBOOK.md` §11h). The stale-feed cases are covered offline in
+  `packages/chain-adapter/test/pons.test.ts`.
+- A covered reserve: see above; the rehearsal's pool holds ETH, which the reserve report does not count.

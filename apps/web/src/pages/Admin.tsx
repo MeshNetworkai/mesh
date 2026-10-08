@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Notice, Skeleton, Spinner, Tile } from '../components/ui';
-import { MOCK } from '../config';
+import { MOCK, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
 import { ApiError, COOKIE_SESSION } from '../lib/api';
 import { fmtAgo, fmtDateTime, fmtInt, fmtUsd, shortAddr } from '../lib/format';
@@ -211,6 +211,8 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
           <span className="eyebrow">Starter credits · batch</span>
           <p className="hint">
             One <span className="mono">wallet,amount</span> per line (USD, max $10,000 each, 500 lines). All or nothing; one audit row.
+            {TOKENOMICS.starterCredits.transferable ? '' : ' Starter credit can be spent but not listed on the market.'}
+            {TOKENOMICS.creditExpiry.enabled ? ` It lapses after ${TOKENOMICS.creditExpiry.days} days like any other credit.` : ''}
           </p>
           <textarea
             className="input mono"
@@ -600,11 +602,11 @@ function StarterPanel({ token, onUnauthorized, onChanged }: { token: string; onU
 const CHAIN_FIELD_HELP: Record<ChainField, { label: string; hint: string; placeholder?: string }> = {
   token: { label: 'Token', hint: 'The $MESH ERC-20 the Pons factory minted (from the dev: TokenLaunched event).', placeholder: '0x…' },
   feeVault: { label: 'Fee vault (PonsFeeVault)', hint: 'Our PonsFeeVault — the Pons creatorFeeRecipient.', placeholder: '0x…' },
-  creditPool: { label: 'Credit pool wallet', hint: 'Gateway pool wallet; the holder share of every sweep lands here.', placeholder: '0x…' },
+  creditPool: { label: 'Credit pool wallet', hint: 'The credit reserve: the holder share of every sweep lands here in the stable, apart from the treasury. Read each epoch and published on /stats.', placeholder: '0x…' },
   treasury: { label: 'Treasury', hint: 'Treasury multisig; the treasury share of every sweep.', placeholder: '0x…' },
-  stable: { label: 'Stable (USDG / USDC)', hint: 'Optional until a stable route exists on Robinhood Chain.', placeholder: '0x… (optional)' },
+  stable: { label: 'Stable (USDG / USDC)', hint: 'What the sweep settles in. Needed before the first live sweep: with sweepMode swap and no stable the sweep reverts and the fees wait in the vault.', placeholder: '0x…' },
   swapRouter: { label: 'Swap router', hint: 'Uniswap v3 SwapRouter02, informative (the route is set on the vault).', placeholder: '0x… (optional)' },
-  priceFeed: { label: 'ETH/USD price feed', hint: 'Chainlink aggregator; blank → fixedEthUsd from the JSON / env.', placeholder: '0x… (optional)' },
+  priceFeed: { label: 'ETH/USD price feed', hint: 'Chainlink aggregator; sets the slippage floor of each swap. Stale or unreadable → ETH fees stay unswept until it is fresh. Blank → fixedEthUsd from the JSON / env.', placeholder: '0x…' },
   deployBlock: { label: 'Deploy block', hint: 'Block of the launch tx; holder scans start here.', placeholder: 'e.g. 1842930' },
   excludeWallets: { label: 'Exclude wallets', hint: 'Bonding curve, pool, locker… one per line or comma-separated. Merged with the JSON list.' },
 };

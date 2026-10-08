@@ -6,6 +6,7 @@ import { admit, admitOldest, betaView, createInviteCodes, listWaitlist, waitlist
 import { adminAudited, adminHeaderToken, authViaOf, clearAdminCookies, markAdminAudited, requireAdmin, setAdminCookies, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec, recordAdminAction } from '../db.js';
 import { runEpoch } from '../jobs/distribute.js';
+import { runHousekeeping } from '../jobs/housekeeping.js';
 import { addLedgerEntry, balanceMicros, ensureWallet, treasuryBalanceMicros } from '../ledger.js';
 import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
@@ -89,9 +90,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const parsed = RunEpochBody.safeParse(req.body ?? undefined);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const result = await runEpoch(ctx, parsed.data?.epochStart);
-    audit(req, 'run-epoch', { epochStart: result.epochStart, status: result.status, feesUsdMicros: result.feesUsdMicros, holders: result.eligibleHolders });
+    // Same chores the cron runs after an epoch: lapse credit past its window, read the reserve.
+    const chores = await runHousekeeping(ctx);
+    audit(req, 'run-epoch', { epochStart: result.epochStart, status: result.status, feesUsdMicros: result.feesUsdMicros, holders: result.eligibleHolders, expiredUsdMicros: chores.expiredUsdMicros });
     return {
       ...result,
+      housekeeping: { expiredWallets: chores.expiredWallets, expiredUsd: microsToUsd(chores.expiredUsdMicros), reserve: chores.reserveSource, reserveHeldUsd: chores.reserveHeldUsdMicros === null ? null : microsToUsd(chores.reserveHeldUsdMicros), sweepWarnings: chores.sweepWarnings },
       feesUsd: microsToUsd(result.feesUsdMicros),
       holderPoolUsd: microsToUsd(result.holderPoolUsdMicros),
       treasuryUsd: microsToUsd(result.treasuryUsdMicros),

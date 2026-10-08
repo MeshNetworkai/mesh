@@ -67,6 +67,31 @@ export function hasExtras(a: ChainAdapter): a is ChainAdapter & ChainAdapterExtr
   return typeof (a as Partial<ChainAdapterExtras>).pendingFeesUsd === 'function';
 }
 
+/**
+ * What the credit-pool wallet holds right now (the reserve behind outstanding credits). `stableUsd` is the
+ * stablecoin the sweep settles in, at $1; `otherUsd` is anything else found there (ETH left from a raw
+ * sweep) valued at the current price, or null when it cannot be priced.
+ */
+export interface ReserveReading {
+  /** The credit-pool wallet that was read. */
+  wallet: string;
+  /** Address of the settlement stablecoin, or null when none is configured yet. */
+  stable: string | null;
+  stableUsd: number;
+  otherUsd: number | null;
+  /** Whole units of the non-stable asset held (ETH), for the report. */
+  otherUnits: number;
+}
+
+/** Adapters that can read the credit-pool wallet expose it (PonsEvmAdapter); the mock has no reserve to read. */
+export interface ChainAdapterReserve {
+  reserve(): Promise<ReserveReading>;
+}
+
+export function hasReserve(a: ChainAdapter): a is ChainAdapter & ChainAdapterReserve {
+  return typeof (a as Partial<ChainAdapterReserve>).reserve === 'function';
+}
+
 /** Result of a sweep with the breakdown live adapters can report (superset of collectFees()). */
 export interface SweepDetail {
   amountUsd: number;

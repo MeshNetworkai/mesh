@@ -1,11 +1,11 @@
-import { catalogueEntries, loadModelPrices, meshPricePerM, parseModelPolicy, parseTokenomics, upstreamBilledMicros, type TokenomicsConfig } from '@mesh/config';
+import { catalogueEntries, loadModelPrices, meshPricePerM, parseModelPolicy, parseTokenomics, upstreamBilledMicros, upstreamCostMicros, type TokenomicsConfig } from '@mesh/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyOpenRouterPrices, formatPrices, perMillion } from '../../../scripts/refresh-model-prices.mjs';
 import { catalogueModels, guestModelAllowed } from '../src/catalogue.js';
 import { MOCK_COST_USD } from '../src/upstream.js';
 import { MockAdapter } from '@mesh/chain-adapter';
 import { createContext } from '../src/server.js';
-import { ADMIN, TEST_ENV, memDb, testConfig, testServer } from './helpers.js';
+import { ADMIN, SHIPPED_PRICING, TEST_ENV, memDb, testConfig, testServer } from './helpers.js';
 
 type App = Awaited<ReturnType<typeof testServer>>['app'];
 const apps: App[] = [];
@@ -60,8 +60,16 @@ describe('model catalogue: config', () => {
     expect(prices.models['anthropic/claude-sonnet-4.5']).toMatchObject({ promptUsdPerM: 3, completionUsdPerM: 15, tier: 'frontier' });
   });
 
-  it('requestPricing: markup and discount are exclusive; legacy markupBps folds into upstreamMarkupBps; defaults ship at 0 / 0.08', () => {
-    expect(testConfig.requestPricing).toMatchObject({ upstreamMarkupBps: 0, upstreamDiscountBps: 0, networkPricePerMTokens: 0.08 });
+  it('requestPricing: markup and discount are exclusive; legacy markupBps folds into upstreamMarkupBps; ships a 6% markup over a 5.5% upstream fee / 0.08', () => {
+    expect(SHIPPED_PRICING).toMatchObject({ upstreamMarkupBps: 600, upstreamDiscountBps: 0, upstreamFeeBps: 550, networkPricePerMTokens: 0.08 });
+    // The markup has to clear what the upstream charges Mesh, or every frontier request is a loss.
+    expect(SHIPPED_PRICING.upstreamMarkupBps).toBeGreaterThan(SHIPPED_PRICING.upstreamFeeBps);
+    expect(upstreamBilledMicros(1_000_000, SHIPPED_PRICING)).toBe(1_060_000);
+    expect(upstreamCostMicros(1_000_000, SHIPPED_PRICING)).toBe(1_055_000);
+    expect(upstreamCostMicros(1_000_000, { upstreamFeeBps: 0 })).toBe(1_000_000);
+    expect(upstreamCostMicros(3, { upstreamFeeBps: 550 })).toBe(4); // rounded up: a margin is never overstated
+    // The protocol tests run at list (helpers.ts).
+    expect(testConfig.requestPricing).toMatchObject({ upstreamMarkupBps: 0, upstreamFeeBps: 0, networkPricePerMTokens: 0.08 });
     const legacy = parseTokenomics({ ...testConfig, requestPricing: { mode: 'passthrough', markupBps: 500 } });
     expect(legacy.requestPricing.upstreamMarkupBps).toBe(500);
     expect(() => parseTokenomics({ ...testConfig, requestPricing: { mode: 'passthrough', upstreamMarkupBps: 500, upstreamDiscountBps: 1000 } })).toThrow(/exclusive/);
@@ -209,7 +217,9 @@ describe('billing with upstreamDiscountBps', () => {
     const billed = list - Math.floor((list * 2500) / 10_000); // 750
     expect(billed).toBe(750);
     expect(r.headers['x-mesh-cost-usd']).toBe(String(billed / 1e6));
-    expect(r.json().usage.cost).toBe(MOCK_COST_USD); // the upstream's own usage block is passed through untouched
+    // The reply states what the wallet was charged; the upstream's own figure moves to mesh.listCostUsd.
+    expect(r.json().usage.cost).toBe(billed / 1e6);
+    expect(r.json().mesh.listCostUsd).toBe(MOCK_COST_USD);
     expect(balance()).toBe(before - billed);
     const row = app.ctx.db.prepare(`SELECT cost_usd_micros, list_cost_usd_micros, saved_usd_micros FROM requests_log ORDER BY id DESC LIMIT 1`).get() as Record<string, number>;
     expect(row).toEqual({ cost_usd_micros: billed, list_cost_usd_micros: list, saved_usd_micros: list - billed });
@@ -223,8 +233,40 @@ describe('billing with upstreamDiscountBps', () => {
     expect(a.balance()).toBe(b0 - 1100);
     const flat = await bootWithKey();
     const f0 = flat.balance();
-    await flat.app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${flat.key}` }, payload: { model: 'mesh/mock', messages: [{ role: 'user', content: 'hi' }] } });
+    const fr = await flat.app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${flat.key}` }, payload: { model: 'mesh/mock', messages: [{ role: 'user', content: 'hi' }] } });
     expect(flat.balance()).toBe(f0 - 1000);
+    // At list the upstream's reply is passed through untouched: its own usage block, no listCostUsd.
+    expect(fr.json().usage.cost).toBe(MOCK_COST_USD);
+    expect(fr.json().mesh.listCostUsd).toBeUndefined();
+  });
+
+  it('as shipped (list + 6%), usage.cost is what the wallet was charged, streamed or not', async () => {
+    const { app, key, balance } = await bootWithKey({ ...testConfig, requestPricing: { ...SHIPPED_PRICING } });
+    const chat = (stream: boolean) => app.inject({ method: 'POST', url: '/v1/chat/completions', headers: { authorization: `Bearer ${key}` }, payload: { model: 'mesh/mock', stream, messages: [{ role: 'user', content: 'hi' }] } });
+
+    const b0 = balance();
+    const plain = await chat(false);
+    expect(plain.statusCode).toBe(200);
+    expect(balance()).toBe(b0 - 1060);
+    expect(plain.json().usage).toMatchObject({ cost: 0.00106 });
+    expect(plain.json().mesh).toMatchObject({ listCostUsd: 0.001 });
+    expect(plain.headers['x-mesh-cost-usd']).toBe('0.00106');
+
+    const b1 = balance();
+    const streamed = await chat(true);
+    expect(streamed.statusCode).toBe(200);
+    expect(balance()).toBe(b1 - 1060);
+    const chunks = streamed.body
+      .split('\n')
+      .filter((l) => l.startsWith('data: ') && l !== 'data: [DONE]')
+      .map((l) => JSON.parse(l.slice(6)) as { usage?: { cost?: number; prompt_tokens?: number }; mesh?: { listCostUsd?: number } });
+    const withUsage = chunks.filter((c) => c.usage);
+    expect(withUsage.length).toBeGreaterThan(0);
+    // every chunk that carries usage states the charge, never the upstream's lower figure
+    for (const c of withUsage) expect(c.usage!.cost).toBe(0.00106);
+    expect(withUsage[0].usage!.prompt_tokens).toBeGreaterThan(0); // token counts are untouched
+    expect(chunks[chunks.length - 1].mesh).toMatchObject({ listCostUsd: 0.001 });
+    expect(streamed.body.trimEnd().endsWith('data: [DONE]')).toBe(true);
   });
 });
 

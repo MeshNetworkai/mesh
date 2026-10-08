@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { markAdminAudited, requireAdmin, requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec, recordAdminAction, recordError } from '../db.js';
 import { creditDeposit, depositsInfo, rpcVerifier } from '../deposits.js';
+import { expireWallet, nonTransferableMicros } from '../expiry.js';
 import { balanceMicros } from '../ledger.js';
 import {
   MIN_FILL_MICROS,
@@ -135,7 +136,16 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     listingTtlHours: cfg.listingTtlHours,
     settlement: 'prepaid' as const,
     deposits: depositsInfo(cfg.deposits),
+    /** False: unused starter credit cannot be listed (starterCredits.transferable). */
+    starterTransferable: ctx.config.starterCredits.transferable,
+    /** Days after which credit lapses, or null when credits do not expire. Bought credit starts a fresh window. */
+    creditExpiryDays: ctx.config.creditExpiry.enabled ? ctx.config.creditExpiry.days : null,
   });
+  /** Lapse what is due, then how much of the balance may not be sold. */
+  const settle = (wallet: string) => {
+    expireWallet(ctx.db, wallet, ctx.config.creditExpiry, undefined, ctx.reservations.reserved(walletHold(wallet)));
+    return ctx.config.starterCredits.transferable ? 0 : nonTransferableMicros(ctx.db, wallet);
+  };
   const verifier = () => (ctx.depositVerifier ??= rpcVerifier({ chainId: cfg.deposits.chainId, rpcUrl: ctx.env.MESH_EVM_RPC_URL }));
   const DepositBody = z.object({ txHash: z.string().min(66).max(66) });
 
@@ -207,7 +217,8 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const { wallet, chain } = sessionOf(req);
     try {
-      const row = createListing(ctx.db, cfg, { seller: wallet, chain, amountMicros: usdToMicros(parsed.data.amountUsd), discountBps: parsed.data.discountBps, reservedMicros: ctx.reservations.reserved(walletHold(wallet)) });
+      const lockedMicros = settle(wallet);
+      const row = createListing(ctx.db, cfg, { seller: wallet, chain, amountMicros: usdToMicros(parsed.data.amountUsd), discountBps: parsed.data.discountBps, reservedMicros: ctx.reservations.reserved(walletHold(wallet)), lockedMicros });
       const q = quote(cfg, row.amount_micros, row.discount_bps);
       return reply.code(201).send({ ...listingView(row), ifFullySold: { buyerPaysUsd: usd(q.paidMicros), feeUsd: usd(q.feeMicros), youReceiveUsd: usd(q.sellerReceivesMicros) } });
     } catch (err) {
@@ -249,11 +260,17 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/me/market', { onRequest: gate, preHandler: auth, config: readLimit }, async (req) => {
     const { wallet } = sessionOf(req);
     reap();
+    const locked = settle(wallet);
     const fills = fillsOf(ctx.db, wallet);
     const prepaid = prepaidBalanceMicros(ctx.db, wallet);
+    const credit = balanceMicros(ctx.db, wallet);
     return {
       wallet,
-      creditBalanceUsd: usd(balanceMicros(ctx.db, wallet)),
+      creditBalanceUsd: usd(credit),
+      /** Unused starter credit in the balance: spendable, not sellable. */
+      nonTransferableUsd: usd(locked),
+      /** What this wallet could list right now (balance − starter credit − credit held by requests in flight). */
+      listableUsd: usd(Math.max(0, credit - locked - ctx.reservations.reserved(walletHold(wallet)))),
       prepaid: { usd: usd(prepaid), usdMicros: prepaid, ledger: recentPrepaid(ctx.db, wallet, 20).map(prepaidView) },
       listings: listingsOf(ctx.db, wallet).map(listingView),
       fills: { asBuyer: fills.asBuyer.map(fillView), asSeller: fills.asSeller.map(fillView) },

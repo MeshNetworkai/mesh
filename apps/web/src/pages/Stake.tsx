@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { Notice, Skeleton, Spinner, Tile } from '../components/ui';
-import { MOCK, TOKENOMICS } from '../config';
+import { MOCK, NODE_REWARD_CEILING_PER_M, TOKENOMICS, nodeRewardPerM, pctFromBps } from '../config';
 import { useAuth } from '../lib/auth';
-import { fmtDate, fmtInt } from '../lib/format';
+import { fmtCost, fmtDate, fmtInt } from '../lib/format';
 import { useMyStake, useStakeTiers } from '../lib/hooks';
 import { STAKING_TARGET, erc20Abi, fromWei, meshStakingAbi, toWei } from '../lib/staking';
 import { errorMessage, useToast } from '../lib/toast';
@@ -43,6 +43,7 @@ function TiersTable({ tiers, current, loading }: { tiers: StakeTierView[] | null
     );
   }
   return (
+    <>
     <div className="tblwrap">
       <table className="tbl">
         <thead>
@@ -74,7 +75,10 @@ function TiersTable({ tiers, current, loading }: { tiers: StakeTierView[] | null
                   {t.minStake === 0 ? '—' : `${fmtInt(t.minStake)} ${TICKER}`}
                 </td>
                 <td className="num">{fmtLock(t.lockDays)}</td>
-                <td className="num">{fmtMult(t.multiplier)}</td>
+                <td className="num">
+                  {fmtMult(t.multiplier)}
+                  <span className="muted"> · {fmtCost(nodeRewardPerM(t.multiplier))}/M</span>
+                </td>
                 <td className="small muted">{i === 0 ? 'standard' : i === (tiers?.length ?? 0) - 1 ? 'front of the queue' : 'ahead of unstaked nodes'}</td>
               </tr>
             );
@@ -82,6 +86,12 @@ function TiersTable({ tiers, current, loading }: { tiers: StakeTierView[] | null
         </tbody>
       </table>
     </div>
+    <p className="small muted">
+      A job never pays its node more than {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user was billed, which is {fmtCost(NODE_REWARD_CEILING_PER_M)} per million
+      tokens today. A multiplier lifts the base rate up to that ceiling and no further; tiers that reach it earn the same per job and differ by queue position and by
+      whether the node can be trusted.
+    </p>
+    </>
   );
 }
 
@@ -334,7 +344,7 @@ export function Stake() {
         <div className="tiles">
           <Tile label="Your tier" loading={loading} value={mine.data ? cap(mine.data.tier.name) : '—'} delta={mine.data?.nextTier ? `${fmtInt(mine.data.nextTier.needStake)} ${TICKER} more${mine.data.nextTier.lockDays > mine.data.lockDays ? ` + ${mine.data.nextTier.lockDays}d lock` : ''} → ${cap(mine.data.nextTier.name)}` : mine.data ? 'Top tier' : '—'} deltaKind={mine.data?.nextTier ? '' : 'up'} />
           <Tile label="Staked" loading={loading} value={mine.data ? `${fmtInt(mine.data.staked)} ${TICKER}` : '—'} delta={mine.data?.lockDays ? `${mine.data.lockDays}-day lock committed` : 'No lock'} />
-          <Tile label="Node rewards" loading={loading} value={mine.data ? fmtMult(mine.data.multiplier) : '—'} delta={mine.data && mine.data.multiplier > 1 ? 'applied to every job your nodes serve' : 'standard rate'} deltaKind={mine.data && mine.data.multiplier > 1 ? 'up' : ''} />
+          <Tile label="Node rewards" loading={loading} value={mine.data ? fmtMult(mine.data.multiplier) : '—'} delta={mine.data && mine.data.multiplier > 1 ? `${fmtCost(nodeRewardPerM(mine.data.multiplier))} per million tokens, every job` : `standard rate · ${fmtCost(nodeRewardPerM(1))} per million`} deltaKind={mine.data && mine.data.multiplier > 1 ? 'up' : ''} />
           <Tile label="Lock ends" loading={loading} value={mine.data?.lockEndsAt ? fmtDate(mine.data.lockEndsAt) : '—'} delta={mine.data?.lockEndsAt && mine.data.lockEndsAt > Date.now() / 1000 ? 'unstake after this' : 'nothing locked'} />
         </div>
       ) : null}

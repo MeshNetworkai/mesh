@@ -44,7 +44,8 @@ export class MarketError extends Error {
 export type ListingStatus = 'open' | 'filled' | 'cancelled' | 'expired';
 export type Settlement = 'prepaid' | 'external';
 export type WithdrawalStatus = 'pending' | 'paid';
-export type PrepaidKind = 'topup' | 'market_buy' | 'market_sale' | 'withdrawal' | 'withdrawal_refund' | 'adjustment';
+/** `credit_purchase`: paid to Mesh for credits bought at face value (direct-sales.ts). */
+export type PrepaidKind = 'topup' | 'market_buy' | 'market_sale' | 'withdrawal' | 'withdrawal_refund' | 'adjustment' | 'credit_purchase';
 
 export interface ListingRow {
   id: string;
@@ -195,7 +196,15 @@ export function topUpPrepaid(db: Db, input: { wallet: string; chain: string; amo
 export function createListing(
   db: Db,
   cfg: MarketConfig,
-  input: { seller: string; chain: string; amountMicros: number; discountBps: number; reservedMicros?: number },
+  input: {
+    seller: string;
+    chain: string;
+    amountMicros: number;
+    discountBps: number;
+    reservedMicros?: number;
+    /** Credit in the balance that may be spent but not sold (unused starter credit, expiry.ts `nonTransferableMicros`). */
+    lockedMicros?: number;
+  },
   now = nowSec(),
 ): ListingRow {
   const { seller, amountMicros, discountBps } = input;
@@ -209,6 +218,10 @@ export function createListing(
     // Credit held by the seller's requests in flight (reserve.ts) is about to be spent: it cannot be listed too.
     const bal = balanceMicros(db, seller) - (input.reservedMicros ?? 0);
     if (bal < amountMicros) throw new MarketError(402, 'insufficient_credits', `spendable balance is $${usdStr(bal)}; cannot list $${usdStr(amountMicros)}`);
+    const locked = Math.max(0, input.lockedMicros ?? 0);
+    if (bal - locked < amountMicros) {
+      throw new MarketError(402, 'non_transferable', `$${usdStr(locked)} of this balance is starter credit, which can be spent on requests but not sold; $${usdStr(Math.max(0, bal - locked))} can be listed`);
+    }
     const id = newId('lst');
     db.prepare(
       `INSERT INTO market_listings (id, seller_wallet, amount_micros, remaining_micros, discount_bps, price_micros_per_usd, status, created_at, expires_at)

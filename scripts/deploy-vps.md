@@ -68,7 +68,7 @@ Edit `.env` (`nano .env`) so these lines are set (later lines win over the defau
 
 ```ini
 NODE_ENV=production
-MESH_ADAPTER=mock                 # keep mock until the chain adapter is wired; fees come from /admin/fake-fees
+MESH_ADAPTER=mock                 # keep mock until the token is live; fees come from /admin/fake-fees and no reserve is held (docs/RUNBOOK.md §6 for the live sweep)
 OPENROUTER_API_KEY=sk-or-v1-...   # real upstream; unset = offline mock models only
 AUTH_DOMAIN=api.example.com       # must equal the public hostname; it is in the message wallets sign
 AUTH_URI=https://api.example.com
@@ -164,16 +164,29 @@ the two `request_header -...` lines (Cloudflare's own `CF-IPCountry` must pass t
 cd ~/mesh && set -a && . ./.env && set +a
 A="x-admin-token: $ADMIN_TOKEN"; J='content-type: application/json'
 
-# starter credits for friends (batched, audited)
+# starter credits for friends (batched, audited). Starter credit can be spent on requests but not sold on
+# the marketplace, and like every credit it lapses after 90 days. The sign-in grant only reaches wallets
+# that hold 1,000 MESH; this admin batch has no such check.
 curl -s -X POST localhost:8787/admin/starter-credits -H "$A" -H "$J" \
   -d '{"note":"launch","items":[{"wallet":"<wallet1>","amountUsd":2},{"wallet":"<wallet2>","amountUsd":2}]}' | jq
+
+# top up a prepaid balance after an off-chain payment (marketplace buys and direct credit purchases)
+curl -s -X POST localhost:8787/admin/prepaid -H "$A" -H "$J" \
+  -d '{"wallet":"<wallet1>","amountUsd":20,"note":"paid by transfer"}' | jq
 
 # operator overview: last 48 epochs, totals, top holders, nodes, recent errors
 curl -s localhost:8787/admin/overview -H "$A" | jq '.totals, .recentErrors[:5]'
 
-# force an epoch now (idempotent per hour)
+# force an epoch now (idempotent per hour); also lapses credit past its 90 days and re-reads the reserve
 curl -s -X POST localhost:8787/admin/run-epoch -H "$A" -H "$J" -d '{}' | jq
+
+# the published credit reserve: "mock" until the token is live, then the pool wallet against credits owed
+curl -s localhost:8787/report | jq '.totals.reserve'
 ```
+
+Once the token is live the operator has two standing money duties (`docs/RUNBOOK.md` §11g): move
+direct-sale proceeds from the deposit receiver into the credit-pool wallet, and move only the reported
+`surplusUsd` out of it to the treasury.
 
 ## 7. Updates
 
@@ -193,3 +206,4 @@ Rollback: `git checkout <previous-sha> && docker compose up -d --build`. Migrati
 - [ ] A test wallet: `/auth/nonce` -> sign -> `/auth/verify` -> `POST /keys` -> one `/v1/chat/completions`
 - [ ] `/stats` shows `series24h` moving after the first epoch
 - [ ] OpenRouter key has a spend limit set on openrouter.ai
+- [ ] Before the first live sweep: stablecoin and swap route set on the vault, `priceFeed` set, `sweepMode` is `swap` (`docs/RUNBOOK.md` §6)

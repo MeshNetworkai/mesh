@@ -1,6 +1,7 @@
 # @mesh/chain-adapter
 
-One interface, three implementations. The gateway never knows which chain it is on:
+One interface, three implementations, plus `PonsEvmAdapter`, the `EvmAdapter` subclass the Robinhood
+Chain launch runs on. The gateway never knows which chain it is on:
 
 ```ts
 interface ChainAdapter {
@@ -17,13 +18,61 @@ interface ChainAdapter {
 | `MockAdapter` | `pushFees()` | static map | — | mock |
 | `SolanaAdapter` | Token-2022 **TransferFee** withheld amounts → `withdrawWithheldTokensFromAccounts` (batched) + `…FromMint` | Helius DAS `getTokenAccounts` snapshot + Helius enhanced transactions replay; fallback `getProgramAccounts` + snapshot average | Jupiter swap of the holder share → USDC (realized) | `MESH_SOLANA_KEYPAIR` (withdraw-withheld authority, treasury) |
 | `EvmAdapter` | `MeshToken` fee → `FeeVault.sweep()` | `Transfer` log replay in `eth_getLogs` chunks, incremental state, full-history `holdSinceTs` | Uniswap v3 `exactInputSingle` of the holder share → USDC (realized); `Swapper` is pluggable (0x, 1inch) | `MESH_EVM_PRIVATE_KEY` (FeeVault owner, treasury or treasury-approved) |
+| `PonsEvmAdapter` (`feeSource: "pons"`) | Pons Fee Escrow → `PonsFeeVault.pull()` → `sweep(asset, minOut)` per fee asset (`sweepMode: "swap"`), or `sweepRaw(asset)` (`"raw"`, testnet rehearsal only) | same indexer as `EvmAdapter`, also excluding the Pons contracts and `creditPool` | stablecoin the swap returned (swap); Chainlink ETH/USD sets the slippage floor and values raw sweeps | `MESH_EVM_PRIVATE_KEY` (the vault's `sweeper`) |
 
 `createAdapter(config, opts)` picks by `config.chain`, reads `config/deploy.<network>.json` for public
 addresses and env for secrets. Both live adapters also implement `ChainAdapterExtras`
 (`pendingFeesUsd()`, `treasuryBalance()`) and expose `sweep(): SweepDetail` with the full breakdown
-(`lastSweep` after each `collectFees()`); `hasExtras(adapter)` narrows.
+(`lastSweep` after each `collectFees()`); `hasExtras(adapter)` narrows. `PonsEvmAdapter` also
+implements `ChainAdapterReserve` (`reserve(): ReserveReading`); `hasReserve(adapter)` narrows, and the
+mock adapter has no reserve to read.
 
-## How a sweep is valued
+## Pons sweeps: settlement, pricing and the reserve (`src/pons.ts`)
+
+**Sweep mode.** `sweepMode: "swap"` is the default and what `config/deploy.robinhood.json` ships: after
+`pull()` the adapter calls `PonsFeeVault.sweep(asset, minOut)` for each fee asset, the vault swaps it to
+the stablecoin through its route and splits the proceeds on chain, `holderShareBps` to `creditPool` and
+the rest to `treasury`. The sweep is valued at the stablecoin received. `minOut` is the expected USD
+value less `slippageBps` (default 100), in stablecoin units; the swap reverts rather than settle below
+it. `sweepMode: "raw"` calls `sweepRaw(asset)` (no swap, the asset itself is split and valued off
+chain); the pool then holds ETH against credits fixed in USD, so it is for the testnet rehearsal and
+`config/deploy.robinhood-testnet.json` only. The contract still exposes both functions; which one is
+called is decided here, from the deploy config.
+
+**Price.** `ethUsd()` returns `{ price, source: 'chainlink' | 'fixed' | 'none', stale?, warning? }`:
+
+| Configured | Result |
+| --- | --- |
+| `priceFeed`, answer no older than `priceMaxAgeSec` (default 3600 s) | the feed's answer, `source: 'chainlink'` |
+| `priceFeed`, answer older than that | no price, `source: 'none'`, `stale: true` |
+| `priceFeed`, read fails or the answer is not positive | no price, `source: 'none'` |
+| no `priceFeed`, `fixedEthUsd` (deploy json) or `MESH_FIXED_ETH_USD` | the fixed number, `source: 'fixed'` |
+| neither | no price, `source: 'none'` |
+
+A configured feed is the only price source: `fixedEthUsd` never stands in for a feed that is stale or
+down. `sweep()` leaves any asset it cannot price unswept and adds a warning to `lastSweep.warnings`
+(`no fresh price for <asset>: <amount> left unswept, no credits minted for it this epoch`). The asset
+stays in the Pons escrow, or in the vault if a `pull()` for another asset already claimed it, and a
+later sweep picks it up. The stablecoin itself needs no price and is swept regardless.
+`pendingFeesUsd()` returns `null` while a pending asset has no price.
+
+**Reserve.** `reserve()` reads the `creditPool` wallet: `{ wallet, stable, stableUsd, otherUnits,
+otherUsd }`. `stableUsd` is its balance of the settlement stablecoin at $1; `otherUnits` / `otherUsd`
+is ETH found next to it (left from a raw sweep, or gas money), valued at the current price, with
+`otherUsd: null` when there is no price. It throws `NotWiredError` when `creditPool` is not
+configured. The gateway calls it once per epoch and counts only the stablecoin as held reserve
+(`apps/gateway/src/reserve-report.ts`, `docs/PRICING.md` §5).
+
+**Check.** `checkPonsConfig()` (`src/pons-check.ts`, behind Admin → Token → Check on chain) warns when
+`sweepMode` is `raw`, when the vault has no stablecoin set, and when no Chainlink feed is configured.
+It does not read the vault's route or the age of the feed's answer.
+
+The deploy json for this path is `config/deploy.robinhood.json` (committed template, every field
+commented): besides the `EvmAdapter` fields it carries `feeSource: "pons"`, the Pons contract
+addresses, `feeVault`, `creditPool`, `quoteTokens`, `stable`, `stableDecimals`, `sweepMode`, `priceFeed`,
+`fixedEthUsd` and `slippageBps`.
+
+## How a sweep is valued (`SolanaAdapter`, `EvmAdapter`)
 
 Both adapters: `total = fees pulled` → `holderShare = total × holderShareBps / 10000` is swapped to
 USDC, the rest is forwarded to the treasury **in MESH**. `amountUsd = total × (usdcReceived / holderShare)`,
@@ -101,6 +150,7 @@ Robinhood Chain (4663) has no hard-coded RPC/USDC/router; set them in the deploy
 | `MESH_HOLD_SINCE_LOOKBACK_SEC` | extra history scanned for `holdSinceTs` (Solana) |
 | `MESH_EVM_RPC_URL`, `MESH_EVM_CHAIN_ID` | override deploy json |
 | `MESH_EVM_PRIVATE_KEY` | sweeper key |
+| `MESH_FIXED_ETH_USD` | ETH/USD for `PonsEvmAdapter` when no `priceFeed` is configured (overrides `fixedEthUsd` in the deploy json); ignored whenever a feed is configured, even a stale one |
 
 ## Scripts (`scripts/chain/`)
 
@@ -116,10 +166,13 @@ bash scripts/chain/evm-setup.sh                                                 
 ## Tests
 
 ```sh
-pnpm --filter @mesh/chain-adapter test        # 37 tests, offline: recorded RPC/Helius/Jupiter fixtures + a fake EVM client
+pnpm --filter @mesh/chain-adapter test        # 8 files, 72 tests offline (recorded RPC/Helius/Jupiter fixtures + a fake EVM client); 11 more skip without a local anvil
 pnpm --filter @mesh/chain-adapter typecheck
 cd contracts/evm && FOUNDRY_SOLC=tools/solc-js-wrapper.mjs forge test -vv    # 17 Solidity tests
 ```
 
-`test/evm.anvil.test.ts` runs the real contracts on a local anvil (found on `PATH`, `~/.foundry/bin`
-or `ANVIL_PATH`) with `contracts/evm/out` artifacts; it skips itself when either is missing.
+`test/evm.anvil.test.ts` and `test/pons.anvil.test.ts` run the real contracts on a local anvil (found
+on `PATH`, `~/.foundry/bin` or `ANVIL_PATH`) with `contracts/evm/out` artifacts; they skip themselves
+when either is missing. `test/pons.test.ts` covers the price rules above (a stale or unreadable feed
+yields no price even with `fixedEthUsd` set; a stale feed skips the ETH but still sweeps the
+stablecoin) and the reserve read.

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Notice } from '../components/ui';
-import { PUBLIC_API_URL, TOKENOMICS, pctFromBps } from '../config';
-import { fmtCost, fmtInt } from '../lib/format';
+import { NODE_REWARD_CEILING_PER_M, PUBLIC_API_URL, TOKENOMICS, frontierPriceWords, pctFromBps } from '../config';
+import { fmtCost, fmtInt, fmtUsd } from '../lib/format';
 
 /**
  * Plain-English legal pages: /terms, /privacy, /risk. Drafts, marked as such on every page.
@@ -12,8 +12,12 @@ import { fmtCost, fmtInt } from '../lib/format';
 const REGION_NAMES: Record<string, string> = { AE: 'the United Arab Emirates', US: 'the United States', GB: 'the United Kingdom' };
 const regions = TOKENOMICS.geoBlock.map((c) => REGION_NAMES[c] ?? c);
 const regionList = regions.length <= 1 ? regions.join('') : `${regions.slice(0, -1).join(', ')} and ${regions[regions.length - 1]}`;
-const UPDATED = '2026-10-05';
+const UPDATED = '2026-10-08';
 const marketFee = pctFromBps(TOKENOMICS.marketplace.feeBps);
+const EXPIRY = TOKENOMICS.creditExpiry;
+const expiryDays = `${fmtInt(EXPIRY.days)} days`;
+const DIRECT = TOKENOMICS.directSales;
+const STARTER = TOKENOMICS.starterCredits;
 const epochWord = TOKENOMICS.epochSeconds === 3600 ? 'hour' : `${Math.round(TOKENOMICS.epochSeconds / 60)} minutes`;
 
 function Draft() {
@@ -145,18 +149,50 @@ export function Terms() {
                   between wallets is a sale on the marketplace (clause 6). They have no value outside the gateway.
                 </li>
                 <li>Credits can only be spent on inference through the gateway, at the prices shown in the catalogue and in each reply.</li>
-                <li>We may change the fee split, the eligibility threshold, the epoch length or the usage share. Changes are published in the docs before they apply.</li>
+                {EXPIRY.enabled ? (
+                  <li>
+                    <b>Credits expire.</b> Every credit lapses {expiryDays} after it is added to your wallet, whatever its source, including credit you bought. Requests
+                    spend your oldest credit first. Credit that reaches its date unused is removed from your balance and is not restored, refunded or compensated.
+                    Listing credit for sale does not extend its date. Your account page shows what lapses next.
+                  </li>
+                ) : null}
+                <li>
+                  <b>The reserve is information, not a guarantee.</b> We settle the holder share of fees in a stablecoin, keep it in a wallet separate from the
+                  treasury, and publish its balance next to the credits outstanding. That wallet is ours. Publishing it gives you no claim on it, no right to
+                  redeem credits against it, and no assurance that it will always cover every credit.
+                </li>
+                <li>
+                  When the price feed we use to settle fees is stale or unavailable, fees are not swept and no credits are issued for them until it is current
+                  again. Credits issued later go to the wallets eligible in that later {epochWord}.
+                </li>
+                <li>
+                  We may change the fee split, the eligibility threshold, the epoch length, the usage share{EXPIRY.enabled ? ', the expiry period' : ''} or the prices.
+                  Changes are published in the docs before they apply.
+                </li>
               </ul>
             </Clause>
             <Clause n="5" title="Pricing and billing">
               <p>
                 Requests served by a Mesh node are billed at the flat network price, {fmtCost(TOKENOMICS.networkPricePerMTokens)} per million total
-                tokens. Requests served by the upstream provider are billed at that provider’s list price less the discount, or plus the markup,
-                published in the catalogue (<code>GET /v1/models</code>); both are zero today, so you pay exactly list. The cost of each request is
-                shown in the reply and deducted from your balance. Failed requests are never charged. Spend limits you set on a key are enforced per
-                key. The first sign-in of a wallet may receive a small starter grant while that programme runs; it is a gift under the same terms as
-                every other credit and may be paused at any time.
+                tokens. Requests served by the upstream provider are billed at that provider’s list price plus the markup, or less the discount,
+                published in the catalogue (<code>GET /v1/models</code>); today that is {frontierPriceWords()}
+                {TOKENOMICS.upstreamFeeBps > 0 ? `, of which ${pctFromBps(TOKENOMICS.upstreamFeeBps)} is what the provider charges us on top of its list price` : ''}. The cost of
+                each request is shown in the reply and deducted from your balance. Failed requests are never charged. Spend limits you set on a key are
+                enforced per key.
               </p>
+              <p>
+                {STARTER.requireMinHold ? `A wallet that holds at least ${fmtInt(TOKENOMICS.minHoldTokens)} $${TOKENOMICS.ticker}` : 'A wallet'} may receive a small starter grant on
+                its first sign-in while that programme runs. It is a gift under the same terms as every other credit, may be paused at any time
+                {STARTER.transferable ? '.' : ', and can be spent on requests but not listed for sale; requests use it before your other credit.'}
+              </p>
+              {DIRECT.enabled ? (
+                <p>
+                  <b>Buying credits from us.</b> You may buy credits at face value with your prepaid balance: {fmtUsd(1, 0)} of prepaid balance for {fmtUsd(1, 0)} of
+                  credit, between {fmtUsd(DIRECT.minUsd, 0)} and {fmtUsd(DIRECT.maxUsd, 0)} a purchase. A purchase is final: bought credits are not refundable, cannot
+                  be converted back into prepaid balance, and are credits like any other{EXPIRY.enabled ? `, including the ${expiryDays} expiry` : ''}. Buy what you
+                  expect to use.
+                </p>
+              ) : null}
             </Clause>
             <Clause n="6" title="The credit marketplace">
               <p>
@@ -166,6 +202,13 @@ export function Terms() {
               </p>
               <ul>
                 <li>Listed credit is held in escrow and cannot be spent until the listing fills, is cancelled or expires. Fills are final.</li>
+                {STARTER.transferable ? null : <li>Starter credit cannot be listed. Only credit you earned or bought can be sold.</li>}
+                {EXPIRY.enabled ? (
+                  <li>
+                    Listing does not pause expiry (clause 4). Credit returned from a cancelled or lapsed listing keeps the date it had; credit a buyer receives
+                    starts a new {expiryDays}.
+                  </li>
+                ) : null}
                 <li>
                   Buyers pay, and sellers are paid, in a prepaid US-dollar balance kept by the gateway. During the beta that balance is topped up by us
                   after an off-chain payment you arrange with us, and withdrawals are processed by us by hand: the amount leaves your balance when you
@@ -197,7 +240,9 @@ export function Terms() {
               <p>
                 Jobs are routed to online, idle nodes that advertise the requested model and meet the reputation threshold. We do not guarantee
                 that your node receives any job, any number of jobs, or any amount of rewards. Rewards accrue as a US-dollar balance per completed
-                job at the published rate and are visible on your Node page. Paying accrued rewards out on-chain is not live yet; it starts after the
+                job at the published rate, with any stake multiplier, and never more than {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user was
+                billed for that job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million tokens today). They are visible on your Node page. Paying accrued rewards
+                out on-chain is not live yet; it starts after the
                 token is launched by the team on Robinhood Chain. Until it is, the balance is a counter, not a payment, and we may change the
                 rate or the mechanism with notice in the docs. A sample of node answers is re-run elsewhere and compared; a job whose answer does not
                 hold up earns no reward.
@@ -380,8 +425,10 @@ export function Risk() {
               <p>
                 {TOKENOMICS.name} credits are a share of trading fees already collected, converted to US-dollar-denominated inference credits, plus,
                 when it is switched on, a share of the margin on paid usage. They are not a return, a yield or income, and no amount is promised or
-                guaranteed. An {epochWord} with little or no trading distributes little or nothing from fees; the usage share is off today and may be
-                switched on, off or re-tuned. The stats page shows every epoch, including the empty ones.
+                guaranteed. An {epochWord} with little or no trading distributes little or nothing from fees. The usage share is{' '}
+                {TOKENOMICS.usageShare.enabled ? 'on today, is small next to trading fees,' : 'off today'} and may be switched on, off or re-tuned. When the price feed
+                used to settle fees is stale, that {epochWord} distributes nothing from fees until it is current again. The stats page shows every epoch,
+                including the empty ones.
               </p>
             </Clause>
             <Clause n="2" title="The token can lose all its value">
@@ -393,9 +440,25 @@ export function Risk() {
             <Clause n="3" title="Credits have no cash value">
               <p>
                 Credits are denominated in US dollars inside the gateway only. They are a licence to use the gateway, not money: they cannot be
-                withdrawn and move between wallets only through the marketplace, where a buyer may or may not exist at the discount you want. They
-                depend on the gateway continuing to operate; if the service stops, credits stop with it.
+                withdrawn and move between wallets only through the marketplace, where a buyer may or may not exist at the discount you want
+                {STARTER.transferable ? '' : ' (starter credit cannot be sold at all)'}. They depend on the gateway continuing to operate; if the service stops,
+                credits stop with it.
               </p>
+              {EXPIRY.enabled ? (
+                <p>
+                  <b>Credits expire.</b> A credit you do not spend within {expiryDays} of receiving it is removed from your balance for good. This applies to credit
+                  you bought as well as credit you were given. If you hold the token but do not use the gateway, your credits will lapse.
+                </p>
+              ) : null}
+              <p>
+                <b>The reserve does not make credits redeemable.</b> We publish the stablecoin held behind outstanding credits. It can fall short, the wallet is
+                controlled by the operator, and before the token launches there is no reserve at all. Nothing about it gives you a right to be paid.
+              </p>
+              {DIRECT.enabled ? (
+                <p>
+                  <b>Bought credits are not refundable.</b> Credits bought from us at face value cannot be turned back into money or prepaid balance.
+                </p>
+              ) : null}
             </Clause>
             <Clause n="4" title="Marketplace balances and withdrawals">
               <p>

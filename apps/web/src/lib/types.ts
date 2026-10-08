@@ -76,13 +76,58 @@ export interface Stats {
   /** Usage-revenue share to holders (docs/PRICING.md, engine 2): on/off and USD booked to the pool in the last 24h (0 while off). */
   usageShareEnabled?: boolean;
   usageShareToHolders24hUsd?: number;
-  /** Upstream pricing: frontier/fast models bill OpenRouter list minus this discount (or plus this markup), bps. */
+  /** Upstream pricing: frontier/fast models bill OpenRouter list plus this markup (or minus this discount), bps. */
   upstreamDiscountBps?: number;
   upstreamMarkupBps?: number;
+  /** What the upstream charges Mesh on top of list, bps: the markup covers this before anything is margin. */
+  upstreamFeeBps?: number;
+  /** Days after which a credit lapses; null when credits do not expire. */
+  creditExpiryDays?: number | null;
+  /** Credits can be bought from Mesh at face value (POST /me/credits/buy). */
+  directSalesEnabled?: boolean;
+  /** False: unused starter credit can be spent but not listed on the marketplace. */
+  starterTransferable?: boolean;
+  /** True: only wallets holding the minimum receive starter credit. */
+  starterRequiresHold?: boolean;
+  /** Most a job may pay its node, as a share of what the user was billed, bps. */
+  nodeRewardMaxShareBps?: number;
+  /** The credit reserve at the last hourly reading against credits owed (same block as GET /report totals.reserve). */
+  reserve?: ReserveView;
   series24h: HourPoint[];
   epochSeconds: number;
   upstream: string;
   generatedAt: number;
+}
+
+/**
+ * The credit reserve (docs/PRICING.md §5): what the credit-pool wallet held at the last reading against what
+ * is owed in credits. `source` is `mock` before the token launch (no reserve), `unavailable` when the read failed.
+ */
+export interface ReserveView {
+  source: 'chain' | 'mock' | 'unavailable';
+  asset: string | null;
+  heldUsd: number | null;
+  /** ETH (or anything else) in the pool wallet, valued at the reading; not counted in heldUsd. */
+  otherUsd: number | null;
+  creditsSpendableUsd: number;
+  creditsInEscrowUsd: number;
+  requiredUsd: number;
+  /** heldUsd ÷ requiredUsd; null when nothing is owed or nothing could be read. */
+  coverage: number | null;
+  surplusUsd: number | null;
+  short: boolean | null;
+  minCoverageBps: number;
+  note: string | null;
+  asOf: number | null;
+}
+
+/** `expiry` on GET /me (docs/PRICING.md §6): what lapses next in this wallet. */
+export interface ExpiryOutlook {
+  enabled: boolean;
+  days: number;
+  next: { usd: number; at: number } | null;
+  within7dUsd: number;
+  within30dUsd: number;
 }
 
 /** `beta` block on GET /stats (and on 403 invite_required bodies). */
@@ -117,7 +162,7 @@ export interface NodesSummary {
 
 export interface LedgerRow {
   id: number;
-  kind: 'distribution' | 'usage' | 'starter' | string;
+  kind: 'distribution' | 'usage' | 'starter' | 'adjustment' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry' | string;
   deltaUsd: number;
   deltaUsdMicros: number;
   ref: string | null;
@@ -174,6 +219,10 @@ export interface Me {
   ledger: LedgerRow[];
   apiKeys: ApiKey[];
   savings?: Savings;
+  /** Credit expiry: what lapses next and how much of the balance is inside its last 7 / 30 days. */
+  expiry?: ExpiryOutlook;
+  /** Unused starter credit in the balance: spendable on requests, not sellable on the marketplace. */
+  nonTransferableUsd?: number;
 }
 
 export interface CreatedKey {
@@ -403,6 +452,27 @@ export interface ReportMethod {
   attribution: string;
   treasury: string;
   network: string;
+  reserve?: string;
+  creditExpiry?: string;
+  directSales?: string;
+}
+
+/** `totals.creditExpiry` on GET /report: credit that lapsed because it outlived `days`. */
+export interface CreditExpiryTotals {
+  enabled: boolean;
+  days: number;
+  expiredUsd: number;
+  wallets: number;
+  last30dUsd: number;
+}
+
+/** `totals.directSales` on GET /report: credits bought from Mesh at face value. */
+export interface DirectSalesTotals {
+  enabled: boolean;
+  soldUsd: number;
+  purchases: number;
+  wallets: number;
+  last30dUsd: number;
 }
 
 /** `totals.marketplace` on GET /report (docs/MARKETPLACE.md): what was listed, what changed hands, where the fee went. */
@@ -453,6 +523,9 @@ export interface Report {
     };
     marketplace?: MarketplaceTotals;
     usageShare?: UsageShareTotals;
+    reserve?: ReserveView;
+    creditExpiry?: CreditExpiryTotals;
+    directSales?: DirectSalesTotals;
   };
   last7d: PeriodTotals;
   last30d: PeriodTotals;
@@ -605,6 +678,8 @@ export interface RunEpochResult {
   eligibleHolders: number;
   holdingAgeApplied: boolean;
   distributed: Array<{ wallet: string; usd: number; multiplier: number }>;
+  /** The chores run after the epoch: credit lapsed and the reserve reading. */
+  housekeeping?: { expiredWallets: number; expiredUsd: number; reserve: string; reserveHeldUsd: number | null; sweepWarnings?: string[] };
 }
 
 export interface StarterBatchResult {

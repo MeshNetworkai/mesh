@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { nowSec } from '../db.js';
+import { directSalesTotals } from '../direct-sales.js';
+import { expiredTotals } from '../expiry.js';
 import { treasuryBalanceMicros, treasuryTotalsByKind } from '../ledger.js';
 import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
+import { reserveView } from '../reserve-report.js';
 import { usageShareTotals } from '../usage-share.js';
 import { publicEpochView, type EpochRow } from './stats.js';
 
@@ -171,7 +174,13 @@ export const REPORT_METHOD = {
   marketplace:
     'Credit marketplace (docs/MARKETPLACE.md): listed = face value of every listing ever created; filled = face value that changed hands; buyers paid the discounted price from a prepaid balance. Mesh keeps 2.5% of the price: feesToHolders joins the next hourly holder pool, feesToTreasury is a market_fee treasury row. openDepth = credit on the book right now.',
   usageShare:
-    'Usage-revenue share (docs/PRICING.md): when enabled, holderBps of the margin on every paid request (network: user price − node reward; upstream: billed − upstream cost) joins the next hourly holder pool; the rest stays with the treasury. Negative margins and guest messages contribute nothing. bySource.marketplaceFee is the marketplace fee share already paid to the pool, counted here when usageShare.sources.marketplaceFee is on.',
+    'Usage-revenue share (docs/PRICING.md): when enabled, holderBps of the margin on every paid request (network: user price − node reward; upstream: billed − upstream cost, the cost being list plus the upstream\'s own fee) joins the next hourly holder pool; the rest stays with the treasury. Negative margins and guest messages contribute nothing. bySource.marketplaceFee is the marketplace fee share already paid to the pool, counted here when usageShare.sources.marketplaceFee is on.',
+  reserve:
+    'Credit reserve (docs/PRICING.md): the holder share of every sweep is swapped to the stablecoin on chain and held in the credit-pool wallet, apart from the treasury. heldUsd is that wallet\'s stablecoin balance at the last hourly reading (asOf); requiredUsd is every credit a wallet could spend plus credit escrowed in open listings; coverage = heldUsd ÷ requiredUsd. Anything else in the wallet (ETH) is shown as otherUsd and not counted. source "mock" means the token is not live: fees are a test feed and no reserve is held.',
+  creditExpiry:
+    'Credit expiry (docs/PRICING.md): every credit lapses creditExpiry.days after it landed, oldest first; expiredUsd is the total debited so far (expiry ledger rows). Lapsed credit lowers requiredUsd, so the reserve that backed it shows up as surplus.',
+  directSales:
+    'Direct sales (docs/PRICING.md): credits bought from Mesh at face value with a prepaid balance (purchase ledger rows). The payment backs the credit 1:1; it is not treasury income until the credit is spent and leaves a margin.',
   guestChat:
     'Free guest messages (POST /v1/guest/chat) are paid by the treasury: upstreamCostUsd is what the upstream charged for guest messages it served (guest_chat treasury rows); nodeRewardsUsd is what Mesh nodes earned serving guest messages (already inside node rewards accrued). Requests are counted in requests_log under the guest wallet.',
 };
@@ -239,6 +248,22 @@ export function guestChatTotals(ctx: AppContext) {
   };
 }
 
+/** Credit that has lapsed (expiry.ts): the policy and what it has removed so far. */
+export function creditExpiryReport(ctx: AppContext, now = nowSec()) {
+  const cfg = ctx.config.creditExpiry;
+  const all = expiredTotals(ctx.db);
+  const last30 = expiredTotals(ctx.db, now - 30 * DAY);
+  return { enabled: cfg.enabled, days: cfg.days, expiredUsd: microsToUsd(all.expiredMicros), wallets: all.wallets, last30dUsd: microsToUsd(last30.expiredMicros) };
+}
+
+/** Credits sold by Mesh at face value (direct-sales.ts). */
+export function directSalesReport(ctx: AppContext, now = nowSec()) {
+  const cfg = ctx.config.directSales;
+  const all = directSalesTotals(ctx.db);
+  const last30 = directSalesTotals(ctx.db, now - 30 * DAY);
+  return { enabled: cfg.enabled, soldUsd: microsToUsd(all.soldMicros), purchases: all.purchases, wallets: all.wallets, last30dUsd: microsToUsd(last30.soldMicros) };
+}
+
 export function computeReport(ctx: AppContext, now = nowSec()) {
   const db = ctx.db;
   const all = periodTotals(ctx, 0, Number.MAX_SAFE_INTEGER);
@@ -271,6 +296,9 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
       guestChat: guestChatTotals(ctx),
       marketplace: marketplaceTotals(ctx),
       usageShare: usageShareReport(ctx),
+      reserve: reserveView(ctx),
+      creditExpiry: creditExpiryReport(ctx, now),
+      directSales: directSalesReport(ctx, now),
     },
     last7d,
     last30d,

@@ -598,7 +598,17 @@ function SwitchInAMinute() {
               <span className="n">02 · Key</span>
               <p>
                 Replace the key with a <code>mesh_sk_…</code> key from <Link to="/app/keys">Keys</Link>. It goes in the same <code>Authorization: Bearer</code> header.
-                {starter.enabled && starter.amountUsd > 0 ? <> Your first sign-in is credited {fmtUsd(starter.amountUsd)} so you can test before holding anything.</> : null}
+                {starter.enabled && starter.amountUsd > 0 ? (
+                  starter.requireMinHold ? (
+                    <>
+                      {' '}
+                      A wallet holding at least {TOKENOMICS.minHoldTokens.toLocaleString()} {TOKENOMICS.ticker} is credited {fmtUsd(starter.amountUsd)} on its first sign-in
+                      {TOKENOMICS.directSales.enabled ? `; without the token, buy credits at face value from ${fmtUsd(TOKENOMICS.directSales.minUsd, 0)}` : ''}.
+                    </>
+                  ) : (
+                    <> Your first sign-in is credited {fmtUsd(starter.amountUsd)} so you can test before holding anything.</>
+                  )
+                ) : null}
               </p>
             </div>
             <div className="step">
@@ -706,7 +716,14 @@ function SwitchInAMinute() {
                 </>
               ) : null}
               . Credits are US dollars, so one credit dollar buys one dollar of inference; every reply says what it cost and, on a node, what it saved versus list.
-              {starter.enabled && starter.amountUsd > 0 ? <> The first {fmtUsd(starter.amountUsd)} is on us when you connect a wallet for the first time.</> : null}
+              {TOKENOMICS.creditExpiry.enabled ? <> Credits last {TOKENOMICS.creditExpiry.days} days from the day they land; the oldest are spent first.</> : null}
+              {starter.enabled && starter.amountUsd > 0 ? (
+                starter.requireMinHold ? (
+                  <> A wallet that holds the token gets {fmtUsd(starter.amountUsd)} on its first sign-in.</>
+                ) : (
+                  <> The first {fmtUsd(starter.amountUsd)} is on us when you connect a wallet for the first time.</>
+                )
+              ) : null}
             </p>
           </div>
         </div>

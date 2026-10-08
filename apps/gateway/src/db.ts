@@ -566,6 +566,60 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS market_deposits_wallet ON market_deposits(wallet, created_at);
     `,
   },
+  {
+    // Credit expiry, direct sales and the published reserve (expiry.ts, direct-sales.ts, reserve-report.ts,
+    // docs/PRICING.md §5-7). credits_ledger gains `purchase` (credit bought from Mesh at face value) and
+    // `expiry` (credit that lapsed creditExpiry.days after it landed); prepaid_ledger gains `credit_purchase`
+    // (what the buyer paid for it). SQLite cannot alter a CHECK, so both ledgers are rebuilt in place
+    // (migration 14 pattern). reserve_snapshots keeps what the credit-pool wallet held each time the
+    // gateway read it (once per epoch); held_usd_micros is NULL when the adapter has no reserve to read
+    // (the mock adapter before the token launch).
+    id: 19,
+    sql: `
+    CREATE TABLE credits_ledger_v19 (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet           TEXT NOT NULL,
+      delta_usd_micros INTEGER NOT NULL,
+      kind             TEXT NOT NULL CHECK (kind IN ('distribution','usage','adjustment','starter','market_escrow','market_refund','market_buy','purchase','expiry')),
+      ref              TEXT,
+      created_at       INTEGER NOT NULL
+    );
+    INSERT INTO credits_ledger_v19 (id, wallet, delta_usd_micros, kind, ref, created_at)
+      SELECT id, wallet, delta_usd_micros, kind, ref, created_at FROM credits_ledger;
+    DROP TABLE credits_ledger;
+    ALTER TABLE credits_ledger_v19 RENAME TO credits_ledger;
+    CREATE INDEX IF NOT EXISTS ledger_wallet ON credits_ledger(wallet, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ledger_distribution_unique ON credits_ledger(wallet, ref) WHERE kind = 'distribution';
+    CREATE INDEX IF NOT EXISTS ledger_kind_created ON credits_ledger(kind, created_at);
+
+    CREATE TABLE prepaid_ledger_v19 (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet        TEXT NOT NULL,
+      delta_micros  INTEGER NOT NULL,
+      kind          TEXT NOT NULL CHECK (kind IN ('topup','market_buy','market_sale','withdrawal','withdrawal_refund','adjustment','credit_purchase')),
+      ref           TEXT,
+      created_at    INTEGER NOT NULL
+    );
+    INSERT INTO prepaid_ledger_v19 (id, wallet, delta_micros, kind, ref, created_at)
+      SELECT id, wallet, delta_micros, kind, ref, created_at FROM prepaid_ledger;
+    DROP TABLE prepaid_ledger;
+    ALTER TABLE prepaid_ledger_v19 RENAME TO prepaid_ledger;
+    CREATE INDEX IF NOT EXISTS prepaid_wallet ON prepaid_ledger(wallet, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS prepaid_kind_ref ON prepaid_ledger(kind, ref) WHERE ref IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS reserve_snapshots (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      source            TEXT NOT NULL,
+      asset             TEXT,
+      held_usd_micros   INTEGER,
+      stable_usd_micros INTEGER,
+      other_usd_micros  INTEGER,
+      note              TEXT,
+      created_at        INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS reserve_snapshots_created ON reserve_snapshots(created_at);
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

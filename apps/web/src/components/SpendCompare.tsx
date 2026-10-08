@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { TOKENOMICS } from '../config';
+import { TOKENOMICS, pctFromBps } from '../config';
 import { getCatalogue } from '../lib/api';
 import type { Catalogue, CatalogueModel } from '../lib/types';
 import { ModelPicker } from './ModelPicker';
 
 /**
- * "Same models. Less spend. Your Macs get paid." — the homepage price comparison, straight from GET /v1/models
+ * "Same models. Open ones for less. Your Macs get paid." — the homepage price comparison, straight from GET /v1/models
  * (lib/api.ts getCatalogue): list price vs what Mesh bills per 1M tokens for the chosen model. The saving bar
- * appears only when meshPrice < listPrice; at parity (frontier at list while the discount knob is 0) it says so
- * and never invents a saving.
+ * appears only when meshPrice < listPrice. A frontier model is billed list plus the markup that covers what the
+ * upstream charges Mesh, and the bar says exactly that; it never invents a saving.
  */
 
 type Side = 'completion' | 'prompt';
@@ -91,6 +91,10 @@ export function SpendCompare({ id = 'spend' }: { id?: string }) {
   const mesh = current ? current.meshPrice[key] : null;
   const saving = list !== null && mesh !== null && list > 0 && mesh < list ? { usd: list - mesh, pct: Math.round((1 - mesh / list) * 100) } : null;
   const parity = list !== null && mesh !== null && !saving;
+  // Above list: an upstream model carries the markup; a network model is on the flat price, which a few small models undercut upstream.
+  const above = parity && list !== null && mesh !== null && mesh > list;
+  const markup = cat?.pricing.upstreamMarkupBps ?? TOKENOMICS.upstreamMarkupBps;
+  const fee = TOKENOMICS.upstreamFeeBps;
   const servedBy = current ? (current.served === 'upstream' ? 'upstream' : 'network') : null;
   const tierLabel = current ? (current.privacy === 'network' ? 'network' : 'upstream · zero data retention') : null;
 
@@ -98,7 +102,7 @@ export function SpendCompare({ id = 'spend' }: { id?: string }) {
     <section className="spend" id={id} aria-labelledby={`${id}-h`}>
       <div className="spend-head">
         <h2 className="display d-m" id={`${id}-h`}>
-          Same models. Less spend. <span className="muted">Your Macs get paid.</span>
+          Same models. Open ones for less. <span className="muted">Your Macs get paid.</span>
         </h2>
         {vendors.length ? (
           <p className="spend-vendors small muted" aria-label="Models in the catalogue">
@@ -154,8 +158,21 @@ export function SpendCompare({ id = 'spend' }: { id?: string }) {
             </div>
           ) : parity ? (
             <div className="spend-bar" data-state="parity">
-              <span className="spend-bar-text">At list price today — served privately with zero data retention</span>
-              <span className="small muted">Discounts on frontier models switch on with the pricing decision</span>
+              {above && current?.served === 'upstream' ? (
+                <>
+                  <span className="spend-bar-text">List plus {pctFromBps(markup)} — served privately with zero data retention</span>
+                  <span className="small muted">
+                    {fee > 0 ? `The upstream charges us ${pctFromBps(fee)} on top of list; the markup covers it. ` : ''}The saving is on open models answered by Macs
+                  </span>
+                </>
+              ) : above ? (
+                <>
+                  <span className="spend-bar-text">Flat network price — answered by a Mac, the prompt never leaves the network</span>
+                  <span className="small muted">For this small model the flat price is above upstream list; larger open models are where the saving is</span>
+                </>
+              ) : (
+                <span className="spend-bar-text">At list price — served privately with zero data retention</span>
+              )}
             </div>
           ) : null}
         </div>

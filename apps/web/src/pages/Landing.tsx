@@ -7,7 +7,7 @@ import { MarketDepthBook } from '../components/MarketDepth';
 import { BetaPill } from '../components/Nav';
 import { SpendCompare } from '../components/SpendCompare';
 import { Terminal } from '../components/ui';
-import { PUBLIC_API_URL, STORAGE, TOKENOMICS, pctFromBps } from '../config';
+import { NODE_REWARD_CEILING_PER_M, PUBLIC_API_URL, STORAGE, TOKENOMICS, frontierPriceTag, frontierPriceWords, pctFromBps } from '../config';
 import { fmtCompact, fmtCost, fmtInt, fmtUsd } from '../lib/format';
 import { useStats } from '../lib/hooks';
 
@@ -24,23 +24,25 @@ const epochWord = T.epochSeconds === 3600 ? 'hour' : `${epochMin} minutes`;
 /** Marketplace fee (docs/MARKETPLACE.md, config `marketplace.feeBps`); the live value is also on GET /market/config. */
 const MARKET_FEE_PCT = pctFromBps(T.marketplace.feeBps);
 const MAX_DISCOUNT_PCT = pctFromBps(T.marketplace.maxDiscountBps);
+const EXPIRY_DAYS = T.creditExpiry.enabled ? `${fmtInt(T.creditExpiry.days)} days` : null;
+const nodeCeiling = fmtCost(NODE_REWARD_CEILING_PER_M);
 
 
 /* ---------- copy blocks ---------- */
 
 /** Six points, written against the one-pager comparison without naming the other product. */
-const WHY = (usageOn: boolean) => [
+const WHY = (usageOn: boolean, frontierPrice: string) => [
   {
     k: 'Two engines',
     t: 'Two engines, not one',
     c: usageOn
       ? `Trading fees fund the hourly pool, and so does the margin on paid requests. Holders earn when people use the network, not only when they trade it.`
-      : `Trading fees fund the hourly pool today. The second engine, a share of the margin on paid requests, is built and audited; it switches on with the pricing decision, not before.`,
+      : `Trading fees fund the hourly pool today. The second engine, a share of the margin on paid requests, is built and switched off.`,
   },
   {
     k: 'Cost',
     t: 'Credits are served by Macs, not bought from a cloud',
-    c: `A dollar of credit spent on an open model buys ${fmtCompact(Math.round(1 / T.networkPricePerMTokens))}M tokens at ${netPrice} per million, answered by a Mac that is paid ${nodePay}; the difference comes from the treasury share of fees, not from a cloud invoice at list price.`,
+    c: `A dollar of credit spent on an open model buys ${fmtCompact(Math.round(1 / T.networkPricePerMTokens))}M tokens at ${netPrice} per million, answered by a Mac that is paid ${nodePay} (${nodeCeiling} at most when staked). The cost of that answer is the Mac, not a cloud invoice, and what is left over is the margin holders share.`,
   },
   {
     k: 'Market',
@@ -50,7 +52,7 @@ const WHY = (usageOn: boolean) => [
   {
     k: 'Models',
     t: 'Frontier models and a cheaper open tier',
-    c: `Claude, GPT, Gemini, Grok and DeepSeek through one key at list minus the discount when one is set, routed only to zero-data-retention providers; Llama and Qwen on Macs for a flat ${netPrice} per million.`,
+    c: `Claude, GPT, Gemini, Grok and DeepSeek through one key at ${frontierPrice}, which covers what the upstream charges us, routed only to zero-data-retention providers; Llama and Qwen on Macs for a flat ${netPrice} per million.`,
   },
   {
     k: 'Privacy',
@@ -60,7 +62,7 @@ const WHY = (usageOn: boolean) => [
   {
     k: 'Record',
     t: 'Everything on the record',
-    c: 'Every epoch, the treasury ledger, marketplace fills and the usage share are public down to the dollar. Check that the credits issued match the fees collected.',
+    c: 'Every epoch, the treasury ledger, marketplace fills and the usage share are public down to the dollar. Fees are settled in a stablecoin and the holder half is held apart as a reserve, published every hour next to the credits it backs.',
   },
 ];
 
@@ -71,7 +73,7 @@ const TIERS = [
     tag: 'default',
   },
   { name: 'Any network node', desc: 'Any online node. Cheapest; the operator could in principle inspect memory while serving you.', tag: 'cheapest' },
-  { name: 'Upstream (ZDR)', desc: 'Skips the network for zero-data-retention providers only, at list price.', tag: 'list price' },
+  { name: 'Upstream (ZDR)', desc: `Skips the network for zero-data-retention providers only, at ${frontierPriceWords()}.`, tag: frontierPriceTag() },
 ];
 
 const SWITCH_SNIPPET = `base_url = "${PUBLIC_API_URL}/v1"\napi_key  = "mesh_sk_…"   # from /app/keys`;
@@ -85,7 +87,10 @@ export function Landing() {
   // Engine 2 (docs/PRICING.md): the gateway says whether the usage-revenue share is on. Off until it confirms.
   const usageOn = stats?.usageShareEnabled ?? TOKENOMICS.usageShare.enabled; // the gateway's live flag; the shipped config until it answers
   const discountBps = stats?.upstreamDiscountBps ?? T.upstreamDiscountBps;
+  const markupBps = stats?.upstreamMarkupBps ?? T.upstreamMarkupBps;
+  const frontierPrice = frontierPriceWords(markupBps, discountBps);
   const frontierPhrase = discountBps > 0 ? `frontier models ${discountBps / 100}% below list` : 'frontier models through zero-data-retention providers';
+  const directOn = stats?.directSalesEnabled ?? T.directSales.enabled;
   // `?ref=CODE` from a referral link: keep it until the wallet signs in and claims it on the dashboard.
   // Kept only while the points programme is on (built, disabled by default).
   const [params] = useSearchParams();
@@ -153,6 +158,7 @@ export function Landing() {
           <p className="lede">
             Hold {minHold} and AI credits land in your wallet every {epochWord}, paid from the {feePct} trading fee
             {usageOn ? ' and a share of paid usage' : ''}. Spend them on open models served by Macs in the network or on {frontierPhrase} — or sell what you do not use.
+            {EXPIRY_DAYS ? ` Credits last ${EXPIRY_DAYS}.` : ''}
           </p>
         </div>
         <GuestChat id={CHAT_ID} />
@@ -205,12 +211,15 @@ export function Landing() {
             </h2>
             <p className="sub">
               Trading pays a {feePct} fee; {holderPct} becomes credits for holders every {epochWord}, {treasuryPct} goes to the treasury. Paid requests and marketplace sales leave a
-              margin{usageOn ? ', and a share of it joins the same pool' : '; the holder share of it switches on with the token launch'}. The treasury pays the Macs.
+              margin{usageOn ? ', and a share of it joins the same pool' : '; the holder share of it is switched off'}. The treasury pays the Macs. Fees are swapped to a
+              stablecoin as they are swept, and the holder half is kept apart as the reserve behind the credits.
             </p>
           </div>
         </div>
-        <Engines usageShareOn={usageOn} upstreamDiscountBps={discountBps} />
-        <p className="engines-note">Nothing is minted to pay anyone.</p>
+        <Engines usageShareOn={usageOn} upstreamDiscountBps={discountBps} upstreamMarkupBps={markupBps} />
+        <p className="engines-note">
+          Nothing is minted to pay anyone. <Link to="/docs#backing">How credits are backed, and when they expire</Link>
+        </p>
       </section>
 
       {/* 3 · four ways in */}
@@ -233,7 +242,8 @@ export function Landing() {
             <ul>
               <li>Credits land in your wallet every {epochWord}, paid by trading fees.</li>
               <li>One OpenAI-compatible key: SDKs, editors, shell scripts, anything.</li>
-              <li>Or just chat in the browser. {minHold} is the only ticket.</li>
+              <li>Or just chat in the browser. {minHold} is the ticket{directOn ? '; without it, buy credits at face value' : ''}.</li>
+              {EXPIRY_DAYS ? <li>Credits last {EXPIRY_DAYS} from the day they land. The oldest are spent first.</li> : null}
             </ul>
             <Link className="arrow-link" to="/app/chat">
               Open the chat
@@ -243,7 +253,7 @@ export function Landing() {
             <span className="display d-l n">02</span>
             <h3 className="display d-s">Sell what you don't use</h3>
             <ul>
-              <li>List unused credit at a discount; buyers get it below face value.</li>
+              <li>List unused credit at a discount; buyers get it below face value.{T.starterCredits.transferable ? '' : ' Starter credit is for spending, not selling.'}</li>
               <li>{MARKET_FEE_PCT} fee on the sale, half of it back to holders next {epochWord}.</li>
             </ul>
             <MarketDepthBook />
@@ -256,7 +266,7 @@ export function Landing() {
             <h3 className="display d-s">Run a Mac</h3>
             <ul>
               <li>Leave an Apple Silicon Mac open. One command, or the menu-bar app.</li>
-              <li>Earn {nodePay} per million tokens served, tracked per job.</li>
+              <li>Earn {nodePay} per million tokens served, tracked per job; up to {nodeCeiling} when staked.</li>
               <li>Pause any time. Nothing about the person asking reaches your machine.</li>
             </ul>
             <Link className="arrow-link" to="/app/node">
@@ -290,7 +300,7 @@ export function Landing() {
           </div>
         </div>
         <div className="why">
-          {WHY(usageOn).map((w) => (
+          {WHY(usageOn, frontierPrice).map((w) => (
             <div className="why-item" key={w.k}>
               <h3 className="display d-s">{w.t}</h3>
               <p>

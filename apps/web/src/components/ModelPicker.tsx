@@ -41,6 +41,14 @@ function pctOff(m: CatalogueModel): number | null {
   return Math.round((1 - mesh / list) * 100);
 }
 
+/** How far above list an upstream model is billed (the markup), in percent to one decimal; null at or below list. */
+function pctOver(m: CatalogueModel): number | null {
+  const list = m.listPrice.promptUsdPerM + m.listPrice.completionUsdPerM;
+  const mesh = m.meshPrice.promptUsdPerM + m.meshPrice.completionUsdPerM;
+  if (m.served !== 'upstream' || list <= 0 || mesh <= list) return null;
+  return Math.round((mesh / list - 1) * 1000) / 10;
+}
+
 /** Privacy tier badge: where the prompt is processed. */
 export function PrivacyBadge({ privacy, compact = false }: { privacy: CatalogueModel['privacy']; compact?: boolean }) {
   const network = privacy === 'network';
@@ -147,6 +155,7 @@ export function ModelPicker({
   }, [models]);
 
   const off = current ? pctOff(current) : null;
+  const over = current ? pctOver(current) : null;
   const pill = variant === 'pill';
 
   return (
@@ -180,7 +189,7 @@ export function ModelPicker({
               <span style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{current.displayName}</span>
               <span className="muted mp-hint" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                 {fmtPair(current.meshPrice)}
-                {off !== null ? ` · ${off}% below list` : ''}
+                {off !== null ? ` · ${off}% below list` : over !== null ? ` · list + ${over}%` : ''}
               </span>
             </span>
             <PrivacyBadge privacy={current.privacy} compact />
@@ -252,7 +261,13 @@ export function ModelPicker({
                             <span className="muted" style={{ textDecoration: pct !== null ? 'line-through' : undefined }}>
                               {fmtPair(m.listPrice)}
                             </span>
-                            {pct !== null ? <span style={{ color: 'var(--accent)' }}> · {pct}% below list</span> : null}
+                            {pct !== null ? (
+                              <span style={{ color: 'var(--accent)' }}> · {pct}% below list</span>
+                            ) : pctOver(m) !== null ? (
+                              <span className="muted"> · list + {pctOver(m)}%</span>
+                            ) : m.served !== 'upstream' ? (
+                              <span className="muted"> · flat network price</span>
+                            ) : null}
                           </>
                         )}
                       </span>

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { GATEWAY_URL } from '../playwright.config';
-import { balanceUsd, devLogin, parseUsd, signIn } from './helpers';
+import { MOCK_REPLY_USD, balanceUsd, devLogin, parseUsd, signIn, topUpPrepaid } from './helpers';
 
 test.describe('landing', () => {
   test('centred hero with the wide guest chat, two-engine diagram, four ways in, live numbers from the gateway', async ({ page }) => {
@@ -61,9 +61,9 @@ test.describe('landing', () => {
     await expect(figures).toContainText('1.5%');
     await expect(figures).toContainText('1,000 MESH');
     await expect(figures).toContainText('2.5%');
-    // "Same models. Less spend." between the figures and the engines: live catalogue, list vs Mesh per 1M tokens.
+    // "Same models. Open ones for less." between the figures and the engines: live catalogue, list vs Mesh per 1M tokens.
     const spend = page.locator('#spend');
-    await expect(spend.getByRole('heading', { name: /Same models\. Less spend\./ })).toBeVisible();
+    await expect(spend.getByRole('heading', { name: /Same models\. Open ones for less\./ })).toBeVisible();
     const figBox = (await figures.boundingBox())!;
     const spendBox = (await spend.boundingBox())!;
     const enginesBox = (await engines.boundingBox())!;
@@ -76,13 +76,13 @@ test.describe('landing', () => {
     const listPrice = Number((await spend.locator('.spend-col').first().locator('.n').innerText()).replace('$', ''));
     const meshPrice = Number((await spend.locator('.spend-col.mesh .n').innerText()).replace('$', ''));
     expect(meshPrice).toBeLessThan(listPrice);
-    // A frontier model at list (config upstreamDiscountBps = 0): the parity line, no saving bar.
+    // A frontier model at list plus the markup (config upstreamMarkupBps = 600): the markup line, no saving bar.
     await spend.locator('#spend-model').click();
     const frontier = page.getByRole('option', { name: /GPT-5|Claude|Gemini/ }).first();
     if (await frontier.isVisible({ timeout: 3000 }).catch(() => false)) {
       await frontier.click();
-      await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('At list price today — served privately with zero data retention');
-      await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('Discounts on frontier models switch on with the pricing decision');
+      await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('List plus 6% — served privately with zero data retention');
+      await expect(spend.locator('.spend-bar[data-state="parity"]')).toContainText('The upstream charges us 5.5% on top of list; the markup covers it.');
       await expect(spend.locator('.spend-bar[data-state="saving"]')).toHaveCount(0);
       await expect(spend.locator('.spend-served')).toContainText('Served by upstream, privacy upstream · zero data retention');
     } else {
@@ -292,7 +292,7 @@ test.describe('chat without a wallet', () => {
     await expect(reply).toContainText('Hello from the Mesh mock upstream');
     await expect(reply.locator('.via')).toContainText('mesh/mock');
     await expect(reply.locator('.via')).not.toContainText('free');
-    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before - 0.001, 5);
+    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before - MOCK_REPLY_USD, 5);
     // Forget drops it and the free counter returns.
     await rail.getByRole('button', { name: 'Forget' }).click();
     await expect(rail).toContainText('Have a key?');
@@ -314,6 +314,33 @@ test.describe('signed-in app', () => {
       .poll(async () => parseUsd(await tile.textContent()), { message: 'balance tile matches /me' })
       .toBeCloseTo(expected, 3);
     await expect(page.getByText('Distribution').first()).toBeVisible(); // ledger row from the seeded epoch
+    // Credit expiry (config creditExpiry): the seeded distribution is the next thing to lapse, 90 days out.
+    const expiry = page.locator('.tile', { hasText: 'Expires next' }).first();
+    await expect(expiry).toBeVisible();
+    await expect(expiry).toContainText(/on \d{4}-\d{2}-\d{2} · \$[\d.,]+ within 30 days/);
+  });
+
+  test('market: buy credits from Mesh at face value with the prepaid balance; the purchase shows in the history', async ({ page }) => {
+    const session = await signIn(page, 'mockwallet_bob');
+    await topUpPrepaid('mockwallet_bob', 10);
+    const before = await balanceUsd(session.token);
+    await page.goto('/app/market');
+    const form = page.getByRole('form', { name: 'Buy credits from Mesh' });
+    await expect(form).toBeVisible();
+    await expect(form).toContainText('$1 buys $1');
+    await expect(form).toContainText('Bought credit lasts 90 days and is not refundable.');
+    // More than the prepaid balance is refused before it is sent.
+    await page.locator('#direct-amount').fill('25');
+    await expect(form).toContainText('That is more than your prepaid balance ($10.00)');
+    await expect(form.getByRole('button', { name: 'Buy', exact: true })).toBeDisabled();
+    await page.locator('#direct-amount').fill('2');
+    await form.getByRole('button', { name: 'Buy', exact: true }).click();
+    await expect(page.locator('.toasts')).toContainText('$2.00 of credit bought at face value.');
+    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before + 2, 5);
+    await expect.poll(async () => parseUsd(await page.getByTestId('credit-balance').textContent())).toBeCloseTo(before + 2, 2);
+    await expect(page.locator('.mkt')).toContainText('Bought from Mesh');
+    // The balance card says how long credits last.
+    await expect(page.getByRole('region', { name: 'Your balance' })).toContainText('Credits last 90 days from the day they land.');
   });
 
   test('create key → chat completion streams and the balance decreases', async ({ page }) => {
@@ -352,9 +379,9 @@ test.describe('signed-in app', () => {
     await expect(reply).toContainText('served by');
     await expect(reply.locator('.via')).toContainText('mesh/mock');
 
-    // Mock upstream charges $0.001 per request.
-    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before - 0.001, 5);
-    await expect(page.locator('.pill.balance[aria-live] b')).toContainText((before - 0.001).toFixed(3));
+    // Mock upstream charges $0.001 per request at list; the wallet pays list plus the shipped markup.
+    await expect.poll(() => balanceUsd(session.token)).toBeCloseTo(before - MOCK_REPLY_USD, 5);
+    await expect(page.locator('.pill.balance[aria-live] b')).toContainText((before - MOCK_REPLY_USD).toFixed(3));
 
     // The key shows the spend on the Keys page too.
     await page.goto('/app/keys');
@@ -562,6 +589,16 @@ test.describe('signed-in app', () => {
     await expect(page.locator('#treasury')).toContainText('Credit marketplace');
     await expect(page.locator('#treasury')).toContainText('Usage-revenue share');
     await expect(page.locator('#treasury .pill', { hasText: /^on$/ })).toBeVisible(); // usageShare ships enabled
+    // Reserve, expiry and direct sales. The e2e gateway runs the mock adapter, so the reserve says it is not live and claims no coverage.
+    const reserve = page.locator('section#reserve');
+    await expect(reserve).toBeVisible();
+    await expect(reserve.getByTestId('reserve-panel')).toContainText('Credit reserve');
+    await expect(reserve.getByTestId('reserve-panel').locator('.pill')).toHaveText('not live');
+    await expect(reserve.getByTestId('reserve-panel')).toContainText('there is no reserve to read yet');
+    await expect(reserve).toContainText('Credit expiry');
+    await expect(reserve.locator('.pill', { hasText: '90 days' })).toBeVisible();
+    await expect(reserve).toContainText('Direct sales');
+    await expect(page.locator('#method')).toContainText('Method · reserve');
     await expect(page.locator('main')).not.toContainText('Something broke');
     // Old addresses redirect and keep their hash.
     await page.goto('/report#treasury');
@@ -570,6 +607,30 @@ test.describe('signed-in app', () => {
     await expect(page).toHaveURL(/\/stats$/);
     await page.goto('/app/stats');
     await expect(page).toHaveURL(/\/stats$/);
+  });
+
+  test('docs: expiry, the reserve, the frontier markup and buying from Mesh are explained; terms and risk say the same', async ({ page }) => {
+    await page.goto('/docs#backing');
+    const backing = page.locator('section#backing');
+    await expect(backing).toBeVisible();
+    await expect(backing.getByRole('heading', { name: 'Credits expire after 90 days' })).toBeVisible();
+    await expect(backing.getByRole('heading', { name: 'The reserve' })).toBeVisible();
+    await expect(backing.getByRole('heading', { name: 'When the price feed is stale' })).toBeVisible();
+    await expect(backing).toContainText('A request always spends your oldest credit');
+    await expect(backing).toContainText('A guarantee, a deposit or a redemption right.');
+    await expect(page.locator('section#models')).toContainText('list plus 6%');
+    await expect(page.locator('section#models')).toContainText('The upstream charges Mesh 5.5% on top of list');
+    await expect(page.locator('section#market')).toContainText('Starter credit cannot be listed.');
+    await expect(page.locator('section#market').getByRole('heading', { name: 'Or buy from Mesh at face value' })).toBeVisible();
+    await expect(page.locator('section#staking')).toContainText('A job never pays its node more than 90% of what the user was billed');
+    await page.locator('#faq summary', { hasText: 'Do credits expire?' }).click();
+    await expect(page.locator('#faq')).toContainText('Every credit lapses 90 days after it landed in your wallet');
+    await page.goto('/terms');
+    await expect(page.locator('main')).toContainText('Credits expire.');
+    await expect(page.locator('main')).toContainText('The reserve is information, not a guarantee.');
+    await expect(page.locator('main')).toContainText('Buying credits from us.');
+    await page.goto('/risk');
+    await expect(page.locator('main')).toContainText('The reserve does not make credits redeemable.');
   });
 
   test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {

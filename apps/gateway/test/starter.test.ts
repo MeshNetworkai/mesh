@@ -9,8 +9,9 @@ import { ADMIN, testConfig, testServer } from './helpers.js';
 const STARTER = testConfig.starterCredits;
 const AMOUNT = STARTER.amountUsd;
 
+/** The shipped block requires the wallet to hold; most tests here sign in wallets that hold nothing, so they switch that off. */
 function withStarter(patch: Partial<TokenomicsConfig['starterCredits']> = {}): TokenomicsConfig {
-  return { ...testConfig, starterCredits: { ...STARTER, enabled: true, ...patch } };
+  return { ...testConfig, starterCredits: { ...STARTER, enabled: true, requireMinHold: false, ...patch } };
 }
 
 async function signIn(app: FastifyInstance, wallet: string, ip = '203.0.113.10') {
@@ -37,6 +38,16 @@ describe('starter credits on first connect', () => {
     expect(AMOUNT).toBeGreaterThan(0);
     expect(STARTER.maxWallets).toBeGreaterThan(0);
     expect(STARTER.maxPerIpPerDay).toBe(3);
+    // Shipped: only wallets that hold get it, and it cannot be sold on the marketplace.
+    expect(STARTER.requireMinHold).toBe(true);
+    expect(STARTER.transferable).toBe(false);
+  });
+
+  it('as shipped, a wallet that holds nothing gets no starter credit', async () => {
+    const { app } = await testServer({ config: { ...testConfig, starterCredits: { ...STARTER, enabled: true } }, holders: { holder: testConfig.minHoldTokens } });
+    apps.push(app);
+    expect((await signIn(app, 'stranger')).starter).toBeNull();
+    expect((await signIn(app, 'holder', '203.0.113.11')).starter?.amountUsd).toBe(AMOUNT);
   });
 
   it('first sign-in grants once; the second sign-in does not grant again', async () => {

@@ -1,8 +1,11 @@
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
 
-/** `market_*`: credit marketplace (market.ts) — escrow out of the seller's spendable balance, refund on cancel/expiry, buy into the buyer. */
-export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter' | 'market_escrow' | 'market_refund' | 'market_buy';
+/**
+ * `market_*`: credit marketplace (market.ts) — escrow out of the seller's spendable balance, refund on cancel/expiry, buy into the buyer.
+ * `purchase`: credit bought from Mesh at face value (direct-sales.ts). `expiry`: credit that lapsed (expiry.ts).
+ */
+export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry';
 
 export interface LedgerRow {
   id: number;

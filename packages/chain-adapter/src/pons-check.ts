@@ -161,7 +161,7 @@ export async function checkPonsConfig(
       else if (vTreasury) push('feeVault.treasury', 'ok', `treasury ${vTreasury}`);
       if (vStable !== undefined) {
         const stable = cfg.stable ?? cfg.usdc;
-        if (vStable === zeroAddress) push('feeVault.stable', cfg.sweepMode === 'raw' ? 'ok' : 'warn', `vault has no stable set: only sweepRaw works${cfg.sweepMode === 'raw' ? ' (sweepMode raw, fine)' : ' — set sweepMode "raw" or call setStable + setRoute'}`);
+        if (vStable === zeroAddress) push('feeVault.stable', 'warn', `vault has no stable set: only sweepRaw works${cfg.sweepMode === 'raw' ? ' (sweepMode raw)' : ' and sweepMode "swap" will revert'} — call setStable + setRoute so fees settle in the stablecoin`);
         else if (stable && vStable.toLowerCase() !== stable.toLowerCase()) push('feeVault.stable', 'fail', `vault stable ${vStable} != config ${stable}`);
         else push('feeVault.stable', 'ok', `stable ${vStable}`);
       }
@@ -174,8 +174,11 @@ export async function checkPonsConfig(
     const code = await read('priceFeed.code', () => client.getCode({ address: cfg.priceFeed as Address }));
     if (code === undefined || code === '0x') push('priceFeed.code', 'fail', `no contract at priceFeed ${cfg.priceFeed}`);
     else push('priceFeed.code', 'ok', 'price feed has code');
-  } else if (cfg.fixedEthUsd) push('priceFeed', 'warn', `no Chainlink feed: ETH valued at fixed $${cfg.fixedEthUsd}`);
-  else push('priceFeed', 'warn', 'no priceFeed and no fixedEthUsd: ETH fees will be valued at $0 until one is set');
+  } else if (cfg.fixedEthUsd) push('priceFeed', 'warn', `no Chainlink feed: ETH valued at fixed $${cfg.fixedEthUsd} (credits are minted against this number; set a feed before real fees flow)`);
+  else push('priceFeed', 'warn', 'no priceFeed and no fixedEthUsd: ETH fees stay unswept (no credits minted) until one is set');
+  // Raw sweeps leave the holder share in ETH while credits are fixed in USD: the pool carries the price risk.
+  if (cfg.sweepMode === 'raw') push('sweepMode', 'warn', 'sweepMode is "raw": the holder share reaches the credit pool as ETH, not the stablecoin, so the reserve moves with the ETH price. Use "swap" in production.');
+  else push('sweepMode', 'ok', 'sweepMode "swap": fees settle in the stablecoin on chain');
 
   report.ok = items.every((i) => i.status !== 'fail');
   return report;

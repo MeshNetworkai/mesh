@@ -8,11 +8,23 @@ info:
     $MESH trade is swept once an hour; half goes to the network treasury and half is split, pro rata, across
     every wallet holding at least 1,000 tokens (time-weighted over the hour) as credits denominated in US
     dollars. A second engine, a share of the margin on paid requests and marketplace fees, pays into the same
-    hourly pool; it is built and switches on with the pricing decision (`GET /stats → usageShareEnabled`).
+    hourly pool (`GET /stats → usageShareEnabled`).
     Holders spend credits through this gateway with their own API keys: open models on Macs in the network at
-    a flat price per million tokens, frontier models through zero-data-retention providers at list minus the
-    configured discount (`GET /v1/models` carries both prices). Credits nobody will use are sold on the credit
-    marketplace (`/market/*`, docs/MARKETPLACE.md); the first wallet sign-in receives starter credits.
+    a flat price per million tokens, frontier models through zero-data-retention providers at list plus a 6 %
+    markup that covers what the upstream charges Mesh (`GET /v1/models` carries both prices). Credits nobody
+    will use are sold on the credit marketplace (`/market/*`, docs/MARKETPLACE.md), and anyone can buy credits
+    from Mesh at face value with a prepaid balance (`/me/credits/buy`). A holder's first sign-in receives
+    starter credits, which can be spent but not sold.
+
+    What stands behind a credit, and what limits it:
+
+    * **Reserve.** The holder share of every sweep is swapped to a stablecoin on chain and kept in a
+      credit-pool wallet apart from the treasury. `GET /report → totals.reserve` publishes that balance next
+      to the credits owed.
+    * **Expiry.** Every credit lapses 90 days after it landed, oldest first (`GET /me → expiry`,
+      `GET /stats → creditExpiryDays`).
+    * **Price feed.** When the price feed is stale, ETH fees stay unswept and no credits are minted for them
+      until it is fresh.
 
     Three kinds of credentials appear below:
 
@@ -47,6 +59,8 @@ tags:
     description: The Mac network. Registration, link codes, and the job protocol used by `mesh-node`.
   - name: Market
     description: Credit marketplace. Holders sell unused credits at a discount; buyers pay the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps 2.5% of the price, half to the next hourly distribution, half to the treasury. See docs/MARKETPLACE.md.
+  - name: Credits
+    description: Buy credits from Mesh at face value with a prepaid USD balance. The payment backs the credit 1:1; this is the route to credits that needs no token and no seller on the marketplace. See docs/PRICING.md.
   - name: Admin
     description: Operator endpoints (`x-admin-token` or the admin cookie from `POST /admin/login`). Every call is audited.
 security: []
@@ -640,8 +654,8 @@ paths:
                 object: list
                 data:
                   - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: Llama 3.1 8B, displayName: Llama 3.1 8B, vendor: Meta, tier: open, served: both, listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 }, meshPrice: { promptUsdPerM: 0.08, completionUsdPerM: 0.08 }, privacy: network, online: 3, guestAllowed: true, mesh_network: true }
-                  - { id: anthropic/claude-sonnet-4.5, object: model, created: 0, owned_by: anthropic, name: Claude Sonnet 4.5, displayName: Claude Sonnet 4.5, vendor: Anthropic, tier: frontier, served: upstream, listPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, meshPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, privacy: upstream_zdr, online: 0, guestAllowed: false, mesh_network: false }
-                pricing: { networkPricePerMTokens: 0.08, upstreamDiscountBps: 0, upstreamMarkupBps: 0, guestTiers: [open, fast] }
+                  - { id: anthropic/claude-sonnet-4.5, object: model, created: 0, owned_by: anthropic, name: Claude Sonnet 4.5, displayName: Claude Sonnet 4.5, vendor: Anthropic, tier: frontier, served: upstream, listPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, meshPrice: { promptUsdPerM: 3.18, completionUsdPerM: 15.9 }, privacy: upstream_zdr, online: 0, guestAllowed: false, mesh_network: false }
+                pricing: { networkPricePerMTokens: 0.08, upstreamDiscountBps: 0, upstreamMarkupBps: 600, guestTiers: [open, fast] }
         '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
         '429': { $ref: '#/components/responses/OpenAIRateLimited' }
         '502': { $ref: '#/components/responses/OpenAIUpstream' }
@@ -658,13 +672,13 @@ paths:
           zero-data-retention providers only, never to another node. `network` = any eligible node. `upstream_zdr` = skip the network.
           The machine that runs the model sees the prompt in plaintext whichever tier you pick. Unknown value → `400 invalid_privacy_tier`.
         * When an idle Mesh node of the right tier advertises the model, it serves the request and you pay the flat network price
-          ($0.02 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
+          ($0.08 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
         * When every such node is online but at capacity, the job is queued behind them for up to `routing.queueWaitMs`
           (6 s by default) and served by the first node that frees up (`mesh.routeReason: queued_then_node`). If none does,
           the request goes upstream with `x-mesh-fallback: queue_timeout`; when the queue is already `maxQueueDepthPerNode`
           deep per node it goes upstream at once with `x-mesh-fallback: queue_full`.
-        * Otherwise the request goes to the upstream provider at list minus the configured discount (`GET /v1/models → pricing`;
-          exactly list as shipped) and `x-mesh-route` names the upstream.
+        * Otherwise the request goes to the upstream provider at list plus the configured markup (`GET /v1/models → pricing`;
+          6 % as shipped, which covers the 5.5 % the upstream charges Mesh) and `x-mesh-route` names the upstream.
           If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
         * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
           (`your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
@@ -739,11 +753,11 @@ paths:
               schema: { $ref: '#/components/schemas/OpenAIError' }
         '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
         '402':
-          description: '`insufficient_quota`: credit balance is zero. Hold $MESH through an hour to receive credits.'
+          description: '`insufficient_quota`: credit balance is zero (credit past its 90 days has lapsed and does not count). Hold $MESH through an hour to receive credits, or buy some with `POST /me/credits/buy`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OpenAIError' }
-              example: { error: { message: 'Insufficient Mesh credits (balance $0.000000). Hold $MESH to receive hourly credits.', type: insufficient_quota, code: insufficient_quota, param: null } }
+              example: { error: { message: 'Insufficient Mesh credits (balance $0.000000). Hold $MESH to receive hourly credits, or buy credits on the market page.', type: insufficient_quota, code: insufficient_quota, param: null } }
         '403':
           description: '`model_not_allowed`: not in the model policy. `GET /v1/models` lists what is.'
           content:
@@ -1297,7 +1311,7 @@ paths:
           description: The `marketplace` block of `config/tokenomics.json`. Settlement is `prepaid` in this version.
           content:
             application/json:
-              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: prepaid }
+              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: prepaid, starterTransferable: false, creditExpiryDays: 90 }
         '404': { description: 'The marketplace is disabled (`marketplace.enabled: false`).' }
   /market/book:
     get:
@@ -1333,7 +1347,7 @@ paths:
     post:
       tags: [Market]
       summary: List credits for sale
-      description: Escrows `amountUsd` of the caller's spendable credits (ledger kind `market_escrow`) into a new listing. 30 writes a minute per IP.
+      description: Escrows `amountUsd` of the caller's spendable credits (ledger kind `market_escrow`) into a new listing. Unused starter credit cannot be listed (`GET /me/market → listableUsd`). Listing does not stop the 90-day clock; a buyer's credits start a fresh one. 30 writes a minute per IP.
       operationId: createMarketListing
       security: [{ session: [] }]
       requestBody:
@@ -1354,7 +1368,7 @@ paths:
               example: { id: lst_6f1c2b3a4d5e6f708192, seller: '9xQe…', amountUsd: 100, remainingUsd: 100, soldUsd: 0, discountBps: 3000, pricePerUsd: 0.7, status: open, created_at: 1760000000, expires_at: 1760604800, closed_at: null, ifFullySold: { buyerPaysUsd: 70, feeUsd: 1.75, youReceiveUsd: 68.25 } }
         '400': { description: '`below_minimum`, `discount_too_deep`, or a malformed body.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { description: '`insufficient_credits`: spendable balance is smaller than the amount.' }
+        '402': { description: '`insufficient_credits`: spendable balance is smaller than the amount. `non_transferable`: the balance covers it only by counting starter credit, which cannot be sold.' }
   /market/listings/{id}:
     delete:
       tags: [Market]
@@ -1429,7 +1443,7 @@ paths:
         '200':
           content:
             application/json:
-              example: { wallet: '9xQe…', creditBalanceUsd: 10, prepaid: { usd: 68.25, usdMicros: 68250000, ledger: [{ id: 3, kind: market_sale, deltaUsd: 40.95, ref: 'fill:fill_…', created_at: 1760000200 }] }, listings: [], fills: { asBuyer: [], asSeller: [] }, withdrawals: [] }
+              example: { wallet: '9xQe…', creditBalanceUsd: 10, nonTransferableUsd: 2, listableUsd: 8, prepaid: { usd: 68.25, usdMicros: 68250000, ledger: [{ id: 3, kind: market_sale, deltaUsd: 40.95, ref: 'fill:fill_…', created_at: 1760000200 }] }, listings: [], fills: { asBuyer: [], asSeller: [] }, withdrawals: [] }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /me/market/withdraw:
     post:
@@ -1447,6 +1461,44 @@ paths:
         '201': { description: '`{ id, wallet, amountUsd, status: pending, created_at, prepaidBalanceUsd }`.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { description: '`insufficient_prepaid`.' }
+  /credits/config:
+    get:
+      tags: [Credits]
+      summary: Direct sales — price and limits
+      operationId: getCreditsConfig
+      responses:
+        '200':
+          description: The `directSales` block of `config/tokenomics.json`, how the prepaid balance is funded, and what has been sold so far.
+          content:
+            application/json:
+              example: { enabled: true, pricePerUsd: 1, minUsd: 1, maxUsd: 10000, settlement: prepaid, deposits: { enabled: false, chainId: 4663, chainName: Robinhood Chain, explorer: 'https://robinhoodchain.blockscout.com', receiver: null, tokens: [], minUsd: 5, confirmations: 3 }, creditExpiryDays: 90, soldUsd: 1250, purchases: 37 }
+        '404': { description: 'Direct sales are disabled (`directSales.enabled: false`).' }
+  /me/credits/buy:
+    post:
+      tags: [Credits]
+      summary: Buy credits from Mesh at face value
+      description: Pays `amountUsd` from the caller's prepaid USD balance (`credit_purchase` row) and credits the same amount (`purchase` ledger row). $1 paid is $1 of credit; the payment backs the credit in the reserve. Bought credit lapses after `creditExpiryDays` like any other. 30 writes a minute per IP.
+      operationId: buyCredits
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountUsd]
+              properties:
+                amountUsd: { type: number, minimum: 1, maximum: 10000, description: 'USD of credit to buy.' }
+      responses:
+        '201':
+          description: The purchase and both balances afterwards.
+          content:
+            application/json:
+              example: { id: buy_6f1c2b3a4d5e6f708192, creditsUsd: 25, paidUsd: 25, created_at: 1760000000, expires_at: 1767776000, creditBalanceUsd: 31.4, prepaidBalanceUsd: 75 }
+        '400': { description: '`below_minimum`, `above_maximum`, or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`: top the prepaid balance up first.' }
+        '404': { description: 'Direct sales are disabled.' }
   /admin/prepaid:
     post:
       tags: [Market]
@@ -1713,6 +1765,17 @@ components:
         showSavings: { type: boolean }
         pointsEnabled: { type: boolean, description: 'Points / leaderboard / referral programme is live. Built but disabled by default; the related routes answer 404 when false.' }
         nodeRewardUsdPerMTokens: { type: number }
+        nodeRewardMaxShareBps: { type: integer, description: 'Most a job may pay its node, as a share of what the user was billed (9000 = 90 %). A stake multiplier lifts a reward up to here and no further.' }
+        usageShareEnabled: { type: boolean }
+        usageShareToHolders24hUsd: { type: number }
+        upstreamMarkupBps: { type: integer, description: 'Upstream models bill list × (1 + this / 10000).' }
+        upstreamDiscountBps: { type: integer }
+        upstreamFeeBps: { type: integer, description: 'What the upstream charges Mesh on top of list; the markup covers this before any margin is shared.' }
+        creditExpiryDays: { type: [integer, 'null'], description: 'Days after which a credit lapses; null when credits do not expire.' }
+        directSalesEnabled: { type: boolean }
+        starterTransferable: { type: boolean, description: 'False: unused starter credit can be spent but not listed on the marketplace.' }
+        starterRequiresHold: { type: boolean, description: 'True: only wallets holding the minimum receive starter credit.' }
+        reserve: { $ref: '#/components/schemas/Reserve' }
         starterGrants:
           type: object
           description: Starter credits on first connect (docs/SWITCHING.md). `remaining` is null when the wallet cap is 0 (unlimited).
@@ -1780,6 +1843,25 @@ components:
                     opsUsd: { type: number }
                     otherUsd: { type: number }
                     balanceUsd: { type: number }
+                reserve: { $ref: '#/components/schemas/Reserve' }
+                creditExpiry:
+                  type: object
+                  description: Credit that lapsed because it outlived `days` (expiry ledger rows).
+                  properties:
+                    enabled: { type: boolean }
+                    days: { type: integer }
+                    expiredUsd: { type: number }
+                    wallets: { type: integer }
+                    last30dUsd: { type: number }
+                directSales:
+                  type: object
+                  description: Credits bought from Mesh at face value (purchase ledger rows).
+                  properties:
+                    enabled: { type: boolean }
+                    soldUsd: { type: number }
+                    purchases: { type: integer }
+                    wallets: { type: integer }
+                    last30dUsd: { type: number }
         last7d: { $ref: '#/components/schemas/PeriodTotals' }
         last30d: { $ref: '#/components/schemas/PeriodTotals' }
         byWeek: { type: array, items: { $ref: '#/components/schemas/WeekReport' } }
@@ -1851,18 +1933,51 @@ components:
         expiresInSec: { type: integer, example: 604800 }
         starter:
           type: [object, 'null']
-          description: 'Set on the first-ever sign-in of a wallet when starter credits are on (config `starterCredits`, docs/SWITCHING.md): the USD just credited and the resulting balance. `null` on every later sign-in, when the programme is paused or its wallet cap is reached.'
+          description: 'Set on the first-ever sign-in of a wallet when starter credits are on (config `starterCredits`, docs/SWITCHING.md): the USD just credited and the resulting balance. `null` on every later sign-in, when the wallet does not hold the minimum, when the programme is paused or its wallet cap is reached. Starter credit can be spent on requests but not sold.'
           properties:
             amountUsd: { type: number, example: 2 }
             balanceUsd: { type: number, example: 2 }
+    Reserve:
+      type: object
+      description: |
+        What the credit-pool wallet held at the last hourly reading against the credits owed. The holder share
+        of every sweep is swapped to the stablecoin and sent there; only that stablecoin counts as held.
+      properties:
+        source: { type: string, enum: [chain, mock, unavailable], description: '`mock`: the token is not live, fees are a test feed and nothing is held. `unavailable`: the last read failed.' }
+        asset: { type: [string, 'null'], description: Address of the settlement stablecoin. }
+        heldUsd: { type: [number, 'null'] }
+        otherUsd: { type: [number, 'null'], description: 'ETH (or anything else) in the pool wallet, valued at the reading. Not counted in `heldUsd`.' }
+        creditsSpendableUsd: { type: number }
+        creditsInEscrowUsd: { type: number, description: Credit escrowed in open marketplace listings. }
+        requiredUsd: { type: number, description: '`creditsSpendableUsd + creditsInEscrowUsd`.' }
+        coverage: { type: [number, 'null'], description: '`heldUsd ÷ requiredUsd`; null when nothing is owed or nothing could be read.' }
+        surplusUsd: { type: [number, 'null'] }
+        short: { type: [boolean, 'null'], description: 'True when coverage is below `minCoverageBps`.' }
+        minCoverageBps: { type: integer }
+        note: { type: [string, 'null'] }
+        asOf: { type: [integer, 'null'], description: Unix seconds of the reading. }
+    ExpiryOutlook:
+      type: object
+      description: Credit expiry for one wallet. Every credit lapses `days` after it landed; requests and listings spend the oldest first.
+      properties:
+        enabled: { type: boolean }
+        days: { type: integer }
+        next:
+          type: [object, 'null']
+          description: The next credit to lapse.
+          properties:
+            usd: { type: number }
+            at: { $ref: '#/components/schemas/UnixSeconds' }
+        within7dUsd: { type: number }
+        within30dUsd: { type: number }
     LedgerEntry:
       type: object
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [distribution, usage, starter, adjustment] }
+        kind: { type: string, enum: [distribution, usage, starter, adjustment, market_escrow, market_refund, market_buy, purchase, expiry] }
         deltaUsd: { type: number }
         deltaUsdMicros: { type: integer }
-        ref: { type: [string, 'null'], description: '`epoch:<start>` or `req:<id>`.' }
+        ref: { type: [string, 'null'], description: '`epoch:<start>`, `req:<id>`, `listing:<id>`, `fill:<id>`, `purchase:<id>` or `expiry:<cutoff>`.' }
         created_at: { $ref: '#/components/schemas/UnixSeconds' }
     Savings:
       type: object
@@ -1885,6 +2000,8 @@ components:
           properties:
             usd: { type: number }
             usdMicros: { type: integer }
+        expiry: { $ref: '#/components/schemas/ExpiryOutlook' }
+        nonTransferableUsd: { type: number, description: 'Unused starter credit in the balance: spendable on requests, not sellable on the marketplace.' }
         ledger: { type: array, items: { $ref: '#/components/schemas/LedgerEntry' }, description: Newest 20 rows. }
         apiKeys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
         savings: { $ref: '#/components/schemas/Savings' }
@@ -1952,7 +2069,7 @@ components:
         tier: { type: [string, 'null'], enum: [frontier, fast, open, null], description: '`frontier` strongest closed models, `fast` cheaper closed models, `open` open weights.' }
         served: { type: string, enum: [network, upstream, both], description: Where the request can land; `both` is Mesh nodes first with upstream fallback. }
         listPrice: { $ref: '#/components/schemas/PricePerM', description: OpenRouter list price. }
-        meshPrice: { $ref: '#/components/schemas/PricePerM', description: What Mesh bills; the flat network price on a node, else list ± the configured discount or markup. }
+        meshPrice: { $ref: '#/components/schemas/PricePerM', description: 'What Mesh bills; the flat network price on a node, else list plus the configured markup (6 % as shipped) or minus a discount.' }
         privacy: { type: string, enum: [network, upstream_zdr], description: Where the prompt is processed. }
         online: { type: integer, description: Nodes advertising this model right now (0 for upstream-only models). }
         guestAllowed: { type: boolean, description: A homepage guest may pick it. }
@@ -1991,7 +2108,7 @@ components:
         prompt_tokens: { type: integer }
         completion_tokens: { type: integer }
         total_tokens: { type: integer }
-        cost: { type: number, description: USD charged for this request. }
+        cost: { type: number, description: 'USD charged to your wallet for this request: the flat network price on a node, list plus the markup (or minus the discount) upstream. On streams it is in the usage chunk and repeated in the final `mesh` chunk.' }
     MeshRoute:
       type: object
       description: How the reply was served. Node fields are present when a Mesh node served it.
@@ -2001,7 +2118,7 @@ components:
         servedBy: { type: string, enum: [your node, trusted node, network node, upstream (ZDR), upstream] }
         nodeId: { type: string }
         chip: { type: string }
-        listCostUsd: { type: number, description: What the upstream would have charged. }
+        listCostUsd: { type: number, description: 'What the upstream would have charged at list (node-served replies), or did charge Mesh at list (upstream-served replies billed with a markup or discount).' }
         savedUsd: { type: number, description: listCostUsd minus what you paid, never negative. }
     ChatCompletion:
       type: object

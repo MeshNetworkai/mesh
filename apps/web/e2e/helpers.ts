@@ -1,7 +1,18 @@
 import type { Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ADMIN_TOKEN, GATEWAY_URL } from '../playwright.config';
 
 export const WALLET = 'mockwallet_alice';
+
+const pricing = (JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../config/tokenomics.json'), 'utf8')) as { requestPricing: { upstreamMarkupBps?: number; upstreamDiscountBps?: number } }).requestPricing;
+/**
+ * What one reply from the mock upstream costs a wallet. The mock upstream reports $0.001 at list; the gateway
+ * bills list plus the shipped markup (or minus the discount), read from config/tokenomics.json so a repricing
+ * does not break the arithmetic.
+ */
+export const MOCK_REPLY_USD = Math.round(1000 * (1 + (pricing.upstreamMarkupBps ?? 0) / 10_000 - (pricing.upstreamDiscountBps ?? 0) / 10_000)) / 1_000_000;
 
 /** Mint a session JWT through the (dev-only) admin endpoint, exactly like scripts/demo.sh. */
 export async function devLogin(wallet = WALLET): Promise<{ token: string; wallet: string; chain: string }> {
@@ -33,6 +44,16 @@ export async function signIn(page: Page, wallet = WALLET) {
     localStorage.setItem('mesh.session', JSON.stringify({ wallet: s.wallet, chain: s.chain }));
   }, session);
   return session;
+}
+
+/** Credit a wallet's prepaid USD balance the way the team does during the beta (POST /admin/prepaid). */
+export async function topUpPrepaid(wallet: string, amountUsd: number): Promise<void> {
+  const res = await fetch(`${GATEWAY_URL}/admin/prepaid`, {
+    method: 'POST',
+    headers: { 'x-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, amountUsd, note: 'e2e top-up' }),
+  });
+  if (!res.ok) throw new Error(`/admin/prepaid ${res.status}: ${await res.text()}`);
 }
 
 export async function balanceUsd(token: string): Promise<number> {

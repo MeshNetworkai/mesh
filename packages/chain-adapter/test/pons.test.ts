@@ -18,7 +18,7 @@ const E18 = 10n ** 18n;
 const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');
 
 /** Minimal fake chain: escrow balances per asset, vault balances, a Chainlink feed, Transfer logs. */
-function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigint; vaultUsdg?: bigint; feedAnswer?: bigint; feedAgeSec?: number; logs?: Array<{ block: bigint; from: Address; to: Address; value: bigint }> } = {}) {
+function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigint; vaultUsdg?: bigint; poolEth?: bigint; poolUsdg?: bigint; feedAnswer?: bigint; feedAgeSec?: number; logs?: Array<{ block: bigint; from: Address; to: Address; value: bigint }> } = {}) {
   const calls: string[] = [];
   const T0 = 1_700_000_000;
   const client = {
@@ -30,7 +30,7 @@ function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigi
     },
     async getBalance({ address }: { address: Address }) {
       calls.push(`getBalance:${address}`);
-      return address === VAULT ? (p.vaultEth ?? 0n) : 0n;
+      return address === VAULT ? (p.vaultEth ?? 0n) : address === CREDIT_POOL ? (p.poolEth ?? 0n) : 0n;
     },
     async getLogs({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) {
       return (p.logs ?? []).filter((l) => l.block >= fromBlock && l.block <= toBlock).map((l, i) => ({ blockNumber: l.block, logIndex: i, args: l }));
@@ -40,7 +40,7 @@ function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigi
       if (functionName === 'decimals') return address === FEED ? 8 : address === USDG ? 6 : 18;
       if (functionName === 'balanceOf' && address === PONS_MAINNET.escrow) return p.escrowEth ?? 0n;
       if (functionName === 'balanceOfToken' && address === PONS_MAINNET.escrow) return (args?.[1] as string).toLowerCase() === USDG.toLowerCase() ? (p.escrowUsdg ?? 0n) : 0n;
-      if (functionName === 'balanceOf' && address === USDG) return (args?.[0] as string) === VAULT ? (p.vaultUsdg ?? 0n) : 0n;
+      if (functionName === 'balanceOf' && address === USDG) return (args?.[0] as string) === VAULT ? (p.vaultUsdg ?? 0n) : (args?.[0] as string) === CREDIT_POOL ? (p.poolUsdg ?? 0n) : 0n;
       if (functionName === 'balanceOf') return 0n;
       if (functionName === 'latestRoundData') {
         if (p.feedAnswer === undefined) throw new Error('feed down');
@@ -82,18 +82,23 @@ describe('PonsEvmAdapter pricing', () => {
     expect(await a.ethUsd()).toEqual({ price: 3000, source: 'chainlink' });
   });
 
-  it('falls back to fixedEthUsd when the feed is down or stale', async () => {
+  it('a configured feed that is down or stale yields no price, even with fixedEthUsd set', async () => {
     const down = adapter(fakeChain({}).client, { priceFeed: FEED, fixedEthUsd: 2500 });
     const r = await down.ethUsd();
-    expect(r.price).toBe(2500);
-    expect(r.source).toBe('fixed');
+    expect(r.price).toBeNull();
+    expect(r.source).toBe('none');
     expect(r.warning).toMatch(/chainlink read failed/);
     const stale = adapter(fakeChain({ feedAnswer: 3_000_00000000n, feedAgeSec: 7200 }).client, { priceFeed: FEED, fixedEthUsd: 2500 });
-    expect((await stale.ethUsd()).source).toBe('fixed');
-    const staleNoFixed = adapter(fakeChain({ feedAnswer: 3_000_00000000n, feedAgeSec: 7200 }).client, { priceFeed: FEED });
-    const s = await staleNoFixed.ethUsd();
-    expect(s.price).toBe(3000);
+    const s = await stale.ethUsd();
+    expect(s).toMatchObject({ price: null, source: 'none', stale: true });
     expect(s.warning).toMatch(/old/);
+    // the stale answer itself is not used either
+    const staleNoFixed = adapter(fakeChain({ feedAnswer: 3_000_00000000n, feedAgeSec: 7200 }).client, { priceFeed: FEED });
+    expect((await staleNoFixed.ethUsd()).price).toBeNull();
+  });
+
+  it('uses fixedEthUsd only when no feed is configured', async () => {
+    expect(await adapter(fakeChain({}).client, { fixedEthUsd: 2500 }).ethUsd()).toEqual({ price: 2500, source: 'fixed' });
   });
 
   it('reports no price without feed or fixed', async () => {
@@ -126,13 +131,37 @@ describe('PonsEvmAdapter.collectFees (dry run)', () => {
     expect(a.lastSweep!.assets.map((x) => x.usd)).toEqual([1000, 250]);
   });
 
-  it('returns 0 when nothing is pending and warns when ETH cannot be priced', async () => {
+  it('returns 0 when nothing is pending and leaves ETH unswept when it cannot be priced', async () => {
     expect(await adapter(fakeChain({}).client).collectFees()).toEqual({ amountUsd: 0, txId: '' });
     const a = adapter(fakeChain({ escrowEth: E18 }).client);
     expect(await a.pendingFeesUsd()).toBeNull();
     const r = await a.collectFees();
-    expect(r.amountUsd).toBe(0);
+    expect(r).toEqual({ amountUsd: 0, txId: '' });
+    expect(a.lastSweep!.assets).toHaveLength(0);
     expect(a.lastSweep!.warnings.join(' ')).toMatch(/no priceFeed and no fixedEthUsd/);
+    expect(a.lastSweep!.warnings.join(' ')).toMatch(/left unswept, no credits minted/);
+  });
+
+  it('a stale feed skips the ETH but still sweeps the stablecoin', async () => {
+    const { client } = fakeChain({ escrowEth: E18, escrowUsdg: 250_000_000n, feedAnswer: 3_000_00000000n, feedAgeSec: 7200 });
+    const a = adapter(client, { priceFeed: FEED, fixedEthUsd: 2500, quoteTokens: [ETH_ASSET, USDG], stable: USDG, stableDecimals: 6 });
+    const r = await a.collectFees();
+    expect(r.amountUsd).toBe(250);
+    expect(a.lastSweep!.assets.map((x) => x.asset)).toEqual([USDG.toLowerCase()]);
+    expect(a.lastSweep!.warnings.join(' ')).toMatch(/left unswept/);
+    // the same fees are valued and swept once the feed is fresh again
+    const fresh = adapter(fakeChain({ escrowEth: E18, escrowUsdg: 250_000_000n, feedAnswer: 3_000_00000000n }).client, { priceFeed: FEED, quoteTokens: [ETH_ASSET, USDG], stable: USDG, stableDecimals: 6 });
+    expect((await fresh.collectFees()).amountUsd).toBe(3250);
+  });
+
+  it('reads the credit-pool wallet: the stablecoin is the reserve, ETH next to it is reported apart', async () => {
+    const { client } = fakeChain({ poolUsdg: 1_234_500_000n, poolEth: E18 / 4n });
+    const a = adapter(client, { stable: USDG, stableDecimals: 6, fixedEthUsd: 2000 });
+    expect(await a.reserve()).toEqual({ wallet: CREDIT_POOL, stable: USDG, stableUsd: 1234.5, otherUnits: 0.25, otherUsd: 500 });
+    // no price for the ETH: it is reported as unpriced, the stablecoin still counts
+    const unpriced = await adapter(client, { stable: USDG, stableDecimals: 6 }).reserve();
+    expect(unpriced).toMatchObject({ stableUsd: 1234.5, otherUnits: 0.25, otherUsd: null });
+    await expect(adapter(client, { creditPool: undefined }).reserve()).rejects.toThrow(/creditPool not configured/);
   });
 
   it('throws a configuration error without the escrow address', async () => {

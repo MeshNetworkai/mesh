@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { PUBLIC_API_URL, TOKENOMICS, frontierPriceWords } from '../config';
 import { usePointsEnabled, useTheme } from '../lib/hooks';
 
 /** Social links come from the build environment (VITE_SOCIAL_X, VITE_SOCIAL_TELEGRAM); unset = not shown. No placeholders on a live site. */
@@ -69,7 +69,10 @@ export function Footer() {
             </span>
             {TOKENOMICS.name}
           </Link>
-          <p>Two engines, one hourly pool: trading fees today, a share of paid usage when it is switched on. Answered by Macs, frontier models at list, credits sold on when unused, every dollar on the record.</p>
+          <p>
+            Two engines, one hourly pool: trading fees and a share of paid usage. Answered by Macs, frontier models at {frontierPriceWords()}, credits backed by a published
+            reserve{TOKENOMICS.creditExpiry.enabled ? `, good for ${TOKENOMICS.creditExpiry.days} days` : ''} and sold on when unused, every dollar on the record.
+          </p>
           <div className="row" style={{ gap: 12 }}>
             {SOCIAL.map((s) => (
               <a key={s.label} href={s.href} rel="noreferrer noopener" target="_blank">

@@ -392,8 +392,10 @@ Fixed after the session (tests in `apps/gateway/test/reserve.test.ts`):
   character, claim ten million tokens and collect the reward. Now the broker measures the claim against
   the text it relayed (`completionTokenBound` / `promptTokenBound` in `network.ts`), `max_tokens` for a
   node job is capped at `routing.nodeMaxTokens`, and a job served by the requester's own wallet accrues
-  no reward (`relay.ts`). The stake multiplier is capped too: a reward never exceeds the network
-  price of the job, so two wallets working together cannot earn more than they spend.
+  no reward (`relay.ts`). The stake multiplier is capped too: a reward never exceeds
+  `nodeRewards.maxShareOfPriceBps` of what the job is billed (9000 = 90 % as shipped, $0.072 per 1M
+  tokens at the $0.08 network price), so two wallets working together earn back at most 90 % of what
+  they spend and every network job leaves a margin.
 
 ## Privacy (session 7, 2026-10-03)
 

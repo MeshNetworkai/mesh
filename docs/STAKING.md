@@ -2,10 +2,16 @@
 
 Stake MESH to reach a tier. A tier does two things, both applied **off-chain by the gateway**:
 
-1. **Node rewards × multiplier.** Every job a node serves accrues `usdPerMTokens × tokens × tier.multiplier`
-   to the node's reward wallet (`apps/gateway/src/routes/v1.ts`).
+1. **Node rewards × multiplier, up to a ceiling.** Every job a node serves accrues
+   `usdPerMTokens × tokens × tier.multiplier` to the node's reward wallet, and never more than
+   `nodeRewards.maxShareOfPriceBps` (9000 = 90 %) of what the user was billed for that job
+   (`apps/gateway/src/relay.ts`). At the shipped prices the ceiling is what a staked node earns (see
+   the table below).
 2. **Routing priority.** When several idle nodes can serve a model, candidates are ordered by the
    reward wallet's tier first, then reputation, then recency (`apps/gateway/src/routing.ts`).
+
+The gold tier, together with the operator pledge, also makes a node trusted for the `trusted` privacy
+tier (`privacy.trustedMinStakeTier`, `docs/PRIVACY.md`).
 
 The contracts hold tokens and record positions. They pay nothing, so there is no reward token to
 drain, no emission schedule and no oracle on-chain.
@@ -16,11 +22,16 @@ Tiers live in `config/tokenomics.json` → `stakeTiers` and are the single sourc
 gateway and the web app. The on-chain table should be deployed from the same values (`forge script`
 reads them from env, see below) and updated by the owner whenever config changes.
 
-| tier   | minStake (MESH) | lockDays | multiplier |
-| ------ | --------------- | -------- | ---------- |
-| none   | 0               | –        | 1.0×       |
-| silver | 10,000          | –        | 1.5×       |
-| gold   | 50,000          | 30       | 2.0×       |
+| tier   | minStake (MESH) | lockDays | multiplier | reward per 1M tokens at the shipped prices |
+| ------ | --------------- | -------- | ---------- | ------------------------------------------ |
+| none   | 0               | –        | 1.0×       | $0.06                                      |
+| silver | 10,000          | –        | 1.5×       | $0.072 (1.5× would be $0.09; held at the ceiling) |
+| gold   | 50,000          | 30       | 2.0×       | $0.072 (2× would be $0.12; held at the ceiling)   |
+
+The last column follows from `nodeRewards.usdPerMTokens` ($0.06), `requestPricing.networkPricePerMTokens`
+($0.08) and `nodeRewards.maxShareOfPriceBps` (9000): the ceiling is `floor(price × 0.9)` in micro-USD,
+$0.072 per 1M tokens. Silver and gold therefore earn the same, 1.2× the base rate. At these prices the
+two staked tiers differ from each other by routing priority and by gold's trusted status, not by pay.
 
 **Rule (identical on EVM, Solana and in the gateway):** a wallet is on the highest tier whose
 `minStake <= staked` **and** whose `lockDays <= the lock the wallet committed to`. Holding 60k
@@ -138,8 +149,14 @@ your row marked, and the stake / unstake panels.
 
 - Tier changes: edit `tokenomics.json`, then `setTiers` on-chain from the owner so both agree. The
   gateway re-evaluates at the next epoch; `StakeResolver.clear()` forces it.
-- Rewards are paid from the treasury share exactly as before — the multiplier only scales the accrual,
-  so budget for the average multiplier when setting `nodeRewards.usdPerMTokens`.
-- The multiplied reward is capped at what the job is billed (`requestPricing.networkPricePerMTokens ×
-  tokens`). At the shipped prices ($0.06 reward, $0.08 network price) that holds silver and gold alike at
-  1.33× in effect: 1.5× and 2× only pay out in full if the reward rate is lowered or the price raised.
+- Rewards accrue against the treasury ledger as before; the multiplier only scales the accrual, up to
+  the ceiling.
+- The ceiling is `nodeRewards.maxShareOfPriceBps` of what the job is billed
+  (`requestPricing.networkPricePerMTokens × tokens`): 90 % as shipped, so every network job leaves at
+  least 10 % of its price as margin ($0.008 per 1M tokens: $0.0024 to holders, $0.0056 to the
+  treasury; an unstaked node leaves $0.02). That margin also pays for spot-check re-runs. With the
+  ceiling at 10000 a staked node would take the whole price and the job would leave nothing.
+- For 1.5× and 2× to pay out in full the base rate would have to be at most 60 % (silver) or 45 %
+  (gold) of the network price: at $0.08 that is $0.048 or $0.036 per 1M tokens instead of $0.06.
+  `GET /stats → nodeRewardMaxShareBps` publishes the ceiling.
+- A node serving a request from its own reward wallet earns nothing for it, whatever its tier.

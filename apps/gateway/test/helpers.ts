@@ -1,7 +1,8 @@
 import { MockAdapter } from '@mesh/chain-adapter';
 import { loadTokenomics, type TokenomicsConfig } from '@mesh/config';
 import type { AppContext } from '../src/context.js';
-import { openDb } from '../src/db.js';
+import { openDb, type Db } from '../src/db.js';
+import { addLedgerEntry, ensureWallet } from '../src/ledger.js';
 import type { Env } from '../src/env.js';
 import type { InstallOptions } from '../src/routes/install.js';
 import { buildServer } from '../src/server.js';
@@ -21,7 +22,23 @@ export const testConfig: TokenomicsConfig = {
   verification: { ...loaded.verification, enabled: false },
   // Starter credits would shift the exact balances the e2e test asserts; starter.test.ts turns them on with its own config.
   starterCredits: { ...loaded.starterCredits, enabled: false },
+  // The mock upstream costs a round $0.001 a request and the protocol tests assert exact balances against it, so
+  // they run at list price. The shipped markup and upstream fee are asserted in catalogue.test.ts and exercised
+  // with their own config in catalogue.test.ts / usage-share.test.ts.
+  requestPricing: { ...loaded.requestPricing, upstreamMarkupBps: 0, upstreamFeeBps: 0 },
 };
+
+/** Pricing exactly as config/tokenomics.json ships it (markup and upstream fee included). */
+export const SHIPPED_PRICING = loaded.requestPricing;
+
+/**
+ * Credit a wallet with ordinary, sellable credit (what an epoch distribution or a purchase leaves behind).
+ * POST /admin/starter-credit grants starter credit, which the shipped config does not let a wallet list.
+ */
+export function grantCredit(db: Db, wallet: string, amountUsd: number, chain = 'solana'): void {
+  ensureWallet(db, wallet, chain);
+  addLedgerEntry(db, { wallet, deltaMicros: Math.round(amountUsd * 1_000_000), kind: 'adjustment', ref: 'test:grant' });
+}
 
 /** Network pricing the tests assert against, read from config/tokenomics.json so a repricing does not break the arithmetic. */
 export const NETWORK_PRICE_PER_M = testConfig.requestPricing.networkPricePerMTokens;

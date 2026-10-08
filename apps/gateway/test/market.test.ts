@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runEpoch } from '../src/jobs/distribute.js';
 import { pendingPoolExtra, quote, reapMarket } from '../src/market.js';
-import { ADMIN, testConfig, testServer } from './helpers.js';
+import { ADMIN, grantCredit, testConfig, testServer } from './helpers.js';
 
 type App = Awaited<ReturnType<typeof testServer>>['app'];
 
@@ -12,8 +12,9 @@ const H = (jwt: string) => ({ authorization: `Bearer ${jwt}` });
 async function login(app: App, wallet: string): Promise<string> {
   return (await app.inject({ method: 'POST', url: '/admin/dev-login', headers: ADMIN, payload: { wallet } })).json().token;
 }
+/** Sellable credit for the seller. (Starter credit cannot be listed: see the last describe block.) */
 async function starter(app: App, wallet: string, amountUsd: number) {
-  await app.inject({ method: 'POST', url: '/admin/starter-credit', headers: ADMIN, payload: { wallet, amountUsd } });
+  grantCredit(app.ctx.db, wallet, amountUsd);
 }
 async function prepaid(app: App, wallet: string, amountUsd: number, note = 'test top-up', ref?: string) {
   return app.inject({ method: 'POST', url: '/admin/prepaid', headers: ADMIN, payload: { wallet, amountUsd, note, ref } });

@@ -20,10 +20,20 @@ function withBalances(rows: LedgerRow[], currentUsd: number): Array<LedgerRow & 
   });
 }
 
+const KIND_LABELS: Record<string, string> = {
+  distribution: 'Distribution',
+  usage: 'Usage',
+  starter: 'Starter credit',
+  adjustment: 'Adjustment',
+  market_escrow: 'Listed for sale',
+  market_refund: 'Listing returned',
+  market_buy: 'Bought on the market',
+  purchase: 'Bought from Mesh',
+  expiry: 'Expired',
+};
+
 function kindLabel(kind: string) {
-  if (kind === 'distribution') return 'Distribution';
-  if (kind === 'usage') return 'Usage';
-  return kind.charAt(0).toUpperCase() + kind.slice(1);
+  return KIND_LABELS[kind] ?? kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
 /** "How to earn" — the live rules behind the Points tile, on hover or focus. */
@@ -194,6 +204,10 @@ export function Dashboard() {
   const loading = me.loading && !me.data;
   const savings = me.data?.savings ?? null;
   const showSavings = stats?.showSavings !== false;
+  // Credit expiry (docs/PRICING.md §6): what lapses next in this wallet, and the starter credit that cannot be sold.
+  const expiry = me.data?.expiry ?? null;
+  const starterLeft = me.data?.nonTransferableUsd ?? 0;
+  const directOn = stats?.directSalesEnabled ?? TOKENOMICS.directSales.enabled;
 
   return (
     <>
@@ -239,6 +253,15 @@ export function Dashboard() {
           value={fmtInt(stats?.nodesOnline ?? null)}
           delta={stats ? `upstream ${stats.upstream}` : '—'}
         />
+        {expiry?.enabled ? (
+          <Tile
+            label="Expires next"
+            loading={loading}
+            value={expiry.next ? fmtUsd(expiry.next.usd, 3) : '—'}
+            delta={expiry.next ? `on ${fmtDate(expiry.next.at)} · ${fmtUsd(expiry.within30dUsd)} within 30 days` : `nothing ageing · credits last ${expiry.days} days`}
+            deltaKind={expiry.within7dUsd > 0 ? 'dn' : ''}
+          />
+        ) : null}
         {pointsEnabled ? <PointsTile /> : null}
         {showSavings ? (
           <Tile
@@ -258,6 +281,24 @@ export function Dashboard() {
           />
         ) : null}
       </div>
+
+      {expiry?.enabled && expiry.within7dUsd > 0 ? (
+        <Notice>
+          {fmtUsd(expiry.within7dUsd, 3)} of your credit lapses within 7 days. Credits last {expiry.days} days from the day they land and the oldest are spent first:{' '}
+          <Link to="/app/chat">spend it</Link>
+          {starterLeft >= expiry.within7dUsd ? '.' : (
+            <>
+              , or <Link to="/app/market">list it for sale</Link> while it still has time to sell.
+            </>
+          )}{' '}
+          <Link to="/docs#expiry">How expiry works</Link>
+        </Notice>
+      ) : null}
+      {starterLeft > 0 ? (
+        <p className="small muted">
+          {fmtUsd(starterLeft, 3)} of your balance is starter credit: it spends on any model and is used first, and it cannot be listed on the market.
+        </p>
+      ) : null}
 
       <div>
         <div className="row between" style={{ marginBottom: 8 }}>
@@ -353,6 +394,12 @@ export function Dashboard() {
           <Empty title="No credits yet">
             Credits arrive at the top of the hour for wallets holding at least {fmtInt(TOKENOMICS.minHoldTokens)} {TOKENOMICS.ticker}
             . Nothing to claim.
+            {directOn ? (
+              <>
+                {' '}
+                Holding nothing? <Link to="/app/market">Buy credits at face value</Link>.
+              </>
+            ) : null}
           </Empty>
         ) : (
           <div className="tblwrap">

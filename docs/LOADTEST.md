@@ -107,7 +107,7 @@ scratch directory and are summarised here rather than committed.
 1. **No queueing when every node is busy — straight to OpenRouter.** `decideRoute`
    (`apps/gateway/src/routing.ts`) only returns `target: 'node'` when an *idle* (`busy = 0`) node
    advertises the tag at the instant the request arrives; otherwise `reason: 'no_online_node'` and
-   the request is served upstream at list price. Under a burst 90 % of requests bypass the network
+   the request is served upstream at the upstream price (list plus the markup, `docs/PRICING.md` §2). Under a burst 90 % of requests bypass the network
    that exists to serve them (runs 1 and 3: 180/200 upstream, `servedByNetworkPercent` 10). The
    `JobBroker` already supports queued jobs with `firstTokenTimeoutMs` (8 s) and `unclaimed`
    fallback, so the fix is routing policy: when nodes advertising the tag are *online* (busy or not),
@@ -206,7 +206,7 @@ oldest-first by whichever node frees up, so fairness is preserved.
   `config/tokenomics.json → routing`.
 - **The cost is first-token latency for queued requests**, by construction: at c=40 the p50 first token
   is 1.9 s because half the clients wait for a node to finish the previous 300-token job. Before, those
-  clients got an upstream answer in 50 ms at list price. Which is right is a product choice; the default
+  clients got an upstream answer in 50 ms at the upstream price. Which is right is a product choice; the default
   (wait up to 6 s, then upstream) keeps the worst case at `queueWaitMs` + upstream latency.
 - **The pure node path is unchanged or slightly better** (c=20: first token 18/63/148 ms vs 19/93/119,
   chunk POST p50 5 ms vs 4.8 with p95 16 vs 17): bottlenecks 3–5 removed ~60,000 `SELECT * FROM jobs`

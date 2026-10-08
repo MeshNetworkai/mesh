@@ -18,6 +18,7 @@ import { Reservations } from './reserve.js';
 import { isTrustedNode, reputationConfig } from './routing.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
+import { creditsRoutes } from './routes/credits.js';
 import { guestRoutes } from './routes/guest.js';
 import { installRoutes, type InstallOptions } from './routes/install.js';
 import { keyRoutes } from './routes/keys.js';
@@ -229,6 +230,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(meRoutes, ctx);
   await app.register(stakeRoutes, ctx);
   await app.register(marketRoutes, ctx);
+  await app.register(creditsRoutes, ctx);
   await app.register(v1Routes, ctx);
   await app.register(guestRoutes, ctx);
   await app.register(adminRoutes, ctx);

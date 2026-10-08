@@ -16,6 +16,35 @@ export interface MarketConfig {
   settlement: 'prepaid';
   /** Self-serve top-ups (docs/MARKETPLACE.md "Paying in"); `enabled` false until the stablecoin + receiver are configured. */
   deposits?: DepositsInfo;
+  /** False: unused starter credit cannot be listed. */
+  starterTransferable?: boolean;
+  /** Days after which credit lapses (a buyer's credit starts a fresh window), or null when credits do not expire. */
+  creditExpiryDays?: number | null;
+}
+
+/** GET /credits/config: direct sales (docs/PRICING.md §7). */
+export interface CreditsConfig {
+  enabled: boolean;
+  /** USD paid per $1 of credit: always face value. */
+  pricePerUsd: number;
+  minUsd: number;
+  maxUsd: number;
+  settlement: 'prepaid';
+  deposits?: DepositsInfo;
+  creditExpiryDays: number | null;
+  soldUsd: number;
+  purchases: number;
+}
+
+/** POST /me/credits/buy. */
+export interface Purchase {
+  id: string;
+  creditsUsd: number;
+  paidUsd: number;
+  created_at: number;
+  expires_at: number | null;
+  creditBalanceUsd: number;
+  prepaidBalanceUsd: number;
 }
 
 export interface DepositsInfo {
@@ -105,7 +134,7 @@ export interface FillResult extends Fill {
 
 export interface PrepaidRow {
   id: number;
-  kind: 'topup' | 'market_buy' | 'market_sale' | 'withdrawal' | 'withdrawal_refund' | 'adjustment';
+  kind: 'topup' | 'market_buy' | 'market_sale' | 'withdrawal' | 'withdrawal_refund' | 'adjustment' | 'credit_purchase';
   deltaUsd: number;
   ref: string | null;
   created_at: number;
@@ -125,6 +154,10 @@ export interface Withdrawal {
 export interface MyMarket {
   wallet: string;
   creditBalanceUsd: number;
+  /** Unused starter credit in the balance: spendable, not sellable. */
+  nonTransferableUsd?: number;
+  /** What this wallet could list right now (balance − starter credit − credit held by requests in flight). */
+  listableUsd?: number;
   prepaid: { usd: number; usdMicros: number; ledger: PrepaidRow[] };
   listings: Listing[];
   fills: { asBuyer: Fill[]; asSeller: Fill[] };
@@ -183,5 +216,20 @@ export const myMarket = (token: string): Promise<MyMarket> => (MOCK ? mock.mockM
 /** POST /me/market/deposits — paste a tx hash; the gateway verifies the transfer on chain and credits the prepaid balance. */
 export const deposit = (token: string, txHash: string): Promise<DepositResult> =>
   MOCK ? mock.mockDeposit(txHash) : rawSessionRequest<DepositResult>('/me/market/deposits', { method: 'POST', body: JSON.stringify({ txHash }) }, token);
+// ---------- direct sales ----------
+
+/** GET /credits/config; null when direct sales are disabled (404). */
+export const getCreditsConfig = async (): Promise<CreditsConfig | null> => {
+  if (MOCK) return mock.mockCreditsConfig();
+  try {
+    return await rawRequest<CreditsConfig>('/credits/config');
+  } catch {
+    return null;
+  }
+};
+/** POST /me/credits/buy — $1 of prepaid balance buys $1 of credit. */
+export const buyCredits = (token: string, amountUsd: number): Promise<Purchase> =>
+  MOCK ? mock.mockBuyCredits(amountUsd) : rawSessionRequest<Purchase>('/me/credits/buy', { method: 'POST', body: JSON.stringify({ amountUsd }) }, token);
+
 export const withdraw = (token: string, amountUsd: number): Promise<Withdrawal & { prepaidBalanceUsd: number }> =>
   MOCK ? mock.mockWithdraw(amountUsd) : rawSessionRequest('/me/market/withdraw', { method: 'POST', body: JSON.stringify({ amountUsd }) }, token);

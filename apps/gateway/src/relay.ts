@@ -1,10 +1,10 @@
-import { upstreamModelFor } from '@mesh/config';
+import { upstreamBilledMicros, upstreamCostMicros, upstreamModelFor } from '@mesh/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ServerResponse } from 'node:http';
 import type { AppContext } from './context.js';
 import { nowSec, recordError } from './db.js';
 import { addNodeReward, nodeRewardMicros } from './ledger.js';
-import { microsToUsd } from './money.js';
+import { bpsOf, microsToUsd } from './money.js';
 import type { JobUsage } from './network.js';
 import { syncPoints } from './points.js';
 import { decideRoute, eligibleNodes, type PrivacyChoice, type RouteDecision } from './routing.js';
@@ -316,9 +316,12 @@ async function serveFromNetwork(
       // A wallet serving its own request is running its own model for itself: it pays the network price
       // like anyone else but earns nothing, or credits would turn into treasury-paid rewards in a loop.
       const selfServed = node !== null && node !== undefined && node.wallet === requesterWallet;
-      // The stake multiplier may lift a reward up to the network price of the job and no further: a
-      // reward above what the job is billed would pay two wallets working together to send requests.
-      const reward = selfServed ? 0 : Math.min(price, applyMultiplier(nodeRewardMicros(tokens, ctx.config.nodeRewards.usdPerMTokens), rewardMultiplier));
+      // The stake multiplier may lift a reward up to `nodeRewards.maxShareOfPriceBps` of what the job is
+      // billed and no further. Above the price it would pay two wallets working together to send
+      // requests; at the price it would leave the network leg no margin (and nothing to pay for
+      // spot-check re-runs), so the shipped ceiling is 90%.
+      const rewardCeiling = bpsOf(price, ctx.config.nodeRewards.maxShareOfPriceBps);
+      const reward = selfServed ? 0 : Math.min(rewardCeiling, applyMultiplier(nodeRewardMicros(tokens, ctx.config.nodeRewards.usdPerMTokens), rewardMultiplier));
       let cost = 0;
       ctx.db.transaction(() => {
         cost = account.record({ model, usage: u, upstream: `node:${nodeId}`, latencyMs: Date.now() - started, stream, network: { costMicros: price, listCostMicros: listCost } });
@@ -432,6 +435,16 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   reply.header('x-mesh-privacy', upstreamPrivacy);
   reply.header('x-mesh-served-by', upstreamServedBy);
   const meshUpstream = { route: ctx.upstream.name, routeReason, privacy: upstreamPrivacy, servedBy: upstreamServedBy };
+  // With a markup or a discount what the wallet is charged differs from what the upstream reports in its own
+  // usage block. A paying caller is then shown the charge: `usage.cost` is rewritten to the billed amount and the
+  // upstream's figure moves to `mesh.listCostUsd`. At list (no markup, no discount) and for treasury-paid guests
+  // the upstream's reply is passed through untouched.
+  const pricing = ctx.config.requestPricing;
+  const reprice = account.paid === true && (pricing.upstreamMarkupBps > 0 || pricing.upstreamDiscountBps > 0);
+  const billedView = (usage: Usage, model: string) => {
+    const list = costMicros(usage, model, ctx.prices);
+    return { costUsd: microsToUsd(upstreamBilledMicros(list, pricing)), listCostUsd: microsToUsd(list) };
+  };
 
   let upstreamRes: Response;
   try {
@@ -470,11 +483,16 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
     let cost = 0;
     ctx.db.transaction(() => {
       cost = account.record({ model, usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: false });
-      // Engine 2: upstream margin = billed (list ± markup/discount) − upstream cost (list). Negative under a discount → nothing.
-      shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(usage, model, ctx.prices) });
+      // Engine 2: upstream margin = billed (list ± markup/discount) − upstream cost (list + the upstream's own
+      // fee, requestPricing.upstreamFeeBps). Negative under a discount, or a markup below the fee → nothing.
+      shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: upstreamCostMicros(costMicros(usage, model, ctx.prices), ctx.config.requestPricing) });
     })();
     reply.header('x-mesh-cost-usd', microsToUsd(cost).toString());
     if (account.balanceMicros) reply.header('x-mesh-balance-usd', microsToUsd(account.balanceMicros()).toString());
+    if (reprice && usage) {
+      await reply.send({ ...json, usage: { ...(json.usage as object), cost: microsToUsd(cost) }, mesh: { ...meshUpstream, listCostUsd: billedView(usage, model).listCostUsd } });
+      return true;
+    }
     await reply.send({ ...json, mesh: meshUpstream });
     return true;
   }
@@ -512,8 +530,26 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   // carrying `mesh` (privacy tier + served-by) so clients see the same final-chunk shape as for nodes.
   // Built when needed so it can repeat the usage the upstream reported (clients that read "the last
   // chunk with usage" keep working).
-  const meshChunk = () =>
-    `data: ${JSON.stringify({ id: `chatcmpl-mesh-${started.toString(36)}`, object: 'chat.completion.chunk', created: Math.floor(started / 1000), model: scanner.model ?? requestedModel, choices: [], ...(scanner.usage ? { usage: scanner.usage } : {}), mesh: meshUpstream })}\n\n`;
+  const meshChunk = () => {
+    const view = reprice && scanner.usage ? billedView(scanner.usage, scanner.model ?? requestedModel) : null;
+    const usage = scanner.usage ? { usage: view ? { ...scanner.usage, cost: view.costUsd } : scanner.usage } : {};
+    const mesh = view ? { ...meshUpstream, listCostUsd: view.listCostUsd } : meshUpstream;
+    return `data: ${JSON.stringify({ id: `chatcmpl-mesh-${started.toString(36)}`, object: 'chat.completion.chunk', created: Math.floor(started / 1000), model: scanner.model ?? requestedModel, choices: [], ...usage, mesh })}\n\n`;
+  };
+  /** The upstream's own usage chunk, with `cost` set to what the wallet is charged (see `reprice`). Anything else passes through. */
+  const repriceLine = (line: string): string => {
+    if (!reprice || !line.startsWith('data:') || !line.includes('"usage"')) return line;
+    const eol = line.endsWith('\r\n') ? '\r\n' : line.endsWith('\n') ? '\n' : '';
+    try {
+      const obj = JSON.parse(line.slice(5).trim()) as { usage?: unknown; model?: unknown };
+      const usage = normalizeUsage(obj.usage as Usage | null | undefined);
+      if (!usage) return line;
+      const model = typeof obj.model === 'string' && obj.model ? obj.model : (scanner.model ?? requestedModel);
+      return `data: ${JSON.stringify({ ...obj, usage: { ...(obj.usage as object), cost: billedView(usage, model).costUsd } })}${eol}`;
+    } catch {
+      return line;
+    }
+  };
   let pending = '';
   let doneSeen = false;
   const writeOut = sseWriter(raw);
@@ -528,7 +564,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
         doneSeen = true;
         out += meshChunk();
       }
-      out += line;
+      out += repriceLine(line);
     }
     if (flush) {
       out += pending;
@@ -567,7 +603,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       let cost = 0;
       ctx.db.transaction(() => {
         cost = account.record({ model, usage, upstream: ctx.upstream.name, latencyMs: Date.now() - started, stream: true });
-        shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: costMicros(usage, model, ctx.prices) });
+        shareUsageMargin(ctx, account, { source: 'upstream', ref: upstreamRef(account, started), model, billed: cost, cost: upstreamCostMicros(costMicros(usage, model, ctx.prices), ctx.config.requestPricing) });
       })();
       req.log.info({ wallet: account.wallet, model, costUsd: microsToUsd(cost), aborted, estimated: !scanner.usage }, 'chat completion (stream)');
     }

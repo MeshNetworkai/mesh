@@ -1,30 +1,34 @@
-# Mesh — status (2026-10-05, open beta)
+# Mesh — status (2026-10-08, open beta)
 
 One page: what is live right now, what is in the repo, how it is tested, what is switched off, and what only Oliver can do. Detail lives in the linked docs; this page is the index. The roadmap is `docs/ROADMAP.md`.
 
 ## What is live now
 
-Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gateway), auto-deployed from `main`. Open beta: `beta.inviteRequired: false`, anyone can connect a wallet. The token is **not** launched yet; the team launches it on launch day on Robinhood Chain via Pons (the internal docs repo, the internal docs repo) — the Pons fee path (`PonsFeeVault`, `PonsEvmAdapter`, Admin → Token panel) is built and tested — so until then fees come from the mock adapter's test feed and the credits it mints are beta credits.
+Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gateway), auto-deployed from `main`. Open beta: `beta.inviteRequired: false`, anyone can connect a wallet. The token is **not** launched yet; the team launches it on launch day on Robinhood Chain via Pons (the internal docs repo, the internal docs repo) — the Pons fee path (`PonsFeeVault`, `PonsEvmAdapter`, Admin → Token panel) is built and tested — so until then fees come from the mock adapter's test feed and the credits it mints are beta credits: no stablecoin reserve stands behind them yet (`GET /report → totals.reserve.source` is `mock`).
 
 | Live | Where | Notes |
 | --- | --- | --- |
 | Hourly epochs, pro-rata, time-weighted, 1,000 MESH minimum | gateway `jobs/distribute.ts`, `/stats` | engine 1; mock fee feed until the token exists |
-| OpenAI-compatible gateway: keys, chat, streaming, spend limits, per-key privacy tier | `/app/keys`, `/app/chat`, `/api` | `usage.cost`, `x-mesh-*` headers, failed requests never charged |
-| Frontier catalogue via ZDR upstream at list − configured discount (0 as shipped) | `GET /v1/models`, model picker | Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Llama, Qwen, Mistral; prices refreshed by script |
-| Mac network at $0.08/M to the user, $0.06/M to the node | `/app/node`, `/download` | link codes, Terminal / Homebrew / unsigned DMG, `mesh-node update`, `maxParallel`, queueing for busy nodes; Oliver's M3 Max served end to end on 3 Oct |
+| OpenAI-compatible gateway: keys, chat, streaming, spend limits, per-key privacy tier | `/app/keys`, `/app/chat`, `/api` | `usage.cost` is the amount charged (upstream replies are repriced under a markup or discount, with the list figure in `mesh.listCostUsd`), `x-mesh-*` headers, failed requests never charged |
+| Frontier catalogue via ZDR upstream at list + 6 % (`requestPricing.upstreamMarkupBps: 600`) | `GET /v1/models`, model picker | Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Llama, Qwen, Mistral; prices refreshed by script. OpenRouter charges Mesh 5.5 % on top of list (`upstreamFeeBps: 550`), so the margin is 0.5 % of list |
+| Mac network at $0.08/M to the user, $0.06/M to the node, never more than 90 % of the price ($0.072/M) with a stake multiplier | `/app/node`, `/download` | link codes, Terminal / Homebrew / unsigned DMG, `mesh-node update`, `maxParallel`, queueing for busy nodes; Oliver's M3 Max served end to end on 3 Oct |
+| Usage share (engine 2): 30 % of the margin on paid requests joins the next hourly pool | `usage-share.ts`, `/report → totals.usageShare` | on as shipped (`usageShare.enabled: true`); $0.006 per million network tokens to holders from an unstaked node, $0.0024 at the reward ceiling, $1.50 per $1,000 of frontier list usage (`docs/PRICING.md` §3) |
 | Privacy tiers (trusted / network / upstream_zdr) and the operator pledge | every `/v1` request | `docs/PRIVACY.md` |
 | Spot-check verification, 5 % of network jobs, quarantine after 2 mismatches | `verification.ts`, admin clear | `docs/NODE_PROTOCOL.md` §10 |
-| Credit marketplace: 0–70 % off, 2.5 % fee half to holders, escrow, partial fills, public book | `/app/market`, `/market/*` | prepaid balances topped up and withdrawals paid by the team during the beta (`POST /admin/prepaid`) |
-| Starter credits: $2 on first sign-in, first 500 wallets, 3 per IP per day | `starter.ts`, admin toggle | `docs/SWITCHING.md` |
+| Credit marketplace: 0–70 % off, 2.5 % fee half to holders, escrow, partial fills, public book | `/app/market`, `/market/*` | prepaid balances topped up and withdrawals paid by the team during the beta (`POST /admin/prepaid`); unused starter credit cannot be listed (`402 non_transferable`) |
+| Credit expiry: every credit lapses 90 days after it landed, oldest spent first | `expiry.ts`, `jobs/housekeeping.ts`, `GET /me → expiry` | swept after every epoch and lazily on chat, `/me`, `/me/market` and listing; `/report → totals.creditExpiry` (`docs/PRICING.md` §6) |
+| Direct credit sales: $1 of prepaid balance buys $1 of credit, $1 to $10,000 per purchase | `direct-sales.ts`, `GET /credits/config`, `POST /me/credits/buy` | the prepaid balance is topped up by the team during the beta; self-serve stablecoin deposits open once `marketplace.deposits.receiver` is set; `/report → totals.directSales` (`docs/PRICING.md` §7) |
+| Credit reserve report: pool-wallet stablecoin against credits owed, read every epoch | `reserve-report.ts`, `/report → totals.reserve`, `/stats → reserve`, alert `reserve_short` | built and running; `source: mock` and nothing held until the token is live (`docs/PRICING.md` §5) |
+| Starter credits: $2, holders of 1,000 MESH only, first 500 wallets, 3 per IP per day, spendable but not sellable | `starter.ts`, admin toggle | `docs/SWITCHING.md`. On the mock adapter no real wallet holds, so the sign-in grant reaches nobody until the token is live; the team can still grant by hand (`POST /admin/starter-credits`) |
 | Free homepage chat: 5 messages a day per visitor, network + fast models, treasury-paid | `/`, `POST /v1/guest/chat` | cost on `/report` |
 | Public stats: live network, every epoch, weekly report, treasury, marketplace, usage share | `/stats` (merges the old `/numbers` and `/report` pages) | raw: `GET /stats`, `/epochs`, `/report`, `/market/stats` |
-| Homepage v2: two-engine diagram, four ways in, switch strip | `/` | `components/Engines.tsx` draws engine 2 dashed while it is off |
+| Homepage v2: two-engine diagram, four ways in, switch strip | `/` | `components/Engines.tsx` draws engine 2 dashed only while `usageShareEnabled` is false; it is true as shipped |
 | Docs with roadmap; legal drafts with marketplace clauses | `/docs`, `/terms`, `/privacy`, `/risk` | `src/content/roadmap.ts` ↔ `docs/ROADMAP.md` |
 | Release pipeline: GitHub org MeshNetworkai, v0.1.0 tagged, CI + release build green, homebrew-tap published | `.github/workflows` | menu-bar DMG unsigned (Open Anyway) |
 
-**Built and switched off** (one config flag each): usage share / engine 2 (`usageShare.enabled`, needs the pricing decision: suggested $0.08/M network price, 30 % of margin to holders), holding-age weighting, points / leaderboard / referrals, invite gating, upstream discount or markup. Public copy describes the usage share as "built, switches on with the pricing decision".
+**Built and switched off** (one config flag each): holding-age weighting, points / leaderboard / referrals, invite gating, an upstream discount (`requestPricing.upstreamDiscountBps`; it replaces the markup and is a treasury-funded loss on top of the 5.5 % upstream fee).
 
-**Waiting for the token**: chain decision and deployment by the team, first live sweep, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDC checkout for the marketplace, buyback floor + NAV chart.
+**Waiting for the token**: chain decision and deployment by the team, first live sweep (`sweepMode` ships as `swap`, so the stablecoin, the swap route on the vault and the Chainlink feed must be set first: `docs/RUNBOOK.md` §6), the reserve actually holding stablecoin, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDC checkout for the marketplace, buyback floor + NAV chart.
 
 **Open before public launch** (the internal docs repo → Production readiness): web app bug hunt, Cloudflare in front, status page + node explorer, Telegram alert bot token, backup restore drill, legal review, Oliver's Mac linked to the live gateway, DMG opened once on a Mac, onboarding pack, starter-credit plan.
 
@@ -40,18 +44,19 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 | 6 — Cookie sessions + admin hardening | Session JWT moved to an `HttpOnly` cookie + CSRF double submit (bearer kept for API clients); admin cookie session + `ADMIN_IP_ALLOWLIST` enforced in-gateway + full admin audit; peppered API-key hashes (`KEY_PEPPER`, lazy rehash); `TRUSTED_PROXY_CIDRS` for `X-Forwarded-For` and geo headers; `x-request-id` everywhere. | `docs/SECURITY.md` §14, §17–21 and "Session 6" |
 | 7 — Points switched off, privacy tiers, launch polish | Points / leaderboard / referral programme kept in code but **disabled** (below). Privacy tiers for node routing (in progress in `network.ts` / `routing.ts` / `v1.ts` / `nodes.ts`, node-agent, Chat / Keys / Node pages, `docs/PRIVACY.md`). Brand notes, OG image, favicon, manifest, robots, sitemap, meta tags verified; screenshots regenerated. | `docs/POINTS.md`, `docs/PRIVACY.md`, `docs/BRAND.md` |
 | 8 — Mac distribution without an Apple account | Web `/download` (Terminal / Homebrew / unsigned menu-bar DMG with the macOS "Open Anyway" walkthrough, version + SHA-256 from `/downloads/latest.json`, "why the warning"); `homebrew-tap/Formula/mesh-node.rb` + `scripts/release/make-tarball.sh`; `mesh-node update` (sha256-verified atomic swap, service restart) + daily check in `start`; gateway `GET /install/latest.json`, `GET /install/mesh-node.js`, `POST /admin/release`; menu-bar "Check for updates"; `make dmg` → `MeshNode-<v>-arm64.dmg` + `.sha256`; `.github/workflows/release.yml` (bundle, tarball, DMG, GitHub Release, `latest.json`, formula commit/push). | `docs/DISTRIBUTION.md`, `docs/MENUBAR.md` §3 |
+| 9 — Credit economics (8 Oct) | Fees settle in a stablecoin (`sweepMode: "swap"`) and the holder half is a published reserve (`reserve-report.ts`, `reserve_snapshots`, alert `reserve_short`); a stale price feed leaves fees unswept instead of minting against a guess; frontier pricing is list + 6 % over a 5.5 % upstream fee; node rewards stop at 90 % of the price; credits lapse after 90 days (`expiry.ts`); starter credits are for holders and not sellable; direct credit sales (`direct-sales.ts`, `routes/credits.ts`); hourly chores in `jobs/housekeeping.ts`; migration 19. | `docs/PRICING.md` §2–§7, `docs/RUNBOOK.md` §6 and §11g |
 
 ## Tests and gates
 
 | Gate | Command | Count |
 | --- | --- | --- |
-| Gateway unit + HTTP | `pnpm test` | 22 files, **242** tests (`install.test.ts` 8: latest.json static/proxy/cache, admin release, bundle serve/redirect; `points.test.ts` 23 incl. 5 for the disabled state; `security` 28; `session-hardening` 15; node protocol, savings, staking, holding-age, report, alerts, verification) |
-| Chain adapter | `pnpm --filter @mesh/chain-adapter test` | 6 files, **45** tests (Solana + EVM offline; 3 more against a local anvil) |
-| Node agent | `pnpm --filter @mesh/node-agent test` | 6 files, **46** tests (`update.test.ts` 12 against a fake release server: good hash, bad hash, HTML body, same version, 5xx, daily loop, auto-install) |
+| Gateway unit + HTTP | `pnpm test` | 35 files, **379** tests (incl. `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts`: the ledger rebuild on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
+| Chain adapter | `pnpm --filter @mesh/chain-adapter test` | 8 files, **72** tests offline (Solana, EVM, Pons incl. the stale-feed and reserve-read cases); 11 more are skipped unless a local anvil is available |
+| Node agent | `pnpm --filter @mesh/node-agent test` | 6 files, **73** tests (incl. `update.test.ts` against a fake release server: good hash, bad hash, HTML body, same version, 5xx, daily loop, auto-install) |
 | EVM contracts | `cd contracts/evm && forge test` | 34 Foundry tests (17 token, 17 staking) |
-| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **18** Playwright tests (desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll). Two beta tests (`waitlist CTA`, `admin waitlist`) are red since `beta.inviteRequired` was set to `false` in commit 037c4e4 (open beta) and need updating to the open-beta state |
+| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **29** Playwright tests, all passing (desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll) |
 | Types / build | `pnpm -r typecheck`, `pnpm --filter web build` | green for web, config, chain-adapter, node-agent; gateway typecheck and the node-protocol / savings / network tests go red only while the privacy-tier edits to `routes/v1.ts`, `network.ts`, `routing.ts` are mid-flight |
-| Screenshots | `pnpm screenshots` → `docs/screens/` | 14 pages × 2 widths (landing, landing-beta, invite, app, keys, chat, stats, node, report, download, admin, api, terms, 404) |
+| Screenshots | `pnpm screenshots` → `docs/screens/` | 15 pages × 2 widths (landing, landing-beta, invite, app, keys, chat, node, market, stats, download, docs, admin, api, terms, 404), regenerated 8 Oct from the mock UI, which now prices upstream models as shipped (list + 6 %) instead of the old 20 % mock discount. `docs-1440.png` / `docs-390.png` are new; `report-*.png` is an older pair the script no longer writes |
 | Release tooling | `sh -n scripts/release/*.sh apps/menubar/scripts/*.sh`, `ruby -c homebrew-tap/Formula/mesh-node.rb`, YAML parse of `.github/workflows/*.yml` | green; `make-tarball.sh` exercised end to end (tarball → wrapper → `install.sh` → `mesh-node --version`) |
 | Load test | `pnpm loadtest` | 200 concurrent requests, 20 fake nodes: 0 failures, first token p95 686 ms on 2 vCPU |
 
@@ -61,6 +66,8 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 | --- | --- | --- |
 | **Points, leaderboard, referrals** | **Built, disabled.** `config/tokenomics.json → points.enabled: false` (schema default). Gateway 404s `/points/*`, `/leaderboard/*`, `/referrals/*`, `/me/points`, `/me/referral`; no `points_ledger` rows are written; `GET /stats → pointsEnabled: false`; web hides Ranks nav, `/leaderboard` (404), Points tile, Referral card, footer link; `/leaderboard` removed from sitemap and screenshots. `POST /admin/points/adjust` still works (audited). | `enabled: true` + restart; backlog is awarded from the ledger cursors. `docs/POINTS.md` |
 | Holding-age weighting | implemented, `distribution.holdingAge.enabled: false` | flip the flag |
+| Credit reserve | reading and report built; the mock adapter has no pool wallet, so `totals.reserve.source` is `mock`, `heldUsd` is null and `reserve_short` is silent | goes live with the token: `creditPool`, `stable`, the vault route and `priceFeed` set (`docs/RUNBOOK.md` §6) |
+| Self-serve prepaid deposits | built; `marketplace.deposits.receiver` is null and `tokens` is empty, so the team tops balances up by hand | fill `receiver` and `tokens` after the launch (`docs/MARKETPLACE.md`) |
 | Live chain adapters | implemented and tested offline; `MESH_ADAPTER=mock` in dev; no `config/deploy.<network>.json` committed | needs a deployed token (below) |
 | Node reward payout | rewards accrue in USD in `node_rewards`; no on-chain payout | `transferTokens` path exists; product decision on cadence |
 | Menu-bar app | Swift source complete (incl. "Check for updates"), never compiled; `release.yml` job B runs `swift build`/`make dmg` on `macos-latest`, so the first tag is also the first compile | first `swift build` on a Mac or the first tag (`docs/MENUBAR.md`) |
@@ -82,14 +89,15 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 6. **Hardware**: a Mac with Xcode to compile the menu-bar app locally (CI does it on `macos-latest` too); a few friends' Macs for the first node batch (the internal docs repo). Notarisation only when the developer account exists.
 8. **First release**: create `github.com/MeshNetworkai/homebrew-tap` (empty) and the `HOMEBREW_TAP_TOKEN` secret, push `v0.1.0`, deploy `latest.json` to the web host (`docs/DISTRIBUTION.md` §2), try the DMG on a clean Mac through Open Anyway.
 7. **Legal review** of `/terms`, `/privacy`, `/risk` before the token is tradeable.
+9. **Before the first live sweep**: set the stablecoin and the swap route on the vault and a Chainlink ETH/USD feed in Admin → Token. With `sweepMode: "swap"` the sweep reverts without the stablecoin or the route, and ETH fees stay unswept without a fresh price. Afterwards, keep the credit pool funded: move direct-sale proceeds from the deposit receiver into it, and take only the reported surplus out (`docs/RUNBOOK.md` §11g).
 
 ## Exact commands
 
 ```sh
 pnpm install && pnpm build          # packages + gateway + web
-pnpm test                           # gateway (242)
-pnpm test:all                       # + chain-adapter (45) + node-agent (46)
-pnpm e2e                            # Playwright (18) against the real gateway
+pnpm test                           # gateway (379)
+pnpm test:all                       # + chain-adapter (72, 11 skipped without anvil) + node-agent (73)
+pnpm e2e                            # Playwright (29) against the real gateway
 VERSION=0.2.0 sh scripts/release/make-tarball.sh   # release tarball + sha256 (CI does this on tag v*)
 pnpm dev                            # gateway :8787 (mock adapter, mock upstream) + web :5173
 pnpm demo                           # scripted end-to-end run incl. a curl-simulated node

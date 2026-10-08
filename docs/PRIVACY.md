@@ -57,7 +57,7 @@ An unknown or disabled value is `400 invalid_privacy_tier`, never a guess.
 | --- | --- | --- | --- |
 | `trusted` (default) | **Your own nodes** (reward wallet = the wallet behind the API key making the request), **or** nodes whose reward wallet is in `config.privacy.trustedWallets`, **or** whose wallet holds at least the `trustedMinStakeTier` stake tier (`gold`) **and** whose operator signed the pledge (§4) | Network price | `config.privacy.fallback` (default `upstream_zdr`). `fallback: "network"` is only honoured when nobody asked for trusted explicitly; an explicit trusted request (header, body or key) goes to the ZDR upstream and **never silently to another node** |
 | `network` | Any online, idle, reputable node advertising the model | Network price | Plain upstream |
-| `upstream_zdr` | OpenRouter with `provider: {data_collection: "deny"}` (zero-data-retention providers only) | List price | n/a (an upstream error is surfaced; fewer providers qualify, so a model can be unavailable under ZDR) |
+| `upstream_zdr` | OpenRouter with `provider: {data_collection: "deny"}` (zero-data-retention providers only) | List price plus the upstream markup (`requestPricing.upstreamMarkupBps`, 6 % as shipped) | n/a (an upstream error is surfaced; fewer providers qualify, so a model can be unavailable under ZDR) |
 
 Models that are not network models (`config/model-policy.json → networkModels`) go upstream under any
 tier; the ZDR flag is set unless the caller explicitly picked `network`.

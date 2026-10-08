@@ -6,6 +6,7 @@ import type { AppContext } from '../context.js';
 import { dbOk, nowSec } from '../db.js';
 import { microsToUsd } from '../money.js';
 import { jobStats24h } from '../network.js';
+import { reserveView } from '../reserve-report.js';
 import { NODE_ONLINE_SEC } from '../routing.js';
 import { networkSavingsUsd24h } from '../savings.js';
 import { starterStatsView } from '../starter.js';
@@ -169,6 +170,19 @@ export function computeStats(ctx: AppContext) {
     /** Upstream pricing: a discount on OpenRouter list (or a markup), bps. */
     upstreamDiscountBps: ctx.config.requestPricing.upstreamDiscountBps,
     upstreamMarkupBps: ctx.config.requestPricing.upstreamMarkupBps,
+    /** What the upstream charges Mesh on top of list (its top-up fee), bps: the markup covers this first. */
+    upstreamFeeBps: ctx.config.requestPricing.upstreamFeeBps,
+    /** Credit expiry: days after which a credit lapses, or null when credits do not expire. */
+    creditExpiryDays: ctx.config.creditExpiry.enabled ? ctx.config.creditExpiry.days : null,
+    /** Credits can be bought from Mesh at face value with a prepaid balance (POST /me/credits/buy). */
+    directSalesEnabled: ctx.config.directSales.enabled,
+    /** False: unused starter credit can be spent on requests but not listed on the marketplace. */
+    starterTransferable: ctx.config.starterCredits.transferable,
+    starterRequiresHold: ctx.config.starterCredits.requireMinHold,
+    /** Most a job may pay its node, as a share of what the user was billed (bps). */
+    nodeRewardMaxShareBps: ctx.config.nodeRewards.maxShareOfPriceBps,
+    /** Credit reserve at the last hourly reading against credits owed (same block as GET /report totals.reserve). */
+    reserve: reserveView(ctx),
     /** Points/leaderboard/referral programme: built but disabled by default; the web app hides every points surface when false. */
     pointsEnabled: ctx.config.points.enabled,
     /** Public beta gating: the web app shows the pill and swaps the CTA for the waitlist when `inviteRequired`. */

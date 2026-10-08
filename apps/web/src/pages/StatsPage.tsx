@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { PairedColumns, ShareColumns } from '../components/MiniChart';
 import { Sparkline } from '../components/Sparkline';
 import { Empty, Notice, Skeleton, Tile } from '../components/ui';
@@ -72,6 +72,9 @@ export function StatsPage() {
   const tr = r?.totals.treasury;
   const mk = r?.totals.marketplace;
   const us = r?.totals.usageShare;
+  const rs = r?.totals.reserve;
+  const ex = r?.totals.creditExpiry;
+  const ds = r?.totals.directSales;
   const treasuryOut = tr ? -(tr.nodeRewardAccrualUsd + tr.opsUsd + tr.buybackUsd + tr.otherUsd + (tr.guestChatUsd ?? 0)) : null;
 
   return (
@@ -103,6 +106,9 @@ export function StatsPage() {
           </a>
           <a className="chip" href="#report">
             Weekly report
+          </a>
+          <a className="chip" href="#reserve">
+            Reserve, expiry, direct sales
           </a>
           <a className="chip" href="#treasury">
             Treasury, market, usage share
@@ -435,6 +441,111 @@ export function StatsPage() {
         </div>
       </section>
 
+      {/* ---------- reserve, credit expiry, direct sales ---------- */}
+      <section id="reserve" aria-labelledby="reserve-h" className="num-sec">
+        <SectionHead id="reserve" title="Reserve, expiry and direct sales" aside={rs?.asOf ? `reserve read ${fmtAgo(rs.asOf)}` : 'what stands behind the credits'} />
+        <div className="panels three">
+          <div className="panel" data-testid="reserve-panel">
+            <div className="row between">
+              <span className="eyebrow">Credit reserve</span>
+              {rs ? (
+                <span className={`pill sm ${rs.source === 'chain' && rs.short === false ? '' : 'off'}`}>
+                  {rs.source === 'mock' ? 'not live' : rs.source === 'unavailable' ? 'unavailable' : rs.short ? 'short' : rs.coverage === null ? 'nothing owed' : 'covered'}
+                </span>
+              ) : null}
+            </div>
+            {rloading ? (
+              <Skeleton w="100%" h="160px" />
+            ) : rs ? (
+              <>
+                <div className="kv ledger">
+                  <span>Stablecoin in the credit pool</span>
+                  <b className={rs.heldUsd !== null ? 'pos' : ''}>{fmtUsd(rs.heldUsd)}</b>
+                  <span>Credits wallets can spend</span>
+                  <b>{fmtUsd(rs.creditsSpendableUsd)}</b>
+                  <span>Credits in open listings</span>
+                  <b>{fmtUsd(rs.creditsInEscrowUsd)}</b>
+                  <span>Credits owed</span>
+                  <b>{fmtUsd(rs.requiredUsd)}</b>
+                  <span>Surplus</span>
+                  <b>{fmtUsd(rs.surplusUsd)}</b>
+                  <span className="total">Coverage · minimum {rs.minCoverageBps / 100}%</span>
+                  <b className="total">{rs.coverage === null ? '—' : pct(rs.coverage * 100)}</b>
+                </div>
+                <p className="small muted">
+                  {rs.source === 'mock'
+                    ? 'The token has not launched: fees are a test feed and there is no reserve to read yet. Nothing here is a claim of coverage.'
+                    : rs.source === 'unavailable'
+                      ? 'The last read of the credit-pool wallet failed. The figure returns with the next epoch.'
+                      : `The holder share of every sweep, swapped to a stablecoin and held apart from the treasury. Read from the wallet after each epoch.${rs.otherUsd ? ` Also in the wallet and not counted: ${fmtUsd(rs.otherUsd)} of ETH.` : ''}`}{' '}
+                  <Link to="/docs#reserve">How the reserve works</Link>
+                </p>
+              </>
+            ) : (
+              <p className="small muted">The gateway did not report a reserve.</p>
+            )}
+          </div>
+          <div className="panel">
+            <div className="row between">
+              <span className="eyebrow">Credit expiry</span>
+              {ex ? <span className={`pill sm ${ex.enabled ? '' : 'off'}`}>{ex.enabled ? `${ex.days} days` : 'off'}</span> : null}
+            </div>
+            {rloading ? (
+              <Skeleton w="100%" h="160px" />
+            ) : ex ? (
+              <>
+                <div className="kv ledger">
+                  <span>Lapsed, last 30 days</span>
+                  <b>{fmtUsd(ex.last30dUsd)}</b>
+                  <span>Wallets with lapsed credit</span>
+                  <b>{fmtInt(ex.wallets)}</b>
+                  <span>Still outstanding</span>
+                  <b>{fmtUsd(r?.totals.creditsOutstandingUsd ?? null)}</b>
+                  <span className="total">Lapsed, all time</span>
+                  <b className="total">{fmtUsd(ex.expiredUsd)}</b>
+                </div>
+                <p className="small muted">
+                  {ex.enabled
+                    ? `A credit lapses ${ex.days} days after it lands, whatever its source; the oldest is spent first. Lapsed credit lowers what the reserve has to cover.`
+                    : 'Credits do not expire on this gateway.'}{' '}
+                  <Link to="/docs#expiry">How expiry works</Link>
+                </p>
+              </>
+            ) : (
+              <p className="small muted">The gateway did not report expiry totals.</p>
+            )}
+          </div>
+          <div className="panel">
+            <div className="row between">
+              <span className="eyebrow">Direct sales</span>
+              {ds ? <span className={`pill sm ${ds.enabled ? '' : 'off'}`}>{ds.enabled ? 'on' : 'off'}</span> : null}
+            </div>
+            {rloading ? (
+              <Skeleton w="100%" h="160px" />
+            ) : ds ? (
+              <>
+                <div className="kv ledger">
+                  <span>Sold, last 30 days</span>
+                  <b>{fmtUsd(ds.last30dUsd)}</b>
+                  <span>Purchases</span>
+                  <b>{fmtInt(ds.purchases)}</b>
+                  <span>Wallets that bought</span>
+                  <b>{fmtInt(ds.wallets)}</b>
+                  <span className="total">Sold at face value, all time</span>
+                  <b className="total">{fmtUsd(ds.soldUsd)}</b>
+                </div>
+                <p className="small muted">
+                  Credits bought from {T.name} with a prepaid balance: $1 paid, $1 of credit. The payment backs the credit; it is not treasury income until the credit is
+                  spent. <Link to="/docs#buy-direct">How buying works</Link>
+                </p>
+              </>
+            ) : (
+              <p className="small muted">The gateway did not report direct sales.</p>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* ---------- treasury, marketplace, usage share ---------- */}
       <section id="treasury" aria-labelledby="treasury-h" className="num-sec">
         <SectionHead id="treasury" title="Treasury, marketplace and usage share" aside="all time, from the ledgers" />
@@ -521,7 +632,7 @@ export function StatsPage() {
                 </div>
                 {!us.enabled ? (
                   <p className="small muted">
-                    Built and audited, switched off: nothing from request margins has been paid to holders yet. The marketplace fee share above is paid regardless.
+                    Built and switched off: nothing from request margins has been paid to holders yet. The marketplace fee share above is paid regardless.
                   </p>
                 ) : null}
               </>
@@ -544,6 +655,24 @@ export function StatsPage() {
             <span className="eyebrow">Method · treasury</span>
             {r?.method.treasury ?? 'Treasury balance = fee share in − node rewards − buybacks − ops.'}
           </div>
+          {r?.method.reserve ? (
+            <div>
+              <span className="eyebrow">Method · reserve</span>
+              {r.method.reserve}
+            </div>
+          ) : null}
+          {r?.method.creditExpiry ? (
+            <div>
+              <span className="eyebrow">Method · credit expiry</span>
+              {r.method.creditExpiry}
+            </div>
+          ) : null}
+          {r?.method.directSales ? (
+            <div>
+              <span className="eyebrow">Method · direct sales</span>
+              {r.method.directSales}
+            </div>
+          ) : null}
           <div>
             <span className="eyebrow">Method · network</span>
             {r?.method.network ?? 'Node share = requests served by Mesh nodes ÷ all requests.'}

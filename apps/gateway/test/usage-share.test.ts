@@ -4,7 +4,7 @@ import { runEpoch } from '../src/jobs/distribute.js';
 import { pendingPoolExtra } from '../src/market.js';
 import { MOCK_COST_USD } from '../src/upstream.js';
 import { recordUsageShare, splitUsageMargin, usageShareTotals } from '../src/usage-share.js';
-import { ADMIN, memDb, networkMicros, rewardMicros, testConfig, testServer } from './helpers.js';
+import { ADMIN, SHIPPED_PRICING, memDb, networkMicros, rewardMicros, testConfig, testServer } from './helpers.js';
 
 /** Filler so a fake node's reported token counts are ones its text can account for (network.ts completionTokenBound / promptTokenBound). */
 const PAD = ' '.repeat(2000);
@@ -29,7 +29,7 @@ function cfg(over: Partial<TokenomicsConfig> = {}, share: Partial<TokenomicsConf
     ...testConfig,
     routing: { ...testConfig.routing, preferNetwork: true, firstTokenTimeoutMs: 4000, stallTimeoutMs: 3000, jobTimeoutMs: 5000 },
     requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.08 },
-    nodeRewards: { usdPerMTokens: 0.06 },
+    nodeRewards: { ...testConfig.nodeRewards, usdPerMTokens: 0.06 },
     usageShare: { ...ON, ...share },
     ...over,
   };
@@ -148,16 +148,43 @@ describe('usage-revenue share: gateway', () => {
     expect(testConfig.usageShare.enabled).toBe(true); // shipped on
   });
 
-  it('negative margin contributes nothing: an upstream discount (billed < list) and a network price below the node reward', async () => {
-    const discounted = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.02, upstreamDiscountBps: 2500 } }));
+  it('negative margin contributes nothing: an upstream discount (billed < list); list == billed is a zero margin', async () => {
+    const discounted = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, upstreamDiscountBps: 2500 } }));
     await discounted.serveUpstream(); // billed 750 vs cost 1000 → −250
-    await discounted.serveNetwork(); // billed 30 vs reward 90 → −60
     expect(discounted.pool().usdMicros).toBe(0);
     expect(discounted.logRows()).toEqual([]);
     // list == billed (no markup, no discount) is a zero margin: nothing either
     const flat = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.08 } }));
     await flat.serveUpstream();
     expect(flat.logRows()).toEqual([]);
+  });
+
+  it('the upstream fee comes off the margin first: a markup that only covers it shares nothing, the shipped 6% over 5.5% shares 0.5% of list', async () => {
+    // markup 5% < fee 5.5%: billed 1050 vs cost 1055 → a loss, nothing booked
+    const under = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, upstreamMarkupBps: 500, upstreamFeeBps: 550 } }));
+    await under.serveUpstream();
+    expect(under.logRows()).toEqual([]);
+    // shipped: billed 1060 vs cost 1055 → margin 5, holders floor(5 × 30%) = 1, treasury 4
+    expect(SHIPPED_PRICING).toMatchObject({ upstreamMarkupBps: 600, upstreamFeeBps: 550 });
+    const shipped = await boot(cfg({ requestPricing: { ...SHIPPED_PRICING } }));
+    await shipped.serveUpstream();
+    expect(shipped.logRows()).toHaveLength(1);
+    expect(shipped.logRows()[0]).toMatchObject({ source: 'upstream', billed_micros: 1060, cost_micros: 1055, margin_micros: 5, holder_micros: 1, treasury_micros: 4 });
+    expect(shipped.pool().usdMicros).toBe(1);
+  });
+
+  it('a job never pays its node more than the reward ceiling, so the network leg always leaves a margin', async () => {
+    // Network price below the base reward: the node is held at 90% of what the user paid, not at its base rate.
+    const cheap = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.02 } }));
+    await cheap.serveNetwork(); // billed 30, base reward 90 → held at 27, margin 3
+    const reward = (cheap.app.ctx.db.prepare(`SELECT usd_micros FROM node_rewards WHERE kind = 'node_reward'`).get() as { usd_micros: number }).usd_micros;
+    expect(reward).toBe(27);
+    expect(cheap.logRows()).toHaveLength(1);
+    expect(cheap.logRows()[0]).toMatchObject({ source: 'network', billed_micros: 30, cost_micros: 27, margin_micros: 3 });
+    // With the ceiling at 100% (the old behaviour) the same job leaves nothing.
+    const old = await boot(cfg({ requestPricing: { ...testConfig.requestPricing, networkPricePerMTokens: 0.02 }, nodeRewards: { usdPerMTokens: 0.06, maxShareOfPriceBps: 10_000 } }));
+    await old.serveNetwork();
+    expect(old.logRows()).toEqual([]);
   });
 
   it('guest messages never contribute even when enabled', async () => {

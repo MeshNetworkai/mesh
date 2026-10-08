@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, Modal, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
-import { MOCK, PUBLIC_API_URL, TOKENOMICS } from '../config';
+import { MOCK, NODE_REWARD_CEILING_PER_M, PUBLIC_API_URL, TOKENOMICS, pctFromBps } from '../config';
 import { brewSteps } from './Download';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -475,8 +475,8 @@ export function NodePage() {
             HTTPS (no inbound ports, nothing stored) and streams the reply back.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
-            You earn {fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens served, tracked per job and paid from the treasury share of trading
-            fees. Earnings are a US-dollar counter today and are paid out in {TOKENOMICS.ticker} once the token is live. Apple Silicon with 16 GB+ is the
+            You earn {fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens served, tracked per job. Staking lifts that, up to{' '}
+            {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user paid for the job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million). Earnings are a US-dollar counter today and are paid out in {TOKENOMICS.ticker} once the token is live. Apple Silicon with 16 GB+ is the
             target; Linux works with Ollama installed. A Mac with headroom can take several jobs at once (<code className="mono">maxParallel</code> in the
             agent config).
           </p>

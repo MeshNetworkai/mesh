@@ -12,15 +12,18 @@
   "epochSeconds": 3600,
   "creditUsdPerFeeUsd": 1.0,
   "requestPricing": {
-    "_comment": "Upstream-served requests bill OpenRouter list x (1 - upstreamDiscountBps/10000) or x (1 + upstreamMarkupBps/10000); exactly one may be non-zero. The discount gap is treasury-funded (docs/PRICING.md). Network-served requests bill the flat networkPricePerMTokens.",
+    "_comment": "Upstream-served requests bill OpenRouter list x (1 + upstreamMarkupBps/10000) or x (1 - upstreamDiscountBps/10000); exactly one may be non-zero. upstreamFeeBps is what OpenRouter charges Mesh on top of list when it buys inference credits (5.5% on card top-ups), so the real cost is list x 1.055 and the 6% markup leaves 0.5% of list as margin; a markup below the fee, or any discount, is a loss the treasury funds (docs/PRICING.md). Network-served requests bill the flat networkPricePerMTokens.",
     "mode": "passthrough",
-    "upstreamMarkupBps": 0,
+    "upstreamMarkupBps": 600,
     "upstreamDiscountBps": 0,
+    "upstreamFeeBps": 550,
     "networkPricePerMTokens": 0.08,
     "showSavings": true
   },
   "nodeRewards": {
-    "usdPerMTokens": 0.06
+    "_comment": "usdPerMTokens is the base reward. A stake multiplier lifts it, but never above maxShareOfPriceBps of what the user paid for the job (9000 = 90% of $0.08 = $0.072/M), so the network leg always keeps at least a 10% margin.",
+    "usdPerMTokens": 0.06,
+    "maxShareOfPriceBps": 9000
   },
   "stakeTiers": [
     {
@@ -115,18 +118,34 @@
     }
   },
   "usageShare": {
-    "_comment": "Holders earn from paid usage (docs/PRICING.md, engine 2). On from launch: network price 0.08/M, node cost 0.06/M, so 0.02/M of margin of which holderBps joins the hourly pool; frontier requests bill at list (no margin) by design.",
+    "_comment": "Holders earn from paid usage (docs/PRICING.md, engine 2). On from launch: network price 0.08/M, node cost 0.06/M (at most 0.072/M for a staked node), so 0.008-0.02/M of margin of which holderBps joins the hourly pool; frontier requests bill list + 6% against a cost of list + 5.5%, so 0.5% of list is margin.",
     "enabled": true,
     "holderBps": 3000,
     "treasuryBps": 7000,
     "sources": { "network": true, "upstream": true, "marketplaceFee": true }
   },
   "starterCredits": {
-    "_comment": "First-ever wallet sign-in is credited amountUsd (ledger kind starter) so a developer switching from another gateway can try Mesh before holding. Once per wallet, maxWallets total (0 = unlimited), 3 per IP hash per day. Pause at runtime with POST /admin/starter/toggle.",
+    "_comment": "A wallet that holds at least minHoldTokens is credited amountUsd (ledger kind starter) on its first sign-in. Once per wallet, maxWallets total (0 = unlimited), 3 per IP hash per day. transferable false: starter credits can be spent on inference but not listed on the marketplace. Pause at runtime with POST /admin/starter/toggle.",
     "enabled": true,
     "amountUsd": 2,
     "maxWallets": 500,
-    "requireMinHold": false
+    "requireMinHold": true,
+    "transferable": false
+  },
+  "creditExpiry": {
+    "_comment": "Every credit lapses `days` after it landed, whatever its source; the oldest credit is spent first. A cancelled or expired listing returns credit with its original date. Lapsed credit lowers what the reserve has to cover, so its backing shows as reserve surplus (docs/PRICING.md, section 6).",
+    "enabled": true,
+    "days": 90
+  },
+  "directSales": {
+    "_comment": "Buy credits from Mesh at face value with the prepaid USD balance (POST /me/credits/buy). The payment backs the credit 1:1 (docs/PRICING.md, section 7).",
+    "enabled": true,
+    "minUsd": 1,
+    "maxUsd": 10000
+  },
+  "reserve": {
+    "_comment": "The holder share of each sweep is swapped to the stablecoin and held in the credit-pool wallet. GET /report totals.reserve publishes that balance next to credits outstanding and flags it as short below minCoverageBps (docs/PRICING.md, section 5).",
+    "minCoverageBps": 10000
   },
   "meta": {
     "description": "Trading fees buy AI inference for holders, every hour.",

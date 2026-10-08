@@ -6,6 +6,7 @@ import { requireAdmin, type AppContext } from './context.js';
 import type { Db } from './db.js';
 import type { Env } from './env.js';
 import { microsToUsd } from './money.js';
+import { reserveView } from './reserve-report.js';
 import { NODE_ONLINE_SEC } from './routing.js';
 
 /**
@@ -16,16 +17,19 @@ import { NODE_ONLINE_SEC } from './routing.js';
  *
  * Conditions:
  *   missed_epoch        no complete/empty epoch written for > 1.5 × epochSeconds (cron on)
- *   failed_sweep        a new epochs.status='failed' row or an `epoch_failed` error since last check
+ *   failed_sweep        a new epochs.status='failed' row, an `epoch_failed` error, or a `sweep_skipped` error
+ *                       (fees left unswept because the price feed was stale, jobs/housekeeping.ts) since last check
  *   upstream_error_rate upstream_* errors / (errors + served requests) > 20 % over 5 min (≥ 3 errors)
  *   fleet_drop          online nodes fell by > 50 % compared with 10 minutes ago (≥ 2 nodes before)
  *   db_size             SQLite file (+ WAL) larger than ALERT_DB_MAX_MB
  *   disk_low            free space on the DB volume below ALERT_DISK_MIN_FREE_PCT
+ *   reserve_short       the credit-pool wallet holds less stablecoin than reserve.minCoverageBps of the
+ *                       credits owed (reserve-report.ts); silent while there is no reading (mock adapter)
  *
  * Plus a daily digest at 09:00 Asia/Dubai: fees, credits, requests, nodes, errors (24 h).
  */
 
-export type AlertKey = 'missed_epoch' | 'failed_sweep' | 'upstream_error_rate' | 'fleet_drop' | 'db_size' | 'disk_low';
+export type AlertKey = 'missed_epoch' | 'failed_sweep' | 'upstream_error_rate' | 'fleet_drop' | 'db_size' | 'disk_low' | 'reserve_short';
 
 export interface AlertSender {
   readonly name: string;
@@ -79,7 +83,7 @@ export interface DiskInfo {
 
 export interface AlertMonitorOptions {
   db: Db;
-  config: Pick<TokenomicsConfig, 'epochSeconds'>;
+  config: Pick<TokenomicsConfig, 'epochSeconds'> & Partial<Pick<TokenomicsConfig, 'reserve'>>;
   env: Pick<Env, 'EPOCH_CRON' | 'MESH_DB_PATH'>;
   sender: AlertSender;
   /** Milliseconds clock; injectable for tests. */
@@ -188,13 +192,13 @@ export class AlertMonitor {
     this.dbSize = opts.dbSize ?? (() => defaultDbSize(opts.env.MESH_DB_PATH));
     this.disk = opts.disk ?? (() => defaultDisk(opts.env.MESH_DB_PATH));
     this.startedAt = this.now();
-    for (const key of ['missed_epoch', 'failed_sweep', 'upstream_error_rate', 'fleet_drop', 'db_size', 'disk_low'] as AlertKey[]) {
+    for (const key of ['missed_epoch', 'failed_sweep', 'upstream_error_rate', 'fleet_drop', 'db_size', 'disk_low', 'reserve_short'] as AlertKey[]) {
       this.states.set(key, { key, firing: false, since: null, lastNotifiedAt: null, detail: 'not evaluated yet' });
     }
     // Failures that predate this process were (hopefully) handled by the previous one.
     this.lastFailedSweepSeen = {
       epochId: (this.db.prepare(`SELECT COALESCE(MAX(rowid),0) AS v FROM epochs WHERE status = 'failed'`).get() as { v: number }).v,
-      errorId: (this.db.prepare(`SELECT COALESCE(MAX(id),0) AS v FROM errors_log WHERE code = 'epoch_failed'`).get() as { v: number }).v,
+      errorId: (this.db.prepare(`SELECT COALESCE(MAX(id),0) AS v FROM errors_log WHERE code IN ('epoch_failed', 'sweep_skipped')`).get() as { v: number }).v,
     };
     // Don't re-send today's digest after a restart that happens after 09:00.
     const { day, hour } = localDayHour(this.now(), this.thresholds.digestTimeZone);
@@ -239,7 +243,7 @@ export class AlertMonitor {
 
   evalFailedSweep(): { firing: boolean; detail: string } {
     const ep = this.db.prepare(`SELECT COALESCE(MAX(rowid),0) AS v, COUNT(*) AS n FROM epochs WHERE status = 'failed' AND rowid > ?`).get(this.lastFailedSweepSeen.epochId) as { v: number; n: number };
-    const er = this.db.prepare(`SELECT COALESCE(MAX(id),0) AS v, COUNT(*) AS n, MAX(message) AS m FROM errors_log WHERE code = 'epoch_failed' AND id > ?`).get(this.lastFailedSweepSeen.errorId) as { v: number; n: number; m: string | null };
+    const er = this.db.prepare(`SELECT COALESCE(MAX(id),0) AS v, COUNT(*) AS n, MAX(message) AS m FROM errors_log WHERE code IN ('epoch_failed', 'sweep_skipped') AND id > ?`).get(this.lastFailedSweepSeen.errorId) as { v: number; n: number; m: string | null };
     const n = ep.n + er.n;
     if (ep.v) this.lastFailedSweepSeen.epochId = ep.v;
     if (er.v) this.lastFailedSweepSeen.errorId = er.v;
@@ -278,6 +282,12 @@ export class AlertMonitor {
     return { firing: pct < this.thresholds.diskMinFreePct, detail: `${fmtBytes(d.freeBytes)} free of ${fmtBytes(d.totalBytes)} (${pct.toFixed(1)} %, min ${this.thresholds.diskMinFreePct} %)` };
   }
 
+  evalReserve(): { firing: boolean; detail: string } {
+    const r = reserveView({ db: this.db, config: { reserve: this.opts.config.reserve ?? { minCoverageBps: 10_000 } } });
+    if (r.short === null || r.heldUsd === null || r.coverage === null) return { firing: false, detail: `reserve ${r.source}: nothing to compare` };
+    return { firing: r.short, detail: `credit pool holds $${r.heldUsd.toFixed(2)} against $${r.requiredUsd.toFixed(2)} of credits owed (${(r.coverage * 100).toFixed(1)} %, min ${r.minCoverageBps / 100} %)` };
+  }
+
   /** Evaluate every condition, notify on transitions, send the digest when due. */
   async check(): Promise<AlertState[]> {
     const now = this.now();
@@ -289,6 +299,7 @@ export class AlertMonitor {
       ['fleet_drop', this.evalFleet(now)],
       ['db_size', this.evalDbSize()],
       ['disk_low', this.evalDisk()],
+      ['reserve_short', this.evalReserve()],
     ];
     for (const [key, r] of results) {
       const st = this.states.get(key)!;

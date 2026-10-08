@@ -19,6 +19,10 @@ import type { ApiKey } from '../lib/types';
  *
  * Layout: wallet strip → [balance + key card | order book card with the depth ladder and the sell/buy
  * forms] → claimable proceeds + history. Nothing renders without a wallet except the gate card.
+ *
+ * The balance card also sells credits directly (docs/PRICING.md §7, GET /credits/config): $1 of prepaid
+ * balance buys $1 of credit from Mesh, for when nobody is selling. Starter credit cannot be listed
+ * (GET /me/market `listableUsd`), and credits lapse `creditExpiryDays` after they land, listed or not.
  */
 
 interface HistoryRow {
@@ -37,6 +41,69 @@ const statusWord: Record<string, string> = { open: 'Open', filled: 'Sold out', c
 const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDC payment and pays withdrawals out by hand.';
 const BASE_URL = `${PUBLIC_API_URL}/v1`;
 const floor2 = (n: number) => Math.floor(n * 100) / 100;
+
+// ---------------------------------------------------------------- Buy from Mesh at face value ----------------------------------------------------------------
+
+/** Direct sales: $1 of prepaid balance buys $1 of credit. Renders nothing when the gateway has them off. */
+function DirectBuy({ prepaid, onChanged }: { prepaid: number | null; onChanged: () => void }) {
+  const { token } = useAuth();
+  const toast = useToast();
+  const cfg = useAsync(() => market.getCreditsConfig(), []);
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const c = cfg.data;
+  if (!c || !c.enabled) return null;
+  const amt = Number(amount);
+  const valid = Number.isFinite(amt) && amt > 0;
+  const tooSmall = valid && amt < c.minUsd;
+  const tooBig = valid && amt > c.maxUsd;
+  const cantAfford = valid && prepaid !== null && amt > prepaid + 1e-9;
+  const max = prepaid !== null ? Math.min(floor2(prepaid), c.maxUsd) : 0;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !valid || tooSmall || tooBig || cantAfford) return;
+    setBusy(true);
+    try {
+      const p = await market.buyCredits(token, amt);
+      toast.ok(`${fmtUsd(p.creditsUsd)} of credit bought at face value.${p.expires_at ? ` It lasts until ${fmtDate(p.expires_at)}.` : ''}`);
+      setAmount('');
+      onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <hr className="mkt-div" />
+      <form className="stack sm" onSubmit={submit} aria-label="Buy credits from Mesh">
+        <div className="row between">
+          <span className="eyebrow">Buy from {TOKENOMICS.name} at face value</span>
+          <span className="small muted num">$1 buys $1</span>
+        </div>
+        <div className="market-amount">
+          <input id="direct-amount" className="input sm" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`from ${fmtUsd(c.minUsd, 0)}`} aria-label="Credits to buy from Mesh, USD" />
+          <button type="button" className="btn ghost sm" onClick={() => setAmount(String(max))} disabled={max < c.minUsd}>
+            Max
+          </button>
+          <button type="submit" className="btn primary sm" disabled={!token || !valid || tooSmall || tooBig || cantAfford || busy}>
+            {busy ? <Spinner /> : 'Buy'}
+          </button>
+        </div>
+        {tooSmall ? <Notice kind="bad">Purchases start at {fmtUsd(c.minUsd, 0)}.</Notice> : null}
+        {tooBig ? <Notice kind="bad">One purchase is at most {fmtUsd(c.maxUsd, 0)}.</Notice> : null}
+        {cantAfford ? <Notice kind="bad">That is more than your prepaid balance ({fmtUsd(prepaid ?? 0)}). Top it up first.</Notice> : null}
+        <p className="hint">
+          Paid from your prepaid balance, no fee, no token needed. A listing on the book is cheaper whenever one is open.
+          {c.creditExpiryDays ? ` Bought credit lasts ${c.creditExpiryDays} days and is not refundable.` : ' Bought credit is not refundable.'}
+        </p>
+      </form>
+    </>
+  );
+}
 
 // ---------------------------------------------------------------- Wallet strip ----------------------------------------------------------------
 
@@ -125,6 +192,8 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
   const keys = useKeys();
   const credits = mine?.creditBalanceUsd ?? null;
   const prepaid = mine?.prepaid.usd ?? null;
+  const starterLeft = mine?.nonTransferableUsd ?? 0;
+  const expiryDays = mine?.config.creditExpiryDays ?? null;
   const [wdOpen, setWdOpen] = useState(false);
   const [wd, setWd] = useState('');
   const [busy, setBusy] = useState(false);
@@ -184,7 +253,21 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
         </button>
       </div>
       <p className="small" style={{ color: 'var(--fg-2)' }}>
-        Yours to spend through a key, list on the book, or keep.
+        Yours to spend through a key{starterLeft > 0 ? '' : ', list on the book, or keep'}.
+        {starterLeft > 0 ? (
+          <>
+            {' '}
+            <span data-testid="starter-note">
+              {fmtUsd(starterLeft)} of it is starter credit: it spends first and cannot be listed. {fmtUsd(mine?.listableUsd ?? 0)} can be listed.
+            </span>
+          </>
+        ) : null}
+        {expiryDays ? (
+          <>
+            {' '}
+            Credits last {expiryDays} days from the day they land. <Link to="/docs#expiry">How expiry works</Link>
+          </>
+        ) : null}
       </p>
 
       <hr className="mkt-div" />
@@ -248,6 +331,8 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
       ) : (
         <p className="hint">Buys are paid from here, sales are paid into here. {deposits?.enabled ? `Top up with ${deposits.tokens.map((t) => t.symbol).join(' or ')} on ${deposits.chainName}; withdrawals are paid out by the team.` : BETA_TOPUP}</p>
       )}
+
+      <DirectBuy prepaid={prepaid} onChanged={onChanged} />
 
       <hr className="mkt-div" />
 
@@ -335,7 +420,9 @@ function SellForm({ cfg, mine, onChanged }: { cfg: MarketConfig; mine: MyMarket 
   const [amount, setAmount] = useState('');
   const [discount, setDiscount] = useState(30);
   const [busy, setBusy] = useState(false);
-  const spendable = mine?.creditBalanceUsd ?? null;
+  // What may be listed: the balance less any starter credit (older gateways do not send listableUsd).
+  const spendable = mine ? (mine.listableUsd ?? mine.creditBalanceUsd) : null;
+  const starterLeft = mine?.nonTransferableUsd ?? 0;
   const amt = Number(amount);
   const maxDisc = cfg.maxDiscountBps / 100;
   const q = Number.isFinite(amt) && amt > 0 ? quoteLocal(amt, Math.round(discount * 100), cfg.feeBps, cfg.feeToHoldersBps) : null;
@@ -386,12 +473,18 @@ function SellForm({ cfg, mine, onChanged }: { cfg: MarketConfig; mine: MyMarket 
         )}
       </p>
       {tooSmall ? <Notice kind="bad">Listings start at {fmtUsd(cfg.minListingUsd, 0)}.</Notice> : null}
-      {tooMuch ? <Notice kind="bad">That is more than your available credit ({fmtUsd(spendable ?? 0)}).</Notice> : null}
+      {tooMuch ? (
+        <Notice kind="bad">
+          That is more than you can list ({fmtUsd(spendable ?? 0)}).{starterLeft > 0 ? ` ${fmtUsd(starterLeft)} of your balance is starter credit, which can be spent but not sold.` : ''}
+        </Notice>
+      ) : null}
       <div className="row between">
         <button type="submit" className="btn primary" disabled={!token || !q || tooSmall || tooMuch || busy}>
           {busy ? <Spinner /> : 'List on the book'}
         </button>
-        <span className="hint">Held in escrow until it sells, you cancel, or {ttlDays} days pass.</span>
+        <span className="hint">
+          Held in escrow until it sells, you cancel, or {ttlDays} days pass.{cfg.creditExpiryDays ? ` Listing does not pause the ${cfg.creditExpiryDays}-day expiry.` : ''}
+        </span>
       </div>
     </form>
   );
@@ -472,7 +565,9 @@ function BuyForm({ cfg, book, tier, mine, onChanged }: { cfg: MarketConfig; book
             You pay <b>{fmtUsd(q.buyerPaysUsd)}</b> from prepaid · <b>{fmtUsd(q.creditsUsd)}</b> of credit lands in your balance
           </>
         ) : (
-          <span className="muted">Enter an amount. Credits arrive the moment the buy goes through.</span>
+          <span className="muted">
+            Enter an amount. Credits arrive the moment the buy goes through{cfg.creditExpiryDays ? ` and last ${cfg.creditExpiryDays} days from then` : ''}.
+          </span>
         )}
       </p>
       {tooSmall ? <Notice kind="bad">Minimum buy is {fmtUsd(cfg.minFillUsd)} unless you take everything at this tier.</Notice> : null}
@@ -608,7 +703,11 @@ function ProceedsCard({ mine, loading, onChanged }: { mine: MyMarket | null; loa
       net: -w.amountUsd,
       status: statusWord[w.status] ?? w.status,
     }));
-    return [...fills, ...wds].sort((a, b) => b.at - a.at).slice(0, 25);
+    // Credits bought from Mesh at face value (prepaid ledger kind credit_purchase): no counterparty, no fee.
+    const direct: HistoryRow[] = mine.prepaid.ledger
+      .filter((p) => p.kind === 'credit_purchase')
+      .map((p) => ({ key: `d-${p.id}`, at: p.created_at, kind: 'Bought from Mesh', who: TOKENOMICS.name, credits: -p.deltaUsd, price: -p.deltaUsd, fee: null, net: p.deltaUsd }));
+    return [...fills, ...direct, ...wds].sort((a, b) => b.at - a.at).slice(0, 25);
   }, [mine]);
 
   return (

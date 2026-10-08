@@ -47,6 +47,13 @@ export const TokenomicsSchema = z
          */
         upstreamMarkupBps: bps.default(0),
         upstreamDiscountBps: bps.default(0),
+        /**
+         * What the upstream charges Mesh on top of list when Mesh buys its inference credits (a platform /
+         * top-up fee, e.g. 550 = 5.5%). The real cost of an upstream-served request is list × (1 + this), so
+         * the margin the usage share splits (usage-share.ts) is `billed − list × (1 + upstreamFeeBps)`: a
+         * markup that only covers this fee is not a margin and pays nothing out. 0 = the upstream bills list.
+         */
+        upstreamFeeBps: bps.default(0),
         /** USD per 1M total tokens charged to the user when a Mesh node serves the request. */
         networkPricePerMTokens: z.number().min(0).default(0.08),
         /**
@@ -68,6 +75,13 @@ export const TokenomicsSchema = z
     nodeRewards: z
       .object({
         usdPerMTokens: z.number().min(0).default(0.06),
+        /**
+         * Ceiling on what one job may pay its node, as a share of what the user was billed for it
+         * (9000 = 90%). A stake multiplier can lift a reward up to this share and no further, so the
+         * network leg always keeps a margin (which also pays for spot-check re-runs). 10000 = up to the
+         * whole price (the old behaviour: a staked node left no margin).
+         */
+        maxShareOfPriceBps: bps.default(10_000),
       })
       .default({ usdPerMTokens: 0.06 }),
     stakeTiers: z.array(StakeTierSchema).min(1),
@@ -291,9 +305,10 @@ export const TokenomicsSchema = z
     /**
      * Usage-revenue share (docs/PRICING.md "Engine 2"): holders earn from paid inference, not only from
      * trading fees. Whenever a paid request is recorded the gateway computes the margin Mesh made on it
-     * (network: user price − node reward; upstream: billed − upstream cost) and, when enabled and the
-     * margin is positive, books `holderBps` of it into the next hourly holder pool (`pool_extra_micros`,
-     * source `usage`); the rest stays with the treasury. Guest messages never contribute. Ships OFF.
+     * (network: user price − node reward; upstream: billed − upstream cost, where the cost is list plus
+     * `requestPricing.upstreamFeeBps`) and, when enabled and the margin is positive, books `holderBps` of it
+     * into the next hourly holder pool (`pool_extra_micros`, source `usage`); the rest stays with the
+     * treasury. Guest messages never contribute. Schema default off; on in config/tokenomics.json.
      */
     usageShare: z
       .object({
@@ -336,6 +351,51 @@ export const TokenomicsSchema = z
         requireMinHold: z.boolean().default(false),
         /** Grants allowed per client-IP hash per rolling 24h. */
         maxPerIpPerDay: z.number().int().min(1).default(3),
+        /**
+         * When false, starter credits can only be spent on inference: whatever is left of a wallet's
+         * grant is held back from marketplace listings (apps/gateway/src/expiry.ts `nonTransferableMicros`).
+         * Requests spend the grant first, so earned and bought credits stay listable.
+         */
+        transferable: z.boolean().default(true),
+      })
+      .default({}),
+    /**
+     * Credit expiry (apps/gateway/src/expiry.ts): every credit lapses `days` after it landed in the wallet,
+     * whatever its source (distribution, starter, bought on the marketplace, bought directly). Requests and
+     * listings spend the oldest credit first. Lapsed credit is debited with an `expiry` ledger row; it lowers
+     * what the reserve has to cover, so its backing shows up as reserve surplus (reserve-report.ts). A listing
+     * does not stop the clock: credit refunded from a cancelled or expired listing keeps its original date.
+     */
+    creditExpiry: z
+      .object({
+        enabled: z.boolean().default(false),
+        days: z.number().int().positive().default(90),
+      })
+      .default({}),
+    /**
+     * Direct credit sales (apps/gateway/src/direct-sales.ts): a wallet buys credits from Mesh at face value
+     * with its prepaid USD balance (funded by a stablecoin deposit), so usage does not depend on anyone
+     * holding the token or on a seller being on the marketplace. The payment backs the credit 1:1; Mesh
+     * earns the same margin when it is spent as on any other credit.
+     */
+    directSales: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Smallest and largest single purchase, USD of credit. */
+        minUsd: z.number().positive().default(1),
+        maxUsd: z.number().positive().default(10_000),
+      })
+      .refine((d) => d.maxUsd >= d.minUsd, { message: 'directSales.maxUsd must be >= minUsd', path: ['maxUsd'] })
+      .default({}),
+    /**
+     * Credit reserve (apps/gateway/src/reserve-report.ts): the holder share of every sweep is settled in a
+     * stablecoin and kept in the credit-pool wallet, apart from the treasury. Each epoch the gateway reads
+     * that balance and publishes it next to the credits outstanding (GET /report `totals.reserve`).
+     * `minCoverageBps` is the level below which the report flags the reserve as short (10000 = fully backed).
+     */
+    reserve: z
+      .object({
+        minCoverageBps: z.number().int().min(0).default(10_000),
       })
       .default({}),
     meta: z
@@ -413,6 +473,14 @@ export function upstreamBilledMicros(listMicros: number, pricing: UpstreamPricin
   if (pricing.upstreamMarkupBps > 0) return listMicros + Math.floor((listMicros * pricing.upstreamMarkupBps) / 10_000);
   if (pricing.upstreamDiscountBps > 0) return listMicros - Math.floor((listMicros * pricing.upstreamDiscountBps) / 10_000);
   return listMicros;
+}
+
+/**
+ * What an upstream-served request really costs Mesh, from the upstream's list cost in micro-USD:
+ * list × (1 + upstreamFeeBps). Rounded up so a margin is never overstated.
+ */
+export function upstreamCostMicros(listMicros: number, pricing: Pick<TokenomicsConfig['requestPricing'], 'upstreamFeeBps'>): number {
+  return pricing.upstreamFeeBps > 0 ? listMicros + Math.ceil((listMicros * pricing.upstreamFeeBps) / 10_000) : listMicros;
 }
 
 /** Per-1M-token price after the upstream markup/discount (what GET /v1/models reports as `meshPrice`). */

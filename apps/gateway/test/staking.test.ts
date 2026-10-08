@@ -214,10 +214,13 @@ describe('rewards and routing use the tier', () => {
     expect((await client).statusCode).toBe(200);
     const base = rewardMicros(200);
     expect(base).toBeGreaterThan(0);
-    // 2× the base reward, but never more than the job was billed (relay.ts): at the shipped prices gold is held at the network price.
-    const goldReward = Math.min(2 * base, networkMicros(200));
+    // 2× the base reward, but never more than nodeRewards.maxShareOfPriceBps of what the job was billed (relay.ts):
+    // at the shipped prices gold is held at 90% of the network price, so the job still leaves a margin.
+    const ceiling = Math.floor((networkMicros(200) * testConfig.nodeRewards.maxShareOfPriceBps) / 10_000);
+    const goldReward = Math.min(2 * base, ceiling);
+    expect(testConfig.nodeRewards.maxShareOfPriceBps).toBe(9000);
     expect(goldReward).toBeGreaterThan(base);
-    expect(goldReward).toBeLessThanOrEqual(networkMicros(200));
+    expect(goldReward).toBeLessThan(networkMicros(200));
     expect((await gold.stats()).json().earnedUsdTotal).toBe(goldReward / 1_000_000);
 
     // The gold node is busy=0 again but a plain node must still get the job when it is the only one polling:

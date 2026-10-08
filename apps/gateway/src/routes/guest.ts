@@ -1,4 +1,4 @@
-import { isModelAllowed } from '@mesh/config';
+import { isModelAllowed, upstreamCostMicros } from '@mesh/config';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import type { AppContext } from '../context.js';
@@ -134,7 +134,8 @@ export async function guestRoutes(app: FastifyInstance, ctx: AppContext) {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(GUEST_KEY_ID, GUEST_WALLET, model, tokenCount(usage?.prompt_tokens), tokenCount(usage?.completion_tokens), cost, upstream, latencyMs, stream ? 1 : 0, nowSec(), listCost, saved);
-        if (!network && cost > 0) addTreasuryEntry(ctx.db, { kind: 'guest_chat', usdMicros: -cost, ref: `guest:req:${Number(res.lastInsertRowid)}` });
+        // What the upstream really cost the treasury: list plus the upstream's own fee (requestPricing.upstreamFeeBps).
+        if (!network && cost > 0) addTreasuryEntry(ctx.db, { kind: 'guest_chat', usdMicros: -upstreamCostMicros(cost, ctx.config.requestPricing), ref: `guest:req:${Number(res.lastInsertRowid)}` });
       })();
       // Nothing is charged to anyone: the relay reports $0 to the guest.
       return 0;

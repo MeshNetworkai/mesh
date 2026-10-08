@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { TOKENOMICS, pctFromBps } from '../config';
+import { TOKENOMICS, frontierPriceTag, pctFromBps } from '../config';
 import { fmtCost, fmtInt } from '../lib/format';
 
 /**
@@ -47,8 +47,8 @@ interface Layout {
   wrap?: (copy: ReturnType<typeof engineCopy>) => Partial<Record<BoxId, string[]>>;
 }
 
-export function engineCopy(opts: { usageShareOn: boolean; upstreamDiscountBps: number; holderBps: number }) {
-  const discount = opts.upstreamDiscountBps > 0 ? `list − ${opts.upstreamDiscountBps / 100}%` : 'list price';
+export function engineCopy(opts: { usageShareOn: boolean; upstreamDiscountBps: number; upstreamMarkupBps?: number; holderBps: number }) {
+  const discount = frontierPriceTag(opts.upstreamMarkupBps ?? T.upstreamMarkupBps, opts.upstreamDiscountBps);
   const share = `${opts.holderBps / 100}%`;
   return {
     trading: { title: 'Trading', sub: [`every $${T.ticker} swap`] },
@@ -193,8 +193,18 @@ function Diagram({ layout, on, copy, className }: { layout: Layout; on: boolean;
   );
 }
 
-export function Engines({ usageShareOn, upstreamDiscountBps = T.upstreamDiscountBps, holderBps = T.usageShare.holderBps }: { usageShareOn: boolean; upstreamDiscountBps?: number; holderBps?: number }) {
-  const copy = engineCopy({ usageShareOn, upstreamDiscountBps, holderBps });
+export function Engines({
+  usageShareOn,
+  upstreamDiscountBps = T.upstreamDiscountBps,
+  upstreamMarkupBps = T.upstreamMarkupBps,
+  holderBps = T.usageShare.holderBps,
+}: {
+  usageShareOn: boolean;
+  upstreamDiscountBps?: number;
+  upstreamMarkupBps?: number;
+  holderBps?: number;
+}) {
+  const copy = engineCopy({ usageShareOn, upstreamDiscountBps, upstreamMarkupBps, holderBps });
   return (
     <div className="engines" data-usage-share={usageShareOn ? 'on' : 'off'}>
       <Diagram layout={WIDE} on={usageShareOn} copy={copy} className="wide" />

@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { recordError } from './db.js';
 import { runEpoch } from './jobs/distribute.js';
+import { runHousekeeping } from './jobs/housekeeping.js';
 import { microsToUsd } from './money.js';
 import { buildServer } from './server.js';
 
@@ -21,6 +22,15 @@ async function main() {
         app.log.error({ err }, 'epoch run failed');
         // alerts.ts watches for this code (failed_sweep).
         recordError(app.ctx.db, { route: 'cron run-epoch', status: 500, code: 'epoch_failed', message: (err as Error).message ?? String(err) });
+      }
+      // Lapse credit past its window and read the reserve, whether or not the sweep went through.
+      try {
+        const h = await runHousekeeping(app.ctx);
+        app.log.info({ expiredWallets: h.expiredWallets, expiredUsd: microsToUsd(h.expiredUsdMicros), reserve: h.reserveSource, reserveHeldUsd: h.reserveHeldUsdMicros === null ? null : microsToUsd(h.reserveHeldUsdMicros) }, 'housekeeping');
+        for (const w of h.sweepWarnings) app.log.warn({ warning: w }, 'sweep left fees unswept');
+      } catch (err) {
+        app.log.error({ err }, 'housekeeping failed');
+        recordError(app.ctx.db, { route: 'cron housekeeping', status: 500, code: 'housekeeping_failed', message: (err as Error).message ?? String(err) });
       }
     });
   }

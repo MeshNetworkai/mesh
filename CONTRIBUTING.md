@@ -17,7 +17,8 @@ pnpm dev            # gateway :8787 (mock chain adapter + offline mock upstream)
 
 Everything works offline with no keys: the mock adapter has four holders (`mockwallet_alice` 60k,
 `mockwallet_bob` 30k, `mockwallet_carol` 10k, `mockwallet_dust` 500) and the mock upstream streams a
-canned reply. `cp .env.example .env` only when you want to change a default; the README's quick
+canned reply ($0.001 at list, billed $0.00106 with the shipped 6 % markup). On the mock adapter the
+credit reserve reads `source: "mock"`: there is no pool wallet. `cp .env.example .env` only when you want to change a default; the README's quick
 start seeds fees, runs an epoch, mints a dev JWT and an API key with curl, and `pnpm demo` does the
 whole thing scripted (including a curl-simulated node).
 
@@ -66,6 +67,18 @@ pnpm loadtest                                 # exit 1 if any request fails
   `MockUpstream`, `TEST_ENV` (rate limits lifted, signatures off unless the test turns them on) and
   `app.inject` instead of a socket. Add new tests next to the route or module they cover
   (`apps/gateway/test/<area>.test.ts`); one `describe` per behaviour cluster.
+- `testConfig` is the shipped `config/tokenomics.json` with a few switches turned for exact
+  arithmetic: the upstream leg runs at list (`upstreamMarkupBps: 0`, `upstreamFeeBps: 0`, because the
+  mock upstream costs a round $0.001), starter credits and verification are off. Tests of the shipped
+  markup and upstream fee use `SHIPPED_PRICING` (`catalogue.test.ts`, `usage-share.test.ts`).
+- To give a wallet credit it can sell, use `grantCredit(db, wallet, usd)` from `test/helpers.ts`.
+  `POST /admin/starter-credit` grants starter credit, which the shipped config does not let a wallet
+  list on the marketplace.
+- `test/economics.test.ts` holds the rules that keep a credit from costing more than it is worth:
+  credit expiry, non-transferable starter credit, direct sales, the published reserve, the
+  `reserve_short` alert and a skipped sweep raising `failed_sweep`. The sweep and price-feed rules
+  are in `packages/chain-adapter/test/pons.test.ts`; `test/migration19.test.ts` runs the ledger
+  rebuild against a database that already holds rows.
 - The e2e suite boots the real gateway with a throwaway DB (`apps/web/e2e/.tmp`, deleted first) and
   seeds it in `global-setup.ts`. Chromium comes from `/opt/pw-browsers` when present, otherwise
   Playwright's own install (`pnpm --filter web exec playwright install --with-deps chromium`).
@@ -86,10 +99,13 @@ add a new entry with the next id, never edit or reorder an existing one (deploye
 already applied it). Use `ALTER TABLE … ADD COLUMN` with defaults, `CREATE TABLE/INDEX IF NOT
 EXISTS`, and put every idempotency rule in the schema as a `UNIQUE` index (as `credits_ledger
 (wallet, ref)`, `node_rewards (job_id)`, `treasury_ledger (kind, ref)` do) rather than in
-application code only.
+application code only. SQLite cannot alter a `CHECK`, so a new ledger `kind` means rebuilding the
+table in place: create `<table>_vN`, copy the rows, drop, rename, recreate the indexes (migrations
+14 and 19 are the pattern; 19 added `purchase` / `expiry` to `credits_ledger` and
+`credit_purchase` to `prepaid_ledger`).
 
 **No literals in tests for config values.** Prices, shares, thresholds and timeouts come from
-`config/*.json` through `test/helpers.ts` (`testConfig`, `NETWORK_PRICE_PER_M`,
+`config/*.json` through `test/helpers.ts` (`testConfig`, `SHIPPED_PRICING`, `NETWORK_PRICE_PER_M`,
 `NODE_REWARD_PER_M`, `networkMicros()`, `rewardMicros()`) or from the module constants that define
 them (`NODE_ONLINE_SEC`, `HEARTBEAT_EVERY_SEC`, `MAX_POLL_WAIT_MS`, `LINK_CODE_TTL_SEC`, …). A
 test that asserts `0.02` or `90` breaks the next time someone tunes `tokenomics.json`; a test that
@@ -133,7 +149,10 @@ invariant, a security consideration), not what the next line does.
 - Keep `pnpm typecheck`, `pnpm test:all`, `pnpm e2e` and `forge test` green; CI runs them.
 - One behaviour per PR where possible; include the test, the doc update (`README.md` endpoint
   table, `docs/NODE_PROTOCOL.md`, `.env.example` for a new env var, `docs/ARCHITECTURE.md` for a
-  new table or component) and, for anything touching `/nodes/*` or `/v1`, a note on backward
-  compatibility.
+  new table or component, `docs/PRICING.md` for anything that changes a price, a margin, the
+  reserve, expiry or direct sales) and, for anything touching `/nodes/*` or `/v1`, a note on
+  backward compatibility.
+- Code comments cite `docs/PRICING.md` by section (§5 the credit reserve, §6 credit expiry, §7
+  buying credits directly). Keep those numbers stable, or update the comments in the same change.
 - Do not commit `data/*.db`, `.env`, `contracts/evm/out|cache|lib`, Playwright output or `dist/`
   (all ignored); `config/deploy.<network>.json` files *are* committed once a network is live.

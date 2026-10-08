@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { installOneLiner } from './Node';
 import { Engines } from '../components/Engines';
 import { Terminal } from '../components/ui';
-import { PUBLIC_API_URL, TOKENOMICS, pctFromBps } from '../config';
+import { NODE_REWARD_CEILING_PER_M, PUBLIC_API_URL, TOKENOMICS, frontierPriceWords, nodeRewardPerM, pctFromBps } from '../config';
 import { ROADMAP, STATUS_LABEL, type RoadmapStatus } from '../content/roadmap';
 import { getCatalogue } from '../lib/api';
 import { fmtCompact, fmtCost, fmtInt, fmtUsd } from '../lib/format';
@@ -29,6 +29,17 @@ const usageTreasuryPct = pctFromBps(T.usageShare.treasuryBps);
 const samplePct = `${Number((T.verification.sampleRate * 100).toFixed(1))}%`;
 const STARTER = T.starterCredits;
 const tokensPerDollar = `${fmtCompact(Math.round(1 / T.networkPricePerMTokens))}M`;
+const EXPIRY = T.creditExpiry;
+const expiryDays = `${fmtInt(EXPIRY.days)} days`;
+const DIRECT = T.directSales;
+const upstreamFee = pctFromBps(T.upstreamFeeBps);
+const nodeCeiling = fmtCost(NODE_REWARD_CEILING_PER_M);
+const nodeCeilingPct = pctFromBps(T.nodeRewardMaxShareBps);
+const nodeFloorMarginPct = pctFromBps(10_000 - T.nodeRewardMaxShareBps);
+/** What is left of the network price after the node is paid, per 1M tokens: unstaked, and at the reward ceiling. */
+const netMargin = fmtCost(Math.round((T.networkPricePerMTokens - T.nodeRewardUsdPerMTokens) * 1e6) / 1e6);
+const netMarginAtCeiling = fmtCost(Math.round((T.networkPricePerMTokens - NODE_REWARD_CEILING_PER_M) * 1e6) / 1e6);
+const starterWho = STARTER.requireMinHold ? `a wallet that holds at least ${minHold}` : 'a wallet';
 
 const MODEL = 'meta-llama/llama-3.1-8b-instruct';
 
@@ -204,9 +215,14 @@ export function Docs() {
   }, []);
   // Engine 2: the gateway says whether the usage share is on. Off until it confirms (docs/PRICING.md §3).
   const usageOn = stats?.usageShareEnabled === true;
-  // The upstream discount as the catalogue reports it (the same number the prices in the table use), else /stats, else config.
+  // Upstream pricing as the catalogue reports it (the same numbers the prices in the table use), else /stats, else config.
   const discountBps = cat?.pricing.upstreamDiscountBps ?? stats?.upstreamDiscountBps ?? T.upstreamDiscountBps;
-  const frontierPrice = discountBps > 0 ? `list minus ${pctFromBps(discountBps)}` : 'list price, with no markup';
+  const markupBps = cat?.pricing.upstreamMarkupBps ?? stats?.upstreamMarkupBps ?? T.upstreamMarkupBps;
+  const frontierPrice = frontierPriceWords(markupBps, discountBps);
+  // Net of what the upstream charges Mesh: what is left of the markup is the margin (negative = the treasury pays).
+  const frontierMarginBps = (discountBps > 0 ? -discountBps : markupBps) - T.upstreamFeeBps;
+  const expiryOn = stats ? stats.creditExpiryDays !== null && stats.creditExpiryDays !== undefined : EXPIRY.enabled;
+  const reserve = stats?.reserve ?? null;
 
   useEffect(() => {
     if (!hash) return;
@@ -221,7 +237,12 @@ export function Docs() {
         Keep your code. Change the base URL to <code>{PUBLIC_API_URL}/v1</code> and the key to a <code>mesh_sk_…</code> one; OpenRouter-style model ids work unchanged,
         streaming and the <code>usage</code> object are identical, and the only new thing is an optional <code>X-Mesh-Privacy</code> header. Snippets for curl, Python,
         Node, LangChain, the Vercel AI SDK and Cursor/Continue are in <Link to="/api#switch">Switch in a minute</Link>.
-        {STARTER.enabled && STARTER.amountUsd > 0 ? ` Your first sign-in is credited ${fmtUsd(STARTER.amountUsd)} so you can test before holding anything.` : ''}
+        {STARTER.enabled && STARTER.amountUsd > 0
+          ? STARTER.requireMinHold
+            ? ` If your wallet holds at least ${minHold}, its first sign-in is credited ${fmtUsd(STARTER.amountUsd)}.`
+            : ` Your first sign-in is credited ${fmtUsd(STARTER.amountUsd)} so you can test before holding anything.`
+          : ''}
+        {DIRECT.enabled ? ` Holding nothing? Buy credits at face value from ${fmtUsd(DIRECT.minUsd, 0)} on the market page.` : ''}
       </>,
     ],
     [
@@ -231,12 +252,13 @@ export function Docs() {
     [
       'What happens if trading stops?',
       <>
-        Engine 1 pays nothing that {epochWord}: no trades, no fee, no fee credits. Credits already in your ledger stay and still spend. Two things keep moving regardless:
-        half of every marketplace fee is paid into the next pool whenever a sale happens, and the second engine, {usageHolderPct} of the margin on paid requests, is built so the
-        pool does not depend on trading alone.{' '}
+        Engine 1 pays nothing that {epochWord}: no trades, no fee, no fee credits. Credits already in your ledger still spend{expiryOn ? `, until they reach their ${expiryDays}` : ''}. Two things
+        keep moving regardless: half of every marketplace fee is paid into the next pool whenever a sale happens, and the second engine pays in {usageHolderPct} of the margin on
+        paid requests.{' '}
         {usageOn
-          ? 'It is on, so holders earn from usage as well as from trading.'
-          : `It is switched off today, and at the current network price (${netPrice} per million against ${nodePay} paid to the node) there is no margin to share yet; it switches on with the pricing decision, not before. Until then, an hour with no trades and no sales is an hour with an empty pool.`}{' '}
+          ? `It is on, but it is small: the margin is ${netMargin} per million tokens on a Mac and ${pctFromBps(Math.max(0, frontierMarginBps))} of list on frontier models, so it does not replace trading fees.`
+          : 'It is switched off today.'}{' '}
+        {DIRECT.enabled ? 'The gateway itself keeps working: anyone can buy credits at face value, so usage does not depend on the pool. ' : ''}
         Every epoch, including the empty ones, is on <Link to="/stats">the stats page</Link>.
       </>,
     ],
@@ -245,8 +267,35 @@ export function Docs() {
       `A credit dollar buys a dollar of inference at the catalogue price: frontier and fast models at ${frontierPrice}, and any model a Mac serves at ${netPrice} per million tokens, so the same dollar buys ${tokensPerDollar} tokens of an open model. Every reply shows what it cost and, on a node, what it saved versus list.`,
     ],
     [
-      'Do credits expire? Can I withdraw them?',
-      `Credits do not expire while the service runs. They are a licence to use the gateway, not money: they cannot be withdrawn, and they only move between wallets through the marketplace. Proceeds from a sale land in a prepaid US-dollar balance, which can be withdrawn; during the beta the team processes withdrawals by hand.`,
+      'Do credits expire?',
+      expiryOn
+        ? `Yes. Every credit lapses ${expiryDays} after it landed in your wallet, whatever its source: an hourly distribution, starter credit, credit bought on the marketplace or bought from Mesh. Requests always spend your oldest credit first, so regular use never loses anything. Your dashboard shows what lapses next and how much is inside its last 7 and 30 days. Listing credit for sale does not stop the clock; a buyer's credit starts a fresh ${expiryDays}.`
+        : 'No. Credits do not expire while the service runs.',
+    ],
+    [
+      'Can I withdraw credits?',
+      `No. Credits are a licence to use the gateway, not money: they cannot be withdrawn or redeemed, and they only move between wallets through the marketplace${STARTER.transferable ? '' : ' (starter credit cannot be sold at all)'}. Proceeds from a sale land in a prepaid US-dollar balance, which can be withdrawn; during the beta the team processes withdrawals by hand.`,
+    ],
+    [
+      'Can I get credits without holding the token?',
+      DIRECT.enabled
+        ? `Yes, two ways. Buy them from Mesh at face value: ${fmtUsd(1, 0)} from your prepaid balance buys ${fmtUsd(1, 0)} of credit, from ${fmtUsd(DIRECT.minUsd, 0)} to ${fmtUsd(DIRECT.maxUsd, 0)} a purchase. Or buy them below face value from a holder on the marketplace, when one is selling. Both spend on any model.`
+        : 'Yes: buy them below face value from a holder on the marketplace, when one is selling.',
+    ],
+    [
+      'What stands behind a credit?',
+      <>
+        The holder share of every fee sweep is swapped to a stablecoin on chain and sent to a credit-pool wallet that is separate from the treasury. Every {epochWord} the
+        gateway reads that wallet and publishes its balance next to the credits owed on <Link to="/stats">the stats page</Link>, so anyone can check the coverage. It is a
+        published number, not a guarantee and not a deposit: credits are still not redeemable for cash.{' '}
+        {reserve?.source === 'chain' ? '' : 'Until the token launches there is nothing to read: fees are a test feed and no reserve is held.'}
+      </>,
+    ],
+    [
+      `Why is a frontier model ${frontierPrice}?`,
+      T.upstreamFeeBps > 0 && markupBps > 0
+        ? `Because that is what it costs. The upstream charges Mesh ${upstreamFee} on top of its list price when Mesh buys inference, so billing at list would make every frontier request a loss paid by the treasury. ${pctFromBps(markupBps)} covers that cost and leaves ${pctFromBps(Math.max(0, frontierMarginBps))} of list as margin, of which ${usageHolderPct} goes to the holder pool. Models a Mac serves are not affected: they stay at ${netPrice} per million tokens.`
+        : `Frontier and fast models are billed at ${frontierPrice}; the catalogue shows both prices for every model.`,
     ],
     [
       'Which models can I use?',
@@ -258,7 +307,7 @@ export function Docs() {
     ],
     [
       'What happens if I sell my tokens?',
-      `Credits already in your ledger stay. You stop receiving new ones from the first epoch where your time-weighted balance is below ${minHold}.`,
+      `Credits already in your ledger stay${EXPIRY.enabled ? ` until they reach their ${expiryDays}` : ''}. You stop receiving new ones from the first epoch where your time-weighted balance is below ${minHold}.`,
     ],
     ['Can I use several keys?', 'Yes. All keys spend from one balance. Each key can carry its own spend limit and default privacy tier. Revoke a key and requests using it fail immediately.'],
     [
@@ -267,7 +316,7 @@ export function Docs() {
     ],
     [
       'Is there a free way to try it?',
-      `Yes. The chat on the homepage answers ${fmtInt(T.guest.messagesPerDay)} messages a day per visitor with no wallet, served by the network and paid by the treasury${STARTER.enabled && STARTER.amountUsd > 0 ? `, and the first wallet sign-in is credited ${fmtUsd(STARTER.amountUsd)}` : ''}.`,
+      `Yes. The chat on the homepage answers ${fmtInt(T.guest.messagesPerDay)} messages a day per visitor with no wallet, served by the network and paid by the treasury${STARTER.enabled && STARTER.amountUsd > 0 ? `, and ${starterWho} is credited ${fmtUsd(STARTER.amountUsd)} on its first sign-in` : ''}.`,
     ],
   ];
 
@@ -287,6 +336,9 @@ export function Docs() {
         <div className="chips">
           <a className="chip" href="#credits">
             Credits
+          </a>
+          <a className="chip" href="#backing">
+            Expiry and reserve
           </a>
           <a className="chip" href="#use">
             Using them
@@ -329,8 +381,9 @@ export function Docs() {
               A {feePct} fee on every ${T.ticker} trade is swept once an {epochWord}. {holderPct} of it is split, pro rata, across every wallet holding at least {minHold}{' '}
               as credits denominated in US dollars; {treasuryPct} goes to the treasury, which pays the Macs. Holders spend credits through an OpenAI-compatible gateway with
               their own keys, on open models answered by Macs in the network for a flat {netPrice} per million tokens, or on Claude, GPT, Gemini, Grok, DeepSeek and more
-              through zero-data-retention providers at {frontierPrice}. Credits nobody will use are sold on the marketplace. Credits are a share of fees, not a promise: an{' '}
-              {epochWord} with no trades distributes nothing from fees, and the full epoch history is public.
+              through zero-data-retention providers at {frontierPrice}. Credits nobody will use are sold on the marketplace{DIRECT.enabled ? ', and anyone can buy credits from Mesh at face value' : ''}
+              .{expiryOn ? ` A credit lapses ${expiryDays} after it lands.` : ''} Credits are a share of fees, not a promise: an {epochWord} with no trades distributes nothing from
+              fees, and the full epoch history is public.
             </p>
             <p>
               Mesh is in open beta. No invite is needed: connect a wallet and you are in. The token is launched by the team on launch day on Robinhood Chain; until
@@ -352,7 +405,7 @@ export function Docs() {
               margin Mesh makes on paid requests and marketplace sales; it is built, audited and {usageOn ? 'on' : 'switched off until the pricing decision'}. Both land in
               the same pool, both are split the same way.
             </p>
-            <Engines usageShareOn={usageOn} upstreamDiscountBps={discountBps} />
+            <Engines usageShareOn={usageOn} upstreamDiscountBps={discountBps} upstreamMarkupBps={markupBps} />
             <div className="rows">
               <div className="bigrow">
                 <span className="display d-l">{feePct}</span>
@@ -405,12 +458,108 @@ export function Docs() {
               <>
                 <h3>Starter credits</h3>
                 <p>
-                  The first time a wallet signs in it is credited {fmtUsd(STARTER.amountUsd)}, once per wallet{STARTER.maxWallets > 0 ? ` and for the first ${fmtInt(STARTER.maxWallets)} wallets` : ''}, as a
-                  “starter” row in the ledger. It is there so a developer can create a key and send real requests before holding or buying anything. The grant is
-                  rate-limited per network address and can be paused; <code>GET /stats</code> shows how many are left.
+                  The first time {starterWho} signs in it is credited {fmtUsd(STARTER.amountUsd)}, once per wallet{STARTER.maxWallets > 0 ? ` and for the first ${fmtInt(STARTER.maxWallets)} wallets` : ''}, as a
+                  “starter” row in the ledger, so a new holder can create a key and send real requests in the first {epochWord}.{' '}
+                  {STARTER.transferable
+                    ? ''
+                    : 'Starter credit can be spent on any model but cannot be listed on the marketplace; requests use it up first, so what you earn or buy stays sellable. '}
+                  The grant is rate-limited per network address and can be paused; <code>GET /stats</code> shows how many are left.
+                  {STARTER.requireMinHold && DIRECT.enabled ? ' A wallet that holds nothing can still try Mesh: the homepage chat is free, and credits can be bought at face value.' : ''}
                 </p>
               </>
             ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section id="backing">
+        <div className="sec-head">
+          <p className="eyebrow">Expiry and reserve</p>
+          <div className="stack">
+            <h2>
+              What limits a credit, <span className="muted">and what stands behind it.</span>
+            </h2>
+            <div className="rows">
+              {EXPIRY.enabled ? (
+                <div className="bigrow">
+                  <span className="display d-l">{fmtInt(EXPIRY.days)}d</span>
+                  <p className="desc">A credit lapses this long after it lands, whatever its source. Requests spend the oldest credit first.</p>
+                  <span className="eyebrow">Expiry</span>
+                </div>
+              ) : null}
+              <div className="bigrow">
+                <span className="display d-l">1 : 1</span>
+                <p className="desc">
+                  One dollar of credit per dollar of the holder share of fees, settled in a stablecoin and held apart from the treasury. Published every {epochWord}.
+                </p>
+                <span className="eyebrow">Reserve</span>
+              </div>
+              {DIRECT.enabled ? (
+                <div className="bigrow">
+                  <span className="display d-l">{fmtUsd(1, 0)}</span>
+                  <p className="desc">
+                    Buys {fmtUsd(1, 0)} of credit from Mesh, from {fmtUsd(DIRECT.minUsd, 0)} to {fmtUsd(DIRECT.maxUsd, 0)} a purchase, with no token and no seller needed.
+                  </p>
+                  <span className="eyebrow">Direct price</span>
+                </div>
+              ) : null}
+            </div>
+            {EXPIRY.enabled ? (
+              <>
+                <h3 id="expiry">Credits expire after {expiryDays}</h3>
+                <ul>
+                  <li>
+                    <b>Every credit, one rule.</b> Hourly distributions, starter credit, credit bought on the marketplace and credit bought from Mesh all lapse {expiryDays}{' '}
+                    after they land. The date is set when the credit arrives and nothing extends it.
+                  </li>
+                  <li>
+                    <b>Oldest first.</b> A request always spends your oldest credit, so a wallet that uses its credits loses nothing. Only credit that sat unused for the whole{' '}
+                    {expiryDays} lapses, as an “expiry” row in your ledger.
+                  </li>
+                  <li>
+                    <b>You see it coming.</b> Your <Link to="/app">dashboard</Link> shows the next amount to lapse and its date, and how much of your balance is inside its last
+                    7 and 30 days. <code>GET /me</code> returns the same under <code>expiry</code>.
+                  </li>
+                  <li>
+                    <b>Listing does not stop the clock.</b> Credit in an open listing keeps ageing; if the listing is cancelled or runs out, what comes back has its original
+                    date. Credit that sells starts a fresh {expiryDays} for the buyer.
+                  </li>
+                  <li>
+                    <b>Why.</b> Credits are owed in dollars of inference. Without a limit, credit nobody uses would pile up as a debt that outlasts the fees that paid for it.
+                    Lapsed credit lowers what the reserve has to cover.
+                  </li>
+                </ul>
+              </>
+            ) : null}
+            <h3 id="reserve">The reserve</h3>
+            <ul>
+              <li>
+                <b>Swapped at the sweep.</b> Trading fees arrive in ETH. Each {epochWord} the fee vault swaps them to a stablecoin on chain and splits the result: {holderPct} to
+                the credit-pool wallet, {treasuryPct} to the treasury. Credits are minted against the dollars actually received, so the pool does not carry the ETH price.
+              </li>
+              <li>
+                <b>Held apart.</b> The credit pool is its own wallet. It pays for the inference credits buy; it is not the treasury and does not fund operations.
+                {DIRECT.enabled ? ' Payments for credits bought from Mesh back those credits the same way.' : ''}
+              </li>
+              <li>
+                <b>Published.</b> After every epoch the gateway reads the pool's stablecoin balance and puts it next to the credits owed (spendable credit plus credit escrowed in
+                open listings) on <Link to="/stats">the stats page</Link> and in <code>GET /report</code> under <code>totals.reserve</code>, with the coverage ratio and the time
+                of the reading. Coverage below {pctFromBps(T.reserve.minCoverageBps)} is flagged as short.
+              </li>
+              <li>
+                <b>What it is not.</b> A guarantee, a deposit or a redemption right. The wallet is controlled by the operator; the number tells you whether the credits
+                outstanding are covered, and credits still cannot be turned back into cash.
+              </li>
+              <li>
+                <b>Before the token launch</b> there is no reserve to read: fees come from a test feed, the report says <code>source: mock</code> and claims no coverage.
+              </li>
+            </ul>
+            <h3 id="price-feed">When the price feed is stale</h3>
+            <p>
+              The swap needs a current ETH price to set its slippage floor. If the price feed is more than an hour old or cannot be read, the gateway leaves the ETH fees where
+              they are, in the launchpad's escrow or our fee vault, and mints no credits for them that {epochWord}. Nothing is lost: the next epoch with a fresh price sweeps
+              them, and they go to the holders of that {epochWord}. No credits are ever minted against a guessed price.
+            </p>
           </div>
         </div>
       </section>
@@ -436,12 +585,13 @@ export function Docs() {
                 <b>OpenAI compatibility.</b> Base URL <code>{PUBLIC_API_URL}/v1</code>, header <code>Authorization: Bearer mesh_sk_…</code>, endpoints{' '}
                 <code>POST /v1/chat/completions</code> (stream or not) and <code>GET /v1/models</code>. The request body, SSE chunks, <code>[DONE]</code> and the{' '}
                 <code>usage</code> object are what your client already expects, with <code>usage.cost</code> in USD added. Errors are OpenAI-shaped:{' '}
-                <code>402 insufficient_quota</code> means your balance is zero, <code>429</code> is the per-key rate limit. Failed requests are never charged.
+                <code>402 insufficient_quota</code> means your balance is zero{EXPIRY.enabled ? ' (credit past its date no longer counts)' : ''}, <code>429</code> is the per-key rate limit. Failed requests are never charged.
               </li>
               <li>
                 <b>How it was served.</b> Every reply carries <code>x-mesh-route</code>, <code>x-mesh-privacy</code> and <code>x-mesh-served-by</code>; non-streamed replies add{' '}
-                <code>x-mesh-cost-usd</code> and <code>x-mesh-balance-usd</code>. Node-served replies add <code>mesh.listCostUsd</code> and <code>mesh.savedUsd</code> next to{' '}
-                <code>usage</code>.
+                <code>x-mesh-cost-usd</code> and <code>x-mesh-balance-usd</code>. <code>usage.cost</code> is always what your wallet was charged, streamed or not. Node-served
+                replies add <code>mesh.listCostUsd</code> and <code>mesh.savedUsd</code> next to <code>usage</code>; upstream replies add <code>mesh.listCostUsd</code>, the
+                upstream's own list cost before the markup.
               </li>
               <li>
                 Every endpoint, with request and response examples, is on the <Link to="/api">API reference</Link>; the raw OpenAPI 3.1 document is at{' '}
@@ -471,16 +621,19 @@ export function Docs() {
               <div className="bigrow">
                 <span className="display d-l">{netPrice}</span>
                 <p className="desc">
-                  Per million tokens, prompt and reply together, whatever the model, when a Mac in the network answers. The Mac is paid {nodePay} per million; the treasury
-                  covers the gap.
+                  Per million tokens, prompt and reply together, whatever the model, when a Mac in the network answers. The Mac is paid {nodePay} per million, a staked one up
+                  to {nodeCeiling}; the {netMarginAtCeiling} to {netMargin} left over is the margin the usage share splits.
                 </p>
                 <span className="eyebrow">Network price</span>
               </div>
               <div className="bigrow">
-                <span className="display d-l">{discountBps > 0 ? `−${pctFromBps(discountBps)}` : 'list'}</span>
+                <span className="display d-l">{discountBps > 0 ? `−${pctFromBps(discountBps)}` : markupBps > 0 ? `+${pctFromBps(markupBps)}` : 'list'}</span>
                 <p className="desc">
                   Frontier and fast models (Claude, GPT, Gemini, Grok, DeepSeek, Kimi, Mistral and more) go to the upstream at {frontierPrice}, routed only to
-                  zero-data-retention providers. A discount, when one is set, is funded by the treasury.
+                  zero-data-retention providers.{' '}
+                  {T.upstreamFeeBps > 0
+                    ? `The upstream charges Mesh ${upstreamFee} on top of list, so ${frontierMarginBps >= 0 ? `the markup covers that cost and ${pctFromBps(frontierMarginBps)} of list is margin` : 'the treasury funds the difference'}.`
+                    : 'A discount, when one is set, is funded by the treasury.'}
                 </p>
                 <span className="eyebrow">Frontier price</span>
               </div>
@@ -527,6 +680,17 @@ export function Docs() {
             <h3>How to sell</h3>
             <ul>
               <li>Pick an amount and a discount. The credit leaves your spendable balance at once and sits in escrow, so the gateway cannot serve requests against it.</li>
+              {STARTER.transferable ? null : (
+                <li>
+                  <b>Starter credit cannot be listed.</b> Only credit you earned or bought is sellable; the market page shows how much that is. Requests use starter credit first.
+                </li>
+              )}
+              {EXPIRY.enabled ? (
+                <li>
+                  <b>The {expiryDays} keep counting.</b> A listing does not pause expiry. If credit comes back from a cancelled or lapsed listing it has its original date, so
+                  list credit while it still has time to sell.
+                </li>
+              ) : null}
               <li>Buyers take any part of the listing. Each fill pays you the discounted price minus the fee, into your prepaid US-dollar balance.</li>
               <li>Cancel any time, or let it expire after {listingDays} days; the remainder returns to your credits.</li>
               <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in USDC and marks it done.</li>
@@ -538,8 +702,21 @@ export function Docs() {
                 <b>Prepaid balance during the beta.</b> There is no on-chain checkout yet. The team tops up a buyer's prepaid balance after a hand-sent USDC payment, audited
                 with a reference. USDC checkout replaces this after the token launch (see <a href="#roadmap">Roadmap</a>).
               </li>
-              <li>Bought credits spend like any other credit, on any model, under any privacy tier.</li>
+              <li>
+                Bought credits spend like any other credit, on any model, under any privacy tier{EXPIRY.enabled ? `, and start a fresh ${expiryDays} when they land` : ''}.
+              </li>
             </ul>
+            {DIRECT.enabled ? (
+              <>
+                <h3 id="buy-direct">Or buy from Mesh at face value</h3>
+                <p>
+                  When nobody is selling, or you would rather not wait for a seller, buy credits from Mesh on <Link to="/app/market">the market page</Link>:{' '}
+                  {fmtUsd(1, 0)} from your prepaid balance buys {fmtUsd(1, 0)} of credit, from {fmtUsd(DIRECT.minUsd, 0)} to {fmtUsd(DIRECT.maxUsd, 0)} a purchase, with no fee.
+                  It needs no ${T.ticker} and no seller. The payment backs the credit in the reserve; Mesh earns only the ordinary margin when the credit is spent. A
+                  marketplace listing is cheaper whenever one is open, because sellers price below face value.
+                </p>
+              </>
+            ) : null}
             <h3>Worked example</h3>
             <p>
               {fmtUsd(SELL_EXAMPLE.credits, 0)} of credit listed at {SELL_EXAMPLE.discountPct} off: the buyer pays {fmtUsd(SELL_EXAMPLE.paid)} and receives{' '}
@@ -560,8 +737,8 @@ export function Docs() {
             </h2>
             <p>
               Any Apple Silicon Mac with 16 GB or more. The <code>mesh-node</code> agent talks to a local Ollama, pulls jobs from the gateway over HTTPS (no inbound ports),
-              streams the reply back and keeps nothing. You earn {nodePay} per million tokens served, tracked per job, from the treasury share of fees. Earnings show as a
-              US-dollar counter today and are paid out in ${T.ticker} once the token is live.
+              streams the reply back and keeps nothing. You earn {nodePay} per million tokens served, tracked per job; a staked node earns more, up to {nodeCeilingPct} of what
+              the user paid for the job ({nodeCeiling} per million). Earnings show as a US-dollar counter today and are paid out in ${T.ticker} once the token is live.
             </p>
             <h3>Link, then install</h3>
             <ul>
@@ -667,7 +844,8 @@ export function Docs() {
                     <th>Tier</th>
                     <th className="num">Minimum stake</th>
                     <th className="num">Lock</th>
-                    <th className="num">Node rewards</th>
+                    <th className="num">Multiplier</th>
+                    <th className="num">Earns, per 1M tokens</th>
                     <th>Trusted</th>
                   </tr>
                 </thead>
@@ -678,12 +856,21 @@ export function Docs() {
                       <td className="num">{t.minStake === 0 ? '—' : `${fmtInt(t.minStake)} ${T.ticker}`}</td>
                       <td className="num">{t.lockDays ? `${t.lockDays} days` : 'none'}</td>
                       <td className="num">{t.multiplier}×</td>
+                      <td className="num">
+                        {fmtCost(nodeRewardPerM(t.multiplier))}
+                        {T.nodeRewardUsdPerMTokens * t.multiplier > NODE_REWARD_CEILING_PER_M ? <span className="muted"> · ceiling</span> : null}
+                      </td>
                       <td className="muted">{t.name === T.privacy.trustedMinStakeTier ? 'with the operator pledge' : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <p className="small muted">
+              A job never pays its node more than {nodeCeilingPct} of what the user was billed, so every job leaves at least {nodeFloorMarginPct} for the margin and for
+              spot-check re-runs. At {netPrice} per million that ceiling is {nodeCeiling}: a multiplier lifts the {nodePay} base rate up to it and no further. Where two tiers
+              reach the ceiling they earn the same per job and differ by queue position and by whether the node can be trusted.
+            </p>
           </div>
         </div>
       </section>
@@ -697,8 +884,8 @@ export function Docs() {
             </h2>
             <p>
               <Link to="/stats">The stats page</Link> is the public ledger: live network figures, every epoch with its fees, pool and eligible wallets (the empty ones
-              too), the weekly report of fees in against credits out, the treasury ledger, marketplace fills and fees, and the usage share
-              {usageOn ? '' : ' (reported as off)'}. It is computed from the same rows your dashboard uses. The raw data is public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
+              too), the weekly report of fees in against credits out, the credit reserve against credits owed, credit that has lapsed, credits sold directly, the treasury
+              ledger, marketplace fills and fees, and the usage share{usageOn ? '' : ' (reported as off)'}. It is computed from the same rows your dashboard uses. The raw data is public at <code>{PUBLIC_API_URL}/stats</code>,{' '}
               <code>/epochs</code>, <code>/report</code> and <code>/market/stats</code>; counts and dollar totals, never wallets, keys or prompts.
             </p>
           </div>
@@ -730,15 +917,19 @@ export function Docs() {
               Credits are a share of fees, <span className="muted">not a promise.</span>
             </h2>
             <p>
-              Fee credits exist only when people trade ${T.ticker}; the usage share exists only when it is switched on and there is a margin to share. An {epochWord} with no
-              trades and no sales is an {epochWord} with no distribution. Credits are a licence to use the gateway, not money: they have no cash value, cannot be withdrawn, and
-              leave your wallet only through the marketplace. Marketplace fees are not refunded. The token can lose all its value. Nothing here is investment advice
+              Fee credits exist only when people trade ${T.ticker}; the usage share exists only when it is switched on and there is a margin to share, and that margin is
+              small. An {epochWord} with no trades and no sales is an {epochWord} with no distribution, and an {epochWord} with a stale price feed mints nothing until the feed
+              is fresh. Credits are a licence to use the gateway, not money: they have no cash value, cannot be withdrawn,{' '}
+              {EXPIRY.enabled ? `lapse ${expiryDays} after they land if unused, ` : ''}and leave your wallet only through the marketplace{STARTER.transferable ? '' : ' (starter credit not at all)'}
+              . Marketplace fees are not refunded{DIRECT.enabled ? ', and neither are credits bought from Mesh' : ''}. The published reserve is a number you can check, not a
+              guarantee or a right to redeem. The token can lose all its value. Nothing here is investment advice
               {T.geoBlock.length ? <>, and Mesh is not available to residents of {T.geoBlock.join(', ')}</> : null}.
             </p>
             <h3>Where it is still rough</h3>
             <p>
-              One gateway, one database, one operator, in open beta. The token is not deployed yet, so fees come from a test feed and staking waits for the contract; node
-              rewards are a counter you can watch, not a payout; marketplace balances are topped up and withdrawn by the team by hand. Unsigned Mac builds. We will say when
+              One gateway, one database, one operator, in open beta. The token is not deployed yet, so fees come from a test feed, there is no reserve to publish and staking
+              waits for the contract; node rewards are a counter you can watch, not a payout; prepaid balances, which pay for marketplace buys and direct purchases, are topped
+              up and withdrawn by the team by hand. Unsigned Mac builds. We will say when
               these change, here and on the <a href="#roadmap">roadmap</a>.
             </p>
             <p>

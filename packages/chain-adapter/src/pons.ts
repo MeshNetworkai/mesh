@@ -1,6 +1,6 @@
 import { decodeEventLog, zeroAddress, type Abi, type Address, type Hex, type TransactionReceipt } from 'viem';
 import { EvmAdapter, type EvmAdapterOptions } from './evm.js';
-import { NotWiredError, type SweepDetail } from './types.js';
+import { NotWiredError, type ReserveReading, type SweepDetail } from './types.js';
 import { assertBps, toUnits } from './rpc.js';
 import { chainlinkAggregatorAbi, erc20Abi, ponsEscrowAbi, ponsFeeVaultAbi } from './evm/abi.js';
 
@@ -30,9 +30,18 @@ export interface PonsEvmAdapterOptions extends EvmAdapterOptions {
   /** Stablecoin the vault settles in (USDG / USDC). Needed for `sweepMode: 'swap'`. */
   stable?: Address;
   stableDecimals?: number;
-  /** `swap` (default): PonsFeeVault.sweep(asset, minOut) via its route. `raw`: sweepRaw(asset), valued off-chain. */
+  /**
+   * `swap` (default, and what production runs): PonsFeeVault.sweep(asset, minOut) converts the fees to the
+   * stablecoin on chain, so the holder share reaches the credit pool in dollars. `raw`: sweepRaw(asset)
+   * forwards the asset and values it off-chain; the pool then carries the asset's price risk against
+   * credits that are fixed in USD, so it is for rehearsals and chains without a stable route only.
+   */
   sweepMode?: 'swap' | 'raw';
-  /** Chainlink ETH/USD aggregator. When absent `fixedEthUsd` is used (tests / before a feed exists on the chain). */
+  /**
+   * Chainlink ETH/USD aggregator. A configured feed is the only price source: when its answer is stale or
+   * the read fails, ETH fees are left unswept until it is fresh (no credits are minted against a guess).
+   * `fixedEthUsd` is used only when no feed is configured (tests / before a feed exists on the chain).
+   */
   priceFeed?: Address;
   fixedEthUsd?: number;
   /** USD prices for non-ETH, non-stable quote tokens in raw mode (token units). */
@@ -110,8 +119,13 @@ export class PonsEvmAdapter extends EvmAdapter {
 
   // ------------------------------------------------------------------ pricing
 
-  /** ETH/USD from Chainlink when configured, else `fixedEthUsd`, else null. */
-  async ethUsd(): Promise<{ price: number | null; source: 'chainlink' | 'fixed' | 'none'; warning?: string }> {
+  /**
+   * ETH/USD from Chainlink when a feed is configured, else `fixedEthUsd`, else null. A configured feed is
+   * never replaced by the fixed price: a stale answer or a failed read yields no price (`stale: true` for
+   * the former), and `sweep()` then leaves ETH fees where they are instead of minting credits against a
+   * number that may be wrong.
+   */
+  async ethUsd(): Promise<{ price: number | null; source: 'chainlink' | 'fixed' | 'none'; stale?: boolean; warning?: string }> {
     if (this.opts.priceFeed) {
       try {
         const [decimals, round] = await Promise.all([
@@ -122,19 +136,14 @@ export class PonsEvmAdapter extends EvmAdapter {
         const age = Math.floor(Date.now() / 1000) - Number(updatedAt);
         const maxAge = this.opts.priceMaxAgeSec ?? 3600;
         if (answer <= 0n) throw new Error('non-positive answer');
-        const price = Number(answer) / 10 ** Number(decimals);
-        if (age > maxAge) {
-          if (this.opts.fixedEthUsd) return { price: this.opts.fixedEthUsd, source: 'fixed', warning: `chainlink answer is ${age}s old; used fixedEthUsd` };
-          return { price, source: 'chainlink', warning: `chainlink answer is ${age}s old (max ${maxAge})` };
-        }
-        return { price, source: 'chainlink' };
+        if (age > maxAge) return { price: null, source: 'none', stale: true, warning: `chainlink answer is ${age}s old (max ${maxAge}): ETH fees stay unswept until the feed is fresh` };
+        return { price: Number(answer) / 10 ** Number(decimals), source: 'chainlink' };
       } catch (err) {
-        if (this.opts.fixedEthUsd) return { price: this.opts.fixedEthUsd, source: 'fixed', warning: `chainlink read failed (${(err as Error).message}); used fixedEthUsd` };
-        return { price: null, source: 'none', warning: `chainlink read failed: ${(err as Error).message}` };
+        return { price: null, source: 'none', warning: `chainlink read failed (${(err as Error).message}): ETH fees stay unswept until the feed answers` };
       }
     }
     if (this.opts.fixedEthUsd) return { price: this.opts.fixedEthUsd, source: 'fixed' };
-    return { price: null, source: 'none', warning: 'no priceFeed and no fixedEthUsd: ETH-denominated fees cannot be valued' };
+    return { price: null, source: 'none', warning: 'no priceFeed and no fixedEthUsd: ETH-denominated fees cannot be valued and stay unswept' };
   }
 
   private async assetDecimals(asset: Address): Promise<number> {
@@ -194,6 +203,29 @@ export class PonsEvmAdapter extends EvmAdapter {
     }
   }
 
+  /**
+   * What the credit-pool wallet holds: the settlement stablecoin (the reserve behind outstanding credits)
+   * and any ETH sitting next to it (left from a raw sweep, or gas money), valued at the current price.
+   */
+  async reserve(): Promise<ReserveReading> {
+    const pool = this.opts.creditPool;
+    if (!pool) throw new NotWiredError('PonsEvmAdapter', 'creditPool not configured');
+    const stable = this.opts.stable ?? null;
+    const [stableRaw, ethRaw, { price }] = await Promise.all([
+      stable ? this.publicClient.readContract({ address: stable, abi: erc20Abi, functionName: 'balanceOf', args: [pool] }) : Promise.resolve(0n),
+      this.publicClient.getBalance({ address: pool }),
+      this.ethUsd(),
+    ]);
+    const otherUnits = toUnits(ethRaw, 18);
+    return {
+      wallet: pool,
+      stable,
+      stableUsd: toUnits(stableRaw, this.stableDecimals()),
+      otherUnits,
+      otherUsd: otherUnits === 0 ? 0 : price === null ? null : Math.round(otherUnits * price * 1e6) / 1e6,
+    };
+  }
+
   // ------------------------------------------------------------------ sweep
 
   override async collectFees(): Promise<{ amountUsd: number; txId: string }> {
@@ -233,13 +265,21 @@ export class PonsEvmAdapter extends EvmAdapter {
     });
     if (total === 0n) return empty();
 
+    // An asset without a price is not swept at all: it stays in the escrow (or, once pulled, in the vault)
+    // and is picked up by a later epoch. Sweeping it anyway would either mint no credits for fees that
+    // did move (raw) or swap with no slippage floor (swap). The stablecoin itself never needs a price.
+    const sweepable = pending.filter((p) => {
+      if (p.inEscrow + p.held === 0n) return false;
+      if (this.assetUsd(p.asset, ethUsd) !== null) return true;
+      warnings.push(`no fresh price for ${p.asset}: ${toUnits(p.inEscrow + p.held, p.decimals)} left unswept, no credits minted for it this epoch`);
+      return false;
+    });
+    if (sweepable.length === 0) return empty();
+
     if (dryRun) {
-      for (const p of pending) {
+      for (const p of sweepable) {
         const gross = toUnits(p.inEscrow + p.held, p.decimals);
-        if (gross === 0) continue;
-        const px = this.assetUsd(p.asset, ethUsd);
-        if (px === null) warnings.push(`no price for ${p.asset}; valued at 0`);
-        const usd = gross * (px ?? 0);
+        const usd = gross * this.assetUsd(p.asset, ethUsd)!;
         const holderUsd = (usd * holderBps) / 10_000;
         assets.push({ asset: p.asset, grossIn: gross, holderOut: holderUsd, treasuryOut: usd - holderUsd, outAsset: p.asset, usd, mode: 'raw' });
       }
@@ -247,31 +287,30 @@ export class PonsEvmAdapter extends EvmAdapter {
     }
 
     // 1. escrow → vault
-    const needsPull = pending.some((p) => p.inEscrow > 0n);
+    const needsPull = sweepable.some((p) => p.inEscrow > 0n);
     if (needsPull) {
       const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'pull' });
       txIds.push(r.transactionHash);
     }
     // 2. vault → creditPool / treasury, per asset
-    for (const p of pending) {
+    for (const p of sweepable) {
       const heldNow =
         p.asset === ETH_ASSET
           ? await this.publicClient.getBalance({ address: vault })
           : await this.publicClient.readContract({ address: p.asset, abi: erc20Abi, functionName: 'balanceOf', args: [vault] });
       if (heldNow === 0n) continue;
       const gross = toUnits(heldNow, p.decimals);
-      const px = this.assetUsd(p.asset, ethUsd);
+      const px = this.assetUsd(p.asset, ethUsd)!;
       if (mode === 'raw') {
         const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweepRaw', args: [p.asset] });
         txIds.push(r.transactionHash);
         const ev = this.decodeSwept(r, 'SweptRaw');
         const holderOut = toUnits(ev?.holderOut ?? 0n, p.decimals);
         const treasuryOut = toUnits(ev?.treasuryOut ?? 0n, p.decimals);
-        if (px === null) warnings.push(`no price for ${p.asset}; raw sweep valued at 0`);
-        assets.push({ asset: p.asset, grossIn: gross, holderOut, treasuryOut, outAsset: p.asset, usd: gross * (px ?? 0), mode: 'raw', txId: r.transactionHash });
+        assets.push({ asset: p.asset, grossIn: gross, holderOut, treasuryOut, outAsset: p.asset, usd: gross * px, mode: 'raw', txId: r.transactionHash });
       } else {
-        // minOut in stable units from the off-chain price (0 when unknown: the route's price is accepted)
-        const expectedUsd = px === null ? 0 : gross * px;
+        // minOut in stable units from the off-chain price: the swap reverts rather than settle below it.
+        const expectedUsd = gross * px;
         const minOut = this.isStable(p.asset) ? 0n : BigInt(Math.floor(expectedUsd * (10_000 - slippageBps) * 10 ** this.stableDecimals())) / 10_000n;
         const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweep', args: [p.asset, minOut] });
         txIds.push(r.transactionHash);

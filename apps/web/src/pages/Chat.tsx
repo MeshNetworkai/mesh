@@ -311,6 +311,7 @@ export function Chat() {
 
   /* ---------- render ---------- */
   const starter = TOKENOMICS.starterCredits.enabled;
+  const starterNeedsHold = TOKENOMICS.starterCredits.requireMinHold;
   const connectCard = locked ? (
     <div className="connect-card" role="note">
       <div className="connect-copy">
@@ -321,7 +322,11 @@ export function Chat() {
             : needsWallet && current
               ? `${current.displayName} is a ${current.tier ?? 'frontier'} model; it needs a wallet.`
               : `You have used today's ${limit} free messages.`}{' '}
-          {starter ? 'Starter credits are on us.' : 'Signing a message proves you hold the wallet. No transaction, no fee.'}
+          {starter
+            ? starterNeedsHold
+              ? `A wallet holding ${TOKENOMICS.minHoldTokens.toLocaleString()} ${TOKENOMICS.ticker} gets starter credits${TOKENOMICS.directSales.enabled ? '; anyone can buy credits at face value' : ''}.`
+              : 'Starter credits are on us.'
+            : 'Signing a message proves you hold the wallet. No transaction, no fee.'}
         </p>
       </div>
       <button type="button" className="btn primary" onClick={openModal}>
