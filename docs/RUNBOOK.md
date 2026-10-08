@@ -322,7 +322,8 @@ alert) is a stale price feed (§11h).
 Alert → playbook map: `missed_epoch`/`failed_sweep` → §11a (when its text says "left unswept" it is a
 stale price feed: §11h); `upstream_error_rate` → §11b;
 `fleet_drop` → §11c; `db_size`/`disk_low` → §11e (grow the disk or prune `heartbeats`/`requests_log`);
-`reserve_short` → §11g.
+`reserve_short` → §11g. A `[mesh] WITHDRAWAL requested #…` message is not an alert that resolves: it is
+a payout to make (§11j).
 
 Backup at T+2h and T+24h (then daily via cron):
 
@@ -608,6 +609,54 @@ lapse a single wallet on the spot.
 - Lapsed credit lowers `requiredUsd`, so its backing appears as reserve surplus (§11g).
 - Switching it off is `creditExpiry.enabled: false` and a rebuild; credit that already lapsed stays
   lapsed.
+
+### 11j. Paying a withdrawal
+
+Withdrawals of prepaid balances are paid by hand. You hear about one three ways: a
+`[mesh] WITHDRAWAL requested #<id>: $<amount> to <wallet>` message on the ops channel the moment it is
+requested, the `withdrawals:` line of the daily digest (how many are waiting, the total, the age of
+the oldest), and the **Withdrawals** panel at the top of `/admin`. The message only reaches a phone if
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (§3); otherwise it is a `WARN … ALERT` line in
+`docker compose logs gateway` and the panel says so.
+
+1. Open `/admin` → Withdrawals. The queue is oldest first; each row has the wallet, the amount and how
+   long it has waited (red after 24 hours). Same data:
+   `curl -s $G/admin/market -H "$A" | jq '.withdrawals'`.
+2. The amount has already left the user's prepaid balance. Send that amount of USDG to the
+   wallet shown, from the wallet that receives deposits (`marketplace.deposits.receiver`, the
+   treasury multisig as configured). Check the
+   address against the row, not against a chat message.
+3. Paste the transaction hash into the row and press **Mark paid**
+   (`curl -s -X POST $G/admin/market/withdrawals/<id>/paid -H "$A" -H "$J" -d '{"txRef":"0x…"}'`).
+   It is audited as `withdrawal-paid`, and the user's market page shows the request as paid.
+4. Marking paid moves no money and cannot be undone from the page. If a request must not be paid
+   (fraud, a mistaken top-up), leave it pending and credit the balance back by hand with a note:
+   `POST /admin/prepaid { wallet, amountUsd, note, ref: "refund:withdrawal:<id>" }`, then mark the
+   request paid with a note saying so.
+
+A request made while Telegram was unreachable is announced on the next alert check (every minute); one
+that was paid before anybody was told is never announced.
+
+### 11k. Node payouts
+
+Node rewards are paid as AI credits by the gateway itself: every hour, after the epoch, rewards that
+are at least `nodeRewards.payout.holdSeconds` (1 h) old are added to each operator's credit balance
+(`docs/NODE_PROTOCOL.md` §7). There is nothing to send, no key and no on-chain step. Operators who want
+money list the credits on the marketplace and withdraw USDG, which arrives as an ordinary withdrawal
+(§11j).
+
+- What ran: the `housekeeping` log line (`nodePayoutWallets`, `nodePayoutUsd`), `.housekeeping` in the
+  `POST /admin/run-epoch` response, the `nodes:` line of the daily digest, and
+  `curl -s $G/report | jq .totals.nodePayouts`.
+- "I was not paid": `GET /me/nodes → payout.pendingUsd` is what is waiting. It waits when it is less
+  than an hour old, below `minUsd` ($0.01), or the node is quarantined (clear it in `/admin` once the
+  cause is understood; the next hourly run pays).
+- A spot check that fails after the payout takes the credits back (`node_payout` row with a negative
+  amount, ref `clawback:job:<id>`); the balance can go below zero if they were already spent or sold.
+- The reserve: payouts for paid requests need no funding (the user's spend frees more than the node
+  is paid). Payouts for free guest messages do: fund them into the credit pool with the rest of §11g.
+- Switching it off is `nodeRewards.payout.enabled: false` and a rebuild; rewards then accrue unpaid
+  and are all paid when it is switched back on.
 
 ---
 

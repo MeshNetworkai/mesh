@@ -468,7 +468,7 @@ paths:
       security: [{ session: [] }]
       responses:
         '200':
-          description: Nodes with the same stats as `GET /nodes/{id}`, plus the wallet's total node earnings.
+          description: Nodes with the same stats as `GET /nodes/{id}`, plus the wallet's total node earnings and how they are paid.
           content:
             application/json:
               schema:
@@ -479,6 +479,16 @@ paths:
                   nodes: { type: array, items: { $ref: '#/components/schemas/NodeStats' } }
                   earnedUsdTotal: { type: number }
                   rewardUsdPerMTokens: { type: number, example: 0.06 }
+                  payout:
+                    type: object
+                    description: Node rewards are paid as AI credits into this wallet's balance, off chain, once they have been held `holdSeconds`. Sell them on the marketplace to turn them into the settlement stablecoin.
+                    properties:
+                      enabled: { type: boolean }
+                      paidAs: { type: string, enum: [credits] }
+                      holdSeconds: { type: integer, example: 3600 }
+                      minUsd: { type: number, example: 0.01 }
+                      paidUsd: { type: number, description: Paid into the credit balance so far, net of any clawback. }
+                      pendingUsd: { type: number, description: 'Earned and not paid yet: inside the hold, below the minimum, or a quarantined node.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /keys:
@@ -1449,7 +1459,7 @@ paths:
     post:
       tags: [Market]
       summary: Request a payout of prepaid USD
-      description: The amount leaves the prepaid balance at once (`withdrawal` row); an operator pays it and marks the request paid.
+      description: The amount leaves the prepaid balance at once (`withdrawal` row). The request is announced to the operator (alert channel, daily digest, Admin → Withdrawals), who sends the stablecoin by hand and marks it paid.
       operationId: requestMarketWithdrawal
       security: [{ session: [] }]
       requestBody:
@@ -1541,10 +1551,10 @@ paths:
     get:
       tags: [Market]
       summary: Operator overview
-      description: 'Admin (`x-admin-token`). Totals, last 24h, the open book, prepaid outstanding, the pending holder pool and every pending withdrawal.'
+      description: 'Admin (`x-admin-token`). Totals, last 24h, the open book, prepaid outstanding, the pending holder pool and the withdrawal queue: every pending request oldest first (with `notified_at`, when the alert channel was told), the last ten paid, and `announcedVia` (`telegram`, `log`, or null when alerts are off).'
       operationId: adminMarketOverview
       responses:
-        '200': { description: '`{ totals, last24h, book, prepaid, poolExtra, withdrawals: { pendingUsd, paidUsd, pending: [...] }, config }`.' }
+        '200': { description: '`{ totals, last24h, book, prepaid, poolExtra, withdrawals: { pendingUsd, paidUsd, pending: [...], recentPaid: [...], announcedVia }, config }`.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /admin/market/reap:
     post:
@@ -1765,6 +1775,8 @@ components:
         showSavings: { type: boolean }
         pointsEnabled: { type: boolean, description: 'Points / leaderboard / referral programme is live. Built but disabled by default; the related routes answer 404 when false.' }
         nodeRewardUsdPerMTokens: { type: number }
+        nodeRewardsPaidAs: { type: [string, 'null'], enum: [credits, null], description: 'How node rewards are paid: `credits` (hourly, into the operator''s credit balance, off chain) or null while payouts are off.' }
+        marketSettlementSymbol: { type: string, description: 'The stablecoin the credit marketplace settles in (deposits and withdrawals). Credits stay off chain.' }
         nodeRewardMaxShareBps: { type: integer, description: 'Most a job may pay its node, as a share of what the user was billed (9000 = 90 %). A stake multiplier lifts a reward up to here and no further.' }
         usageShareEnabled: { type: boolean }
         usageShareToHolders24hUsd: { type: number }
@@ -1974,7 +1986,7 @@ components:
       type: object
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [distribution, usage, starter, adjustment, market_escrow, market_refund, market_buy, purchase, expiry] }
+        kind: { type: string, enum: [distribution, usage, starter, adjustment, market_escrow, market_refund, market_buy, purchase, expiry, node_payout], description: '`node_payout`: node rewards paid into the balance as credits (negative when a paid reward is clawed back).' }
         deltaUsd: { type: number }
         deltaUsdMicros: { type: integer }
         ref: { type: [string, 'null'], description: '`epoch:<start>`, `req:<id>`, `listing:<id>`, `fill:<id>`, `purchase:<id>` or `expiry:<cutoff>`.' }

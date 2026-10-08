@@ -26,7 +26,7 @@ async function main() {
       // Lapse credit past its window and read the reserve, whether or not the sweep went through.
       try {
         const h = await runHousekeeping(app.ctx);
-        app.log.info({ expiredWallets: h.expiredWallets, expiredUsd: microsToUsd(h.expiredUsdMicros), reserve: h.reserveSource, reserveHeldUsd: h.reserveHeldUsdMicros === null ? null : microsToUsd(h.reserveHeldUsdMicros) }, 'housekeeping');
+        app.log.info({ nodePayoutWallets: h.nodePayoutWallets, nodePayoutUsd: microsToUsd(h.nodePayoutUsdMicros), expiredWallets: h.expiredWallets, expiredUsd: microsToUsd(h.expiredUsdMicros), reserve: h.reserveSource, reserveHeldUsd: h.reserveHeldUsdMicros === null ? null : microsToUsd(h.reserveHeldUsdMicros) }, 'housekeeping');
         for (const w of h.sweepWarnings) app.log.warn({ warning: w }, 'sweep left fees unswept');
       } catch (err) {
         app.log.error({ err }, 'housekeeping failed');

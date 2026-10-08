@@ -40,6 +40,9 @@ const nodeFloorMarginPct = pctFromBps(10_000 - T.nodeRewardMaxShareBps);
 const netMargin = fmtCost(Math.round((T.networkPricePerMTokens - T.nodeRewardUsdPerMTokens) * 1e6) / 1e6);
 const netMarginAtCeiling = fmtCost(Math.round((T.networkPricePerMTokens - NODE_REWARD_CEILING_PER_M) * 1e6) / 1e6);
 const starterWho = STARTER.requireMinHold ? `a wallet that holds at least ${minHold}` : 'a wallet';
+const SETTLE = T.marketplace.settlementSymbol;
+const NODE_PAYOUT = T.nodePayout;
+const payoutHold = NODE_PAYOUT.holdSeconds >= 3600 ? `${Math.round(NODE_PAYOUT.holdSeconds / 3600) === 1 ? 'an hour' : `${Math.round(NODE_PAYOUT.holdSeconds / 3600)} hours`}` : `${Math.round(NODE_PAYOUT.holdSeconds / 60)} minutes`;
 
 const MODEL = 'meta-llama/llama-3.1-8b-instruct';
 
@@ -656,7 +659,10 @@ export function Docs() {
               Sell what you will not use. <span className="muted">Buy below face value.</span>
             </h2>
             <p>
-              Holders who will not spend their credits list them at a discount of up to {maxDiscount}. Anyone buys them below face value and spends them on any model. Mesh
+              Credits never go on chain. What moves on chain is {SETTLE}: buyers pay for credits with it and sellers are paid in it.
+            </p>
+            <p>
+              Holders{NODE_PAYOUT.enabled ? ' and node operators' : ''} who will not spend their credits list them at a discount of up to {maxDiscount}. Anyone buys them below face value and spends them on any model. Mesh
               keeps {marketFee} of the price; {marketFeeToHolders} of that fee goes into the next {epochWord}'s holder pool and the rest to the treasury. The book is public
               at <Link to="/app/market">the market page</Link>.
             </p>
@@ -693,14 +699,14 @@ export function Docs() {
               ) : null}
               <li>Buyers take any part of the listing. Each fill pays you the discounted price minus the fee, into your prepaid US-dollar balance.</li>
               <li>Cancel any time, or let it expire after {listingDays} days; the remainder returns to your credits.</li>
-              <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in USDG and marks it done.</li>
+              <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in {SETTLE} and marks it done.</li>
             </ul>
             <h3>How to buy</h3>
             <ul>
               <li>Choose a discount tier on the book, or quote an amount. You pay from your prepaid balance and the credits land in your ledger at face value, immediately.</li>
               <li>
-                <b>Prepaid balance during the beta.</b> There is no on-chain checkout yet. The team tops up a buyer's prepaid balance after a hand-sent USDG payment, audited
-                with a reference. USDG checkout replaces this after the token launch (see <a href="#roadmap">Roadmap</a>).
+                <b>Prepaid balance during the beta.</b> There is no on-chain checkout yet. The team tops up a buyer's prepaid balance after a hand-sent {SETTLE} payment, audited
+                with a reference. Self-serve {SETTLE} checkout replaces this after the token launch (see <a href="#roadmap">Roadmap</a>).
               </li>
               <li>
                 Bought credits spend like any other credit, on any model, under any privacy tier{EXPIRY.enabled ? `, and start a fresh ${expiryDays} when they land` : ''}.
@@ -738,8 +744,29 @@ export function Docs() {
             <p>
               Any Apple Silicon Mac with 16 GB or more. The <code>mesh-node</code> agent talks to a local Ollama, pulls jobs from the gateway over HTTPS (no inbound ports),
               streams the reply back and keeps nothing. You earn {nodePay} per million tokens served, tracked per job; a staked node earns more, up to {nodeCeilingPct} of what
-              the user paid for the job ({nodeCeiling} per million). Earnings show as a US-dollar counter today and are paid out in ${T.ticker} once the token is live.
+              the user paid for the job ({nodeCeiling} per million).
             </p>
+            {NODE_PAYOUT.enabled ? (
+              <>
+                <h3 id="node-payouts">How you are paid</h3>
+                <ul>
+                  <li>
+                    <b>In AI credits, every {epochWord}.</b> What your Macs earned is added to the credit balance of the wallet they are linked to, as a “Node rewards” row in
+                    your ledger. Nothing is sent on chain and there is nothing to claim.
+                  </li>
+                  <li>
+                    <b>After a short hold.</b> A reward is paid about {payoutHold} after its job, so a spot check can still withhold it. Amounts under{' '}
+                    {fmtUsd(NODE_PAYOUT.minUsd)} wait and are paid together. A quarantined node is paid once an operator clears it.
+                  </li>
+                  <li>
+                    <b>Spend them or sell them.</b> They are ordinary credits: use them on any model, or list them on <Link to="/app/market">the marketplace</Link> and
+                    withdraw the proceeds in {SETTLE}. That is how a node operator turns earnings into money.{EXPIRY.enabled ? ` Like all credits they lapse after ${expiryDays} if unused.` : ''}
+                  </li>
+                </ul>
+              </>
+            ) : (
+              <p>Earnings show as a US-dollar counter today.</p>
+            )}
             <h3>Link, then install</h3>
             <ul>
               <li>
@@ -928,8 +955,8 @@ export function Docs() {
             <h3>Where it is still rough</h3>
             <p>
               One gateway, one database, one operator, in open beta. The token is not deployed yet, so fees come from a test feed, there is no reserve to publish and staking
-              waits for the contract; node rewards are a counter you can watch, not a payout; prepaid balances, which pay for marketplace buys and direct purchases, are topped
-              up and withdrawn by the team by hand. Unsigned Mac builds. We will say when
+              waits for the contract; node rewards are paid in credits, which turn into {SETTLE} only if a buyer takes them on the marketplace; prepaid balances, which pay for
+              marketplace buys and direct purchases, are topped up and withdrawn by the team by hand. Unsigned Mac builds. We will say when
               these change, here and on the <a href="#roadmap">roadmap</a>.
             </p>
             <p>

@@ -74,6 +74,8 @@ export function createContext(opts: BuildOptions = {}): AppContext {
     adapterStatus,
     chainCheck: opts.context?.chainCheck,
     depositVerifier: opts.context?.depositVerifier,
+    // Tests inject a monitor with a fake sender; production builds one below when ALERTS_ENABLED.
+    alerts: opts.context?.alerts,
     db,
     prices: opts.context?.prices ?? loadModelPrices(),
     policy: opts.context?.policy ?? loadModelPolicy(),

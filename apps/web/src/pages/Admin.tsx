@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Notice, Skeleton, Spinner, Tile } from '../components/ui';
-import { MOCK, TOKENOMICS } from '../config';
+import { MOCK, TOKENOMICS, addressExplorerUrl } from '../config';
 import * as api from '../lib/api';
 import { ApiError, COOKIE_SESSION } from '../lib/api';
 import { fmtAgo, fmtDateTime, fmtInt, fmtUsd, shortAddr } from '../lib/format';
 import { useAsync, useCopy } from '../lib/hooks';
+import * as market from '../lib/market';
+import type { AdminWithdrawal } from '../lib/market';
 import { MOCK_ADMIN_TOKEN_HINT } from '../lib/mock';
 import type { AdminOverview, ChainCheckReport, ChainField, ChainView, StarterStatus, WaitlistEntry } from '../lib/types';
 
@@ -83,6 +85,155 @@ function TokenGate({ onAuthed }: { onAuthed: () => void }) {
       </div>
       {error ? <Notice kind="bad">{error}</Notice> : null}
     </form>
+  );
+}
+
+/** One pending withdrawal: who, how much, since when, and the form that records the payout. */
+function WithdrawalRowItem({ w, busy, onPaid }: { w: AdminWithdrawal; busy: boolean; onPaid: (txRef: string) => void }) {
+  const [txRef, setTxRef] = useState('');
+  const [copied, copy] = useCopy();
+  const explorer = addressExplorerUrl(w.wallet, w.wallet.startsWith('0x') ? 'evm' : 'solana');
+  const waitingHours = Math.floor((Date.now() / 1000 - w.created_at) / 3600);
+  return (
+    <tr>
+      <td className="num">#{w.id}</td>
+      <td>
+        <span className="mono" title={w.wallet}>
+          {shortAddr(w.wallet, 8, 6)}
+        </span>{' '}
+        <button type="button" className="btn ghost sm" onClick={() => void copy(w.wallet)} aria-label={`Copy the wallet of request ${w.id}`}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        {explorer ? (
+          <>
+            {' '}
+            <a className="small" href={explorer} target="_blank" rel="noreferrer">
+              explorer
+            </a>
+          </>
+        ) : null}
+      </td>
+      <td className="num">
+        <b>{fmtUsd(w.amountUsd)}</b>
+      </td>
+      <td className={waitingHours >= 24 ? undefined : 'muted'} style={waitingHours >= 24 ? { color: 'var(--bad)' } : undefined} title={fmtDateTime(w.created_at)}>
+        {fmtAgo(w.created_at)}
+        {w.notified_at === null ? ' · not announced yet' : ''}
+      </td>
+      <td>
+        <div className="keybox">
+          <input className="input mono sm" placeholder="payout tx hash or reference" value={txRef} onChange={(e) => setTxRef(e.target.value)} aria-label={`Payout transaction for request ${w.id}`} spellCheck={false} />
+          <button type="button" className="btn primary sm" disabled={busy || !txRef.trim()} onClick={() => onPaid(txRef.trim())}>
+            {busy ? <Spinner /> : null} Mark paid
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * Withdrawals are paid by hand (docs/MARKETPLACE.md): a user asks, the amount leaves their prepaid
+ * balance, and somebody has to send the stablecoin and record it. This is that queue, from
+ * GET /admin/market, oldest first. "Mark paid" calls POST /admin/market/withdrawals/:id/paid with the
+ * payout transaction; it does not send any money itself. New requests are also announced on the alert
+ * channel and counted in the daily digest (gateway alerts.ts).
+ */
+function WithdrawalsPanel({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
+  const m = useAsync(() => market.adminMarket(token), [token], 30_000);
+  const [paid, runPaid] = useAction(onUnauthorized);
+  const [payingId, setPayingId] = useState<number | null>(null);
+  const [showPaid, setShowPaid] = useState(false);
+  const w = m.data?.withdrawals ?? null;
+  const pending = w?.pending ?? [];
+  const markPaid = (id: number, txRef: string) => {
+    setPayingId(id);
+    void runPaid(() => market.adminMarkWithdrawalPaid(token, id, { txRef }), () => void m.reload());
+  };
+
+  return (
+    <div className="panel" aria-label="Withdrawals to pay">
+      <div className="row between">
+        <span className="eyebrow">Withdrawals · paid by hand</span>
+        {w ? (
+          <span className={`pill sm ${pending.length ? '' : 'off'}`}>
+            <span className={`dot ${pending.length ? 'dot-live' : ''}`} /> {pending.length ? `${fmtInt(pending.length)} waiting · ${fmtUsd(w.pendingUsd)}` : 'none waiting'}
+          </span>
+        ) : null}
+      </div>
+      <p className="hint">
+        Each request has already left the user's prepaid balance. Send the {TOKENOMICS.marketplace.settlementSymbol} to the wallet shown, then record the transaction here; the user sees it as paid and the
+        action is audited. Nothing on this page moves money.{' '}
+        {w
+          ? w.announcedVia === 'telegram'
+            ? 'New requests are announced on Telegram and counted in the daily digest.'
+            : w.announcedVia
+              ? 'No Telegram bot is configured, so new requests are only written to the server log: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to be told.'
+              : 'Alerts are off (ALERTS_ENABLED=false), so nobody is told about new requests: check this page.'
+          : ''}
+      </p>
+      {m.error && !w ? <Notice kind="bad">Could not load withdrawals: {m.error}</Notice> : null}
+      {m.loading && !w ? <Skeleton w="100%" h="80px" /> : null}
+      {w && pending.length ? (
+        <div className="tblwrap">
+          <table className="tbl small" aria-label="Pending withdrawals">
+            <thead>
+              <tr>
+                <th className="num">Request</th>
+                <th>Wallet to pay</th>
+                <th className="num">Amount</th>
+                <th>Requested</th>
+                <th>Record the payout</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((p) => (
+                <WithdrawalRowItem key={p.id} w={p} busy={paid.busy && payingId === p.id} onPaid={(txRef) => markPaid(p.id, txRef)} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {paid.error ? <Notice kind="bad">{paid.error}</Notice> : null}
+      {w ? (
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <span className="small muted">
+            {fmtUsd(w.paidUsd)} paid out so far · {fmtUsd(m.data?.prepaid.outstandingUsd ?? null)} held in prepaid balances
+          </span>
+          <button className="btn ghost sm" onClick={() => setShowPaid((v) => !v)} disabled={!w.recentPaid.length}>
+            {showPaid ? 'Hide' : 'Show'} recently paid{w.recentPaid.length ? ` (${w.recentPaid.length})` : ''}
+          </button>
+        </div>
+      ) : null}
+      {w && showPaid && w.recentPaid.length ? (
+        <div className="tblwrap">
+          <table className="tbl small" aria-label="Recently paid withdrawals">
+            <thead>
+              <tr>
+                <th className="num">Request</th>
+                <th>Wallet</th>
+                <th className="num">Amount</th>
+                <th>Paid</th>
+                <th>Transaction</th>
+              </tr>
+            </thead>
+            <tbody>
+              {w.recentPaid.map((p) => (
+                <tr key={p.id}>
+                  <td className="num">#{p.id}</td>
+                  <td className="mono" title={p.wallet}>
+                    {shortAddr(p.wallet, 8, 6)}
+                  </td>
+                  <td className="num">{fmtUsd(p.amountUsd)}</td>
+                  <td className="muted">{p.paid_at ? fmtAgo(p.paid_at) : '—'}</td>
+                  <td className="mono">{p.txRef ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -173,6 +324,8 @@ function AdminConsole({ token, onUnauthorized }: { token: string; onUnauthorized
         <Tile label="Treasury balance" loading={loading} value={fmtUsd(o?.totals.treasuryBalanceUsd ?? null)} delta={o ? `${fmtUsd(o.totals.treasuryUsd)} share · ${fmtUsd(o.totals.nodeRewardsUsd)} node rewards` : ' '} />
         <Tile label="Requests · 24h" loading={loading} value={fmtInt(o?.totals.requests24h ?? null)} delta={o ? `${fmtInt(o.totals.wallets)} wallets · ${fmtInt(o.totals.activeApiKeys)} active keys` : ' '} />
       </div>
+
+      <WithdrawalsPanel token={token} onUnauthorized={onUnauthorized} />
 
       <div className="panels">
         <div className="panel">

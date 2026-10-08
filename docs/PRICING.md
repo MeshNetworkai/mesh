@@ -335,6 +335,11 @@ Before the token launch the adapter is the mock: `source` is `mock`, `heldUsd`, 
   wallet on its own: direct sales (§7), starter credits, admin grants, and the usage and marketplace
   shares that join the hourly pool. The gateway reads the pool wallet; it does not move money into
   it. The operator funds the pool for those (`docs/RUNBOOK.md` §11g).
+- Node rewards are paid as credits (`docs/NODE_PROTOCOL.md` §7), so they are owed like any other
+  credit. For a paid request this needs no funding: the user's spend lowers `requiredUsd` by the
+  network price and the node's payout raises it by at most 90 % of that, so the job still leaves
+  surplus. Rewards for treasury-paid guest messages are different: nobody spent a credit, so the
+  treasury funds those into the pool.
 
 ## 6. Credit expiry
 

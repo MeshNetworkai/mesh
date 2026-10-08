@@ -20,6 +20,7 @@ import {
   openListings,
   pendingWithdrawals,
   prepaidBalanceMicros,
+  recentPaidWithdrawals,
   quote,
   reapMarket,
   recentPrepaid,
@@ -135,6 +136,8 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     maxDiscountBps: cfg.maxDiscountBps,
     listingTtlHours: cfg.listingTtlHours,
     settlement: 'prepaid' as const,
+    /** The stablecoin buyers deposit and sellers withdraw. Credits stay off chain. */
+    settlementSymbol: cfg.settlementSymbol,
     deposits: depositsInfo(cfg.deposits),
     /** False: unused starter credit cannot be listed (starterCredits.transferable). */
     starterTransferable: ctx.config.starterCredits.transferable,
@@ -303,6 +306,9 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     const { wallet } = sessionOf(req);
     try {
       const row = requestWithdrawal(ctx.db, { wallet, amountMicros: usdToMicros(parsed.data.amountUsd) });
+      req.log.info({ wallet, withdrawalId: row.id, amountUsd: usd(row.amount_micros) }, 'withdrawal requested');
+      // Paid by hand: tell the operator channel now rather than at the next alert check (alerts.ts).
+      void ctx.alerts?.notifyWithdrawals().catch((err) => req.log.error({ err }, 'withdrawal announcement failed'));
       return reply.code(201).send({ ...withdrawalView(row), prepaidBalanceUsd: usd(prepaidBalanceMicros(ctx.db, wallet)) });
     } catch (err) {
       return sendMarketError(reply, err);
@@ -370,7 +376,15 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
       book: { openListings: t.openListings, openDepthUsd: usd(t.openDepthMicros), bestDiscountBps: t.bestDiscountBps },
       prepaid: { outstandingUsd: usd(t.prepaidOutstandingMicros) },
       poolExtra: { pendingUsd: usd(t.poolExtraPendingMicros) },
-      withdrawals: { pendingUsd: usd(t.withdrawalsPendingMicros), paidUsd: usd(t.withdrawalsPaidMicros), pending: pendingWithdrawals(ctx.db).map(withdrawalView) },
+      withdrawals: {
+        pendingUsd: usd(t.withdrawalsPendingMicros),
+        paidUsd: usd(t.withdrawalsPaidMicros),
+        /** Oldest first: the order to pay them in. `notified_at` is when the operator channel was told (null: not yet). */
+        pending: pendingWithdrawals(ctx.db).map((w) => ({ ...withdrawalView(w), notified_at: w.notified_at })),
+        recentPaid: recentPaidWithdrawals(ctx.db).map(withdrawalView),
+        /** Where requests are announced: `telegram`, or `log` when no bot is configured (server log only); null when alerts are off. */
+        announcedVia: ctx.alerts ? ctx.alerts.sender.name : null,
+      },
       config: configView(),
       generatedAt: nowSec(),
     };

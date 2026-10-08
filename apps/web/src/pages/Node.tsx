@@ -6,7 +6,7 @@ import { brewSteps } from './Download';
 import * as api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtAgo, fmtCompact, fmtCost, fmtDate, fmtInt, shortAddr } from '../lib/format';
-import { useCopy, useMyNodes, useNodes, useStats } from '../lib/hooks';
+import { useCopy, useMyNodes, useNodes, useSessionAsync, useStats } from '../lib/hooks';
 import { errorMessage, useToast } from '../lib/toast';
 import type { LinkCode, NodePledge, NodeView, PledgeText } from '../lib/types';
 
@@ -434,6 +434,10 @@ export function NodePage() {
   const [baseline, setBaseline] = useState<number | null>(null);
   const [linked, setLinked] = useState(false);
   const mine = useMyNodes(code && !linked ? 3_000 : 15_000);
+  // How this wallet's node rewards are paid: as AI credits, hourly, after a hold (GET /me/nodes → payout).
+  const earnings = useSessionAsync(api.getMyNodeEarnings, [], 30_000);
+  const payout = earnings.data?.payout ?? null;
+  const holdMinutes = Math.round(TOKENOMICS.nodePayout.holdSeconds / 60);
   const net = useNodes(60_000);
   const nodes = mine.data ?? [];
   const onCode = useCallback((c: string | null) => {
@@ -476,7 +480,10 @@ export function NodePage() {
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             You earn {fmtCost(TOKENOMICS.nodeRewardUsdPerMTokens)} per million tokens served, tracked per job. Staking lifts that, up to{' '}
-            {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user paid for the job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million). Earnings are a US-dollar counter today and are paid out in {TOKENOMICS.ticker} once the token is live. Apple Silicon with 16 GB+ is the
+            {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user paid for the job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million). {TOKENOMICS.nodePayout.enabled
+              ? `Earnings are paid as AI credits into this wallet every hour, about ${holdMinutes >= 60 ? `${Math.round(holdMinutes / 60)} hour${holdMinutes >= 120 ? 's' : ''}` : `${holdMinutes} minutes`} after each job, so a spot check can still catch a bad answer. Spend them on any model, or sell them on the market for ${TOKENOMICS.marketplace.settlementSymbol}. Nothing is paid on chain.`
+              : 'Earnings are a US-dollar counter today.'}{' '}
+            Apple Silicon with 16 GB+ is the
             target; Linux works with Ollama installed. A Mac with headroom can take several jobs at once (<code className="mono">maxParallel</code> in the
             agent config).
           </p>
@@ -506,6 +513,19 @@ export function NodePage() {
           </span>
         ) : null}
       </div>
+
+      {session && payout?.enabled && (payout.paidUsd > 0 || payout.pendingUsd > 0) ? (
+        <p className="small" data-testid="node-payout" style={{ margin: 0 }}>
+          <b className="num">{fmtCost(payout.paidUsd)}</b> paid into your credits so far
+          {payout.pendingUsd > 0 ? (
+            <>
+              {' '}
+              · <b className="num">{fmtCost(payout.pendingUsd)}</b> waiting for the next hourly payout
+            </>
+          ) : null}
+          . <Link to="/app">See your balance</Link> or <Link to="/app/market">sell credits for {TOKENOMICS.marketplace.settlementSymbol}</Link>.
+        </p>
+      ) : null}
 
       {!session ? (
         <Empty

@@ -4,8 +4,9 @@ import { nowSec } from './db.js';
 /**
  * `market_*`: credit marketplace (market.ts) — escrow out of the seller's spendable balance, refund on cancel/expiry, buy into the buyer.
  * `purchase`: credit bought from Mesh at face value (direct-sales.ts). `expiry`: credit that lapsed (expiry.ts).
+ * `node_payout`: node rewards paid as credits (node-payouts.ts); negative when a paid reward is clawed back.
  */
-export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry';
+export type LedgerKind = 'distribution' | 'usage' | 'adjustment' | 'starter' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry' | 'node_payout';
 
 export interface LedgerRow {
   id: number;
@@ -65,6 +66,8 @@ export interface NodeRewardRow {
   usd_micros: number;
   status: NodeRewardStatus;
   created_at: number;
+  /** The credits_ledger row that paid this reward as credits (node-payouts.ts); null while it is unpaid. */
+  paid_ledger_id: number | null;
 }
 
 /** Micro-USD a node earns for `tokens` total tokens at `usdPerMTokens`. */
@@ -105,6 +108,11 @@ export function withholdNodeReward(db: Db, jobId: string, reason: string): NodeR
     if (!row) return null;
     db.prepare(`UPDATE node_rewards SET status = 'withheld' WHERE id = ?`).run(row.id);
     if (row.usd_micros !== 0) addTreasuryEntry(db, { kind: 'node_reward_accrual', usdMicros: row.usd_micros, ref: `withheld:job:${jobId}:${reason}` });
+    // Already paid out as credits (the verdict came after the hold): take the credits back. Rare, because
+    // nodeRewards.payout.holdSeconds is far longer than a spot check takes.
+    if (row.paid_ledger_id !== null && row.paid_ledger_id !== undefined && row.usd_micros > 0) {
+      addLedgerEntry(db, { wallet: row.wallet, deltaMicros: -row.usd_micros, kind: 'node_payout', ref: `clawback:job:${jobId}:${reason}` });
+    }
     return { ...row, status: 'withheld' as const };
   });
   return tx();

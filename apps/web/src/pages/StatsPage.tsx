@@ -261,7 +261,12 @@ export function StatsPage() {
         <div className="tiles">
           <Tile label="Fees in" loading={rloading} value={fmtUsd(r?.feesIn ?? null)} delta={r ? `${fmtInt(r.epochsRun)} epochs` : ' '} />
           <Tile label="Credits out" loading={rloading} value={fmtUsd(r?.creditsOut ?? null)} delta={r ? `${fmtUsd(r.totals.creditsUsedUsd)} spent so far` : ' '} deltaKind="up" />
-          <Tile label="Node rewards" loading={rloading} value={fmtUsd(r?.nodeRewards ?? null, 2)} delta={r ? `${pct(r.servedByNetworkPercent)} served by Mesh nodes` : ' '} />
+          <Tile
+            label="Node rewards"
+            loading={rloading}
+            value={fmtUsd(r?.nodeRewards ?? null, 2)}
+            delta={r ? `${r.totals.nodePayouts?.enabled ? `${fmtUsd(r.totals.nodePayouts.paidUsd)} paid as credits · ` : ''}${pct(r.servedByNetworkPercent)} served by Mesh nodes` : ' '}
+          />
           <Tile label="Treasury balance" loading={rloading} value={fmtUsd(r?.treasuryBalanceUsd ?? null)} delta={tr && treasuryOut !== null ? `${fmtUsd(tr.feeShareUsd + (tr.marketFeeUsd ?? 0))} in · ${fmtUsd(treasuryOut)} out` : ' '} />
         </div>
 
@@ -671,6 +676,12 @@ export function StatsPage() {
             <div>
               <span className="eyebrow">Method · direct sales</span>
               {r.method.directSales}
+            </div>
+          ) : null}
+          {r?.method.nodePayouts ? (
+            <div>
+              <span className="eyebrow">Method · node payouts</span>
+              {r.method.nodePayouts}
             </div>
           ) : null}
           <div>

@@ -149,6 +149,8 @@ your row marked, and the stake / unstake panels.
 
 - Tier changes: edit `tokenomics.json`, then `setTiers` on-chain from the owner so both agree. The
   gateway re-evaluates at the next epoch; `StakeResolver.clear()` forces it.
+- Rewards are paid as AI credits, off chain, an hour after they are earned (`docs/NODE_PROTOCOL.md` §7);
+  a stake changes how much a job accrues, not how it is paid.
 - Rewards accrue against the treasury ledger as before; the multiplier only scales the accrual, up to
   the ceiling.
 - The ceiling is `nodeRewards.maxShareOfPriceBps` of what the job is billed

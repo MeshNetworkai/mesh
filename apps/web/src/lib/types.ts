@@ -91,6 +91,10 @@ export interface Stats {
   starterRequiresHold?: boolean;
   /** Most a job may pay its node, as a share of what the user was billed, bps. */
   nodeRewardMaxShareBps?: number;
+  /** How node rewards are paid: `credits` (hourly, into the operator's credit balance, off chain) or null while payouts are off. */
+  nodeRewardsPaidAs?: 'credits' | null;
+  /** The stablecoin the credit marketplace settles in (deposits and withdrawals). */
+  marketSettlementSymbol?: string;
   /** The credit reserve at the last hourly reading against credits owed (same block as GET /report totals.reserve). */
   reserve?: ReserveView;
   series24h: HourPoint[];
@@ -162,7 +166,7 @@ export interface NodesSummary {
 
 export interface LedgerRow {
   id: number;
-  kind: 'distribution' | 'usage' | 'starter' | 'adjustment' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry' | string;
+  kind: 'distribution' | 'usage' | 'starter' | 'adjustment' | 'market_escrow' | 'market_refund' | 'market_buy' | 'purchase' | 'expiry' | 'node_payout' | string;
   deltaUsd: number;
   deltaUsdMicros: number;
   ref: string | null;
@@ -455,6 +459,7 @@ export interface ReportMethod {
   reserve?: string;
   creditExpiry?: string;
   directSales?: string;
+  nodePayouts?: string;
 }
 
 /** `totals.creditExpiry` on GET /report: credit that lapsed because it outlived `days`. */
@@ -463,6 +468,34 @@ export interface CreditExpiryTotals {
   days: number;
   expiredUsd: number;
   wallets: number;
+  last30dUsd: number;
+}
+
+/** `payout` on GET /me/nodes: how this wallet's node rewards are paid, what has been paid and what is waiting. */
+export interface NodePayoutView {
+  enabled: boolean;
+  paidAs: 'credits';
+  holdSeconds: number;
+  minUsd: number;
+  paidUsd: number;
+  pendingUsd: number;
+}
+
+/** GET /me/nodes without the node list: the wallet's earnings and how they are paid. */
+export interface MyNodeEarnings {
+  earnedUsdTotal: number;
+  payout: NodePayoutView | null;
+}
+
+/** `totals.nodePayouts` on GET /report: node rewards paid as credits. */
+export interface NodePayoutTotals {
+  enabled: boolean;
+  paidAs: 'credits';
+  holdSeconds: number;
+  minUsd: number;
+  paidUsd: number;
+  wallets: number;
+  pendingUsd: number;
   last30dUsd: number;
 }
 
@@ -526,6 +559,7 @@ export interface Report {
     reserve?: ReserveView;
     creditExpiry?: CreditExpiryTotals;
     directSales?: DirectSalesTotals;
+    nodePayouts?: NodePayoutTotals;
   };
   last7d: PeriodTotals;
   last30d: PeriodTotals;
@@ -679,7 +713,7 @@ export interface RunEpochResult {
   holdingAgeApplied: boolean;
   distributed: Array<{ wallet: string; usd: number; multiplier: number }>;
   /** The chores run after the epoch: credit lapsed and the reserve reading. */
-  housekeeping?: { expiredWallets: number; expiredUsd: number; reserve: string; reserveHeldUsd: number | null; sweepWarnings?: string[] };
+  housekeeping?: { nodePayoutWallets?: number; nodePayoutUsd?: number; expiredWallets: number; expiredUsd: number; reserve: string; reserveHeldUsd: number | null; sweepWarnings?: string[] };
 }
 
 export interface StarterBatchResult {

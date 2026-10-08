@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { AlertMonitor } from '../src/alerts.js';
 import { runEpoch } from '../src/jobs/distribute.js';
 import { pendingPoolExtra, quote, reapMarket } from '../src/market.js';
-import { ADMIN, grantCredit, testConfig, testServer } from './helpers.js';
+import { ADMIN, grantCredit, memDb, testConfig, testServer } from './helpers.js';
 
 type App = Awaited<ReturnType<typeof testServer>>['app'];
 
@@ -279,5 +280,118 @@ describe('marketplace disabled', () => {
     expect((await app.inject({ method: 'GET', url: '/market/book' })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: '/market/listings' })).statusCode).toBe(404);
     await app.close();
+  });
+});
+
+describe('withdrawal requests reach the operator', () => {
+  const apps: App[] = [];
+  afterEach(async () => {
+    while (apps.length) await apps.pop()!.close();
+  });
+
+  /** A gateway whose alert monitor writes to an array instead of Telegram. `fail` makes the next sends throw. */
+  async function boot() {
+    const db = memDb();
+    const messages: string[] = [];
+    const state = { fail: false, now: Date.UTC(2026, 9, 8, 12) };
+    const alerts = new AlertMonitor({
+      db,
+      config: { epochSeconds: 3600 },
+      env: { EPOCH_CRON: 'off', MESH_DB_PATH: ':memory:' },
+      sender: {
+        name: 'fake',
+        async send(t) {
+          if (state.fail) throw new Error('telegram down');
+          messages.push(t);
+        },
+      },
+      now: () => state.now,
+      dbSize: () => null,
+      disk: () => null,
+    });
+    const { app } = await testServer({ context: { db, alerts } });
+    apps.push(app);
+    await prepaid(app, 'alice', 100);
+    const alice = await login(app, 'alice');
+    const withdraw = (amountUsd: number) => app.inject({ method: 'POST', url: '/me/market/withdraw', headers: H(alice), payload: { amountUsd } });
+    const notified = () => (db.prepare(`SELECT id, notified_at FROM withdrawal_requests ORDER BY id`).all() as Array<{ id: number; notified_at: number | null }>).map((r) => r.notified_at !== null);
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    return { app, db, alerts, messages, state, withdraw, notified, settle };
+  }
+
+  it('each request is announced once, straight away, with the wallet, the amount and what is waiting', async () => {
+    const { app, alerts, messages, withdraw, notified, settle } = await boot();
+    expect((await withdraw(40)).statusCode).toBe(201);
+    await settle(); // the route does not wait for the message
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/^\[mesh\] WITHDRAWAL requested #1: \$40\.00 to alice\n/);
+    expect(messages[0]).toContain('pending now: 1 request(s), $40.00');
+    expect(messages[0]).toContain('POST /admin/market/withdrawals/1/paid');
+    expect(notified()).toEqual([true]);
+
+    // the timer's checks do not repeat it
+    await alerts.check();
+    await alerts.check();
+    expect(messages).toHaveLength(1);
+
+    expect((await withdraw(10)).statusCode).toBe(201);
+    await settle();
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatch(/WITHDRAWAL requested #2: \$10\.00 to alice/);
+    expect(messages[1]).toContain('pending now: 2 request(s), $50.00');
+
+    // the admin view lists them oldest first, says they were announced and where
+    const view = (await app.inject({ method: 'GET', url: '/admin/market', headers: ADMIN })).json();
+    expect(view.withdrawals).toMatchObject({ pendingUsd: 50, announcedVia: 'fake', recentPaid: [] });
+    expect(view.withdrawals.pending.map((w: { id: number; amountUsd: number; notified_at: number | null }) => [w.id, w.amountUsd, w.notified_at !== null])).toEqual([[1, 40, true], [2, 10, true]]);
+    await app.inject({ method: 'POST', url: '/admin/market/withdrawals/1/paid', headers: ADMIN, payload: { txRef: '0xabc' } });
+    const after = (await app.inject({ method: 'GET', url: '/admin/market', headers: ADMIN })).json();
+    expect(after.withdrawals.pending.map((w: { id: number }) => w.id)).toEqual([2]);
+    expect(after.withdrawals.recentPaid).toHaveLength(1);
+    expect(after.withdrawals.recentPaid[0]).toMatchObject({ id: 1, status: 'paid', txRef: '0xabc' });
+  });
+
+  it('a message that fails to send is tried again on the next check; a request paid meanwhile is not announced', async () => {
+    const { app, alerts, messages, state, withdraw, notified, settle } = await boot();
+    state.fail = true;
+    await withdraw(5);
+    await withdraw(7);
+    await settle();
+    expect(messages).toEqual([]);
+    expect(notified()).toEqual([false, false]);
+    expect(alerts.deliveryFailures).toBeGreaterThan(0);
+
+    await app.inject({ method: 'POST', url: '/admin/market/withdrawals/1/paid', headers: ADMIN, payload: {} });
+    state.fail = false;
+    await alerts.check();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/WITHDRAWAL requested #2: \$7\.00 to alice/);
+    expect(notified()).toEqual([false, true]); // #1 was paid before anyone was told: nothing left to announce
+    await alerts.check();
+    expect(messages).toHaveLength(1);
+  });
+
+  it('the daily digest says what is waiting to be paid and for how long', async () => {
+    const { app, db, alerts, state, withdraw, settle } = await boot();
+    expect(alerts.digest()).toContain('withdrawals: none waiting; last 24 h: 0 requested ($0.00), 0 paid ($0.00)');
+    await withdraw(40);
+    await withdraw(10);
+    await settle();
+    // the first has been waiting 30 hours; the second is paid
+    db.prepare(`UPDATE withdrawal_requests SET created_at = ? WHERE id = 1`).run(Math.floor(state.now / 1000) - 30 * 3600);
+    await app.inject({ method: 'POST', url: '/admin/market/withdrawals/2/paid', headers: ADMIN, payload: {} });
+    const line = alerts.digest().split('\n').find((l) => l.startsWith('withdrawals:'));
+    expect(line).toBe('withdrawals: 1 waiting to be paid ($40.00), oldest 30 h; last 24 h: 1 requested ($10.00), 1 paid ($10.00)');
+  });
+
+  it('with alerts off nobody is told, and the admin view says so', async () => {
+    const { app } = await testServer({});
+    apps.push(app);
+    await prepaid(app, 'alice', 20);
+    const alice = await login(app, 'alice');
+    expect((await app.inject({ method: 'POST', url: '/me/market/withdraw', headers: H(alice), payload: { amountUsd: 5 } })).statusCode).toBe(201);
+    const view = (await app.inject({ method: 'GET', url: '/admin/market', headers: ADMIN })).json();
+    expect(view.withdrawals.announcedVia).toBeNull();
+    expect(view.withdrawals.pending[0]).toMatchObject({ id: 1, amountUsd: 5, notified_at: null });
   });
 });

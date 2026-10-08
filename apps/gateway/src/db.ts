@@ -620,6 +620,43 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     CREATE INDEX IF NOT EXISTS reserve_snapshots_created ON reserve_snapshots(created_at);
     `,
   },
+  {
+    // Withdrawals are paid by hand, so somebody has to be told when one is requested. notified_at is set
+    // once the operator channel (alerts.ts: Telegram, or the server log when no bot is set) has been sent the request; a
+    // pending row without it is announced on the next alert check. Rows that predate this migration are
+    // stamped so an upgrade does not replay old requests.
+    id: 20,
+    sql: `
+    ALTER TABLE withdrawal_requests ADD COLUMN notified_at INTEGER;
+    UPDATE withdrawal_requests SET notified_at = created_at;
+    `,
+  },
+  {
+    // Node rewards are paid as AI credits (node-payouts.ts, docs/NODE_PROTOCOL.md §7). credits_ledger gains
+    // the kind `node_payout` (CHECK rebuild, migration 14 pattern); node_rewards.paid_ledger_id points at the
+    // credits_ledger row that paid a reward (NULL = not paid yet), so a reward is paid exactly once.
+    id: 21,
+    sql: `
+    CREATE TABLE credits_ledger_v21 (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet           TEXT NOT NULL,
+      delta_usd_micros INTEGER NOT NULL,
+      kind             TEXT NOT NULL CHECK (kind IN ('distribution','usage','adjustment','starter','market_escrow','market_refund','market_buy','purchase','expiry','node_payout')),
+      ref              TEXT,
+      created_at       INTEGER NOT NULL
+    );
+    INSERT INTO credits_ledger_v21 (id, wallet, delta_usd_micros, kind, ref, created_at)
+      SELECT id, wallet, delta_usd_micros, kind, ref, created_at FROM credits_ledger;
+    DROP TABLE credits_ledger;
+    ALTER TABLE credits_ledger_v21 RENAME TO credits_ledger;
+    CREATE INDEX IF NOT EXISTS ledger_wallet ON credits_ledger(wallet, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ledger_distribution_unique ON credits_ledger(wallet, ref) WHERE kind = 'distribution';
+    CREATE INDEX IF NOT EXISTS ledger_kind_created ON credits_ledger(kind, created_at);
+
+    ALTER TABLE node_rewards ADD COLUMN paid_ledger_id INTEGER;
+    CREATE INDEX IF NOT EXISTS node_rewards_unpaid ON node_rewards(wallet, created_at) WHERE paid_ledger_id IS NULL;
+    `,
+  },
 ];
 
 /** Cheap liveness probe used by /health. */

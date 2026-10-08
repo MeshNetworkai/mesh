@@ -25,6 +25,7 @@ marketplace and the catalogue. What is left before launch.
 | done | Every request covers its cost | Frontier models are billed list plus a markup that covers what the upstream charges, and a staked node is held below the price the user pays. |
 | done | Credits that expire | A credit lapses a fixed time after it lands, oldest spent first, so unused credit does not pile up. The dashboard shows what lapses next. |
 | done | Buy credits at face value | Anyone can buy credits from Mesh with a prepaid balance: no token and no seller needed. |
+| done | Node rewards paid in credits | What a Mac earns lands in its owner’s credit balance every hour, off chain. Spend the credits or sell them on the marketplace. |
 | done | Status page and public node explorer | Uptime, incidents, and every online node with chip, models and reputation; no wallets. |
 
 ## Launch
@@ -37,8 +38,7 @@ The token launches on Robinhood Chain via Pons on launch day. Everything below w
 | next | First live epoch | Real trading fees become credits for real holders. |
 | next | Fees settled in a stablecoin, reserve published | Each sweep swaps the fees on chain. The holder half is held apart from the treasury and its balance is published every epoch next to the credits it backs. |
 | next | Staking live | Lock tokens for a bigger node multiplier, a place at the front of the queue and, with the operator pledge, trusted status. |
-| next | USDG checkout for the market | Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta. |
-| next | Node rewards paid out | Accrued node earnings leave the counter and reach the operator wallet on a published cadence. |
+| next | USDG checkout for the market | Buyers top up and sellers withdraw in USDG on chain. Replaces the team-credited prepaid balance used during the beta. Credits themselves stay off chain. |
 
 ## After launch
 
@@ -57,6 +57,9 @@ Once fees and usage are real, the treasury can do more than pay the Macs.
 - Cloudflare, the signed menu-bar build and the web hardening pass stay on the internal checklist
   (the internal docs repo → Production readiness); Oliver took them off the public list on 6 Oct.
 - Points and referrals: built and off; removed from the public list on 6 Oct.
+- 8 Oct (later): "Node rewards paid out" (next) replaced by "Node rewards paid in credits" (done), and
+  the market checkout item now names USDG, after the decision that credits stay off chain and are
+  sold for USDG on the marketplace.
 - 8 Oct: four items added and the starter-credit line reworded to match the economics changes in
   `docs/PRICING.md` §2 and §5–7 (markup over the upstream fee, reward ceiling, credit expiry, direct
   sales, stablecoin sweep with a published reserve). The wording has not been through Oliver's

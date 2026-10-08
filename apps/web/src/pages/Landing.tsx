@@ -267,6 +267,7 @@ export function Landing() {
             <ul>
               <li>Leave an Apple Silicon Mac open. One command, or the menu-bar app.</li>
               <li>Earn {nodePay} per million tokens served, tracked per job; up to {nodeCeiling} when staked.</li>
+              {T.nodePayout.enabled ? <li>Paid every {epochWord} in credits: spend them, or sell them for {T.marketplace.settlementSymbol}.</li> : null}
               <li>Pause any time. Nothing about the person asking reaches your machine.</li>
             </ul>
             <Link className="arrow-link" to="/app/node">

@@ -4,6 +4,14 @@ Holders who will not use their credits sell them at a discount; anyone buys them
 
 Code: `apps/gateway/src/market.ts` (mechanics), `apps/gateway/src/routes/market.ts` (API), `apps/gateway/src/expiry.ts` (the 90-day clock and non-transferable starter credit), `apps/web/src/pages/Market.tsx` (UI), config block `marketplace` in `config/tokenomics.json`, tables in migration 14 and the `purchase` / `expiry` / `credit_purchase` ledger kinds in migration 19 (`apps/gateway/src/db.ts`), tests in `apps/gateway/test/market.test.ts` and `apps/gateway/test/economics.test.ts`.
 
+## What is on chain and what is not
+
+Credits are rows in the gateway's ledger and never go on chain. The only on-chain side of the
+marketplace is the stablecoin it settles in, USDG (`marketplace.settlementSymbol`; the token address
+goes in `marketplace.deposits.tokens`): buyers deposit it into a prepaid balance and sellers withdraw
+it. Sellers are holders with credits they will not use, and node operators, whose rewards are paid in
+credits every hour (`docs/NODE_PROTOCOL.md` §7): selling here is how either turns credits into money.
+
 ## How a trade works
 
 1. **List.** A seller offers `amount` of credit at `discount` (0–70%). Credit past its 90 days is lapsed first, and unused starter credit is held back (below). The credit then leaves their spendable balance at once: a `market_escrow` row in `credits_ledger` (negative), so the gateway will not serve requests against it. The listing stays open for 7 days (`listingTtlHours`).
@@ -46,6 +54,29 @@ Where the fee goes:
 
 Buyers pay from a prepaid USD balance (`prepaid_ledger`), which during the beta is topped up by the team after an off-chain or hand-sent USDG payment: `POST /admin/prepaid { wallet, amountUsd, note, ref? }`, audited in `admin_actions` with the note; re-posting the same `ref` is a no-op. Sellers' proceeds land in the same balance and leave through `withdrawal_requests`.
 
+### Paying out (withdrawals)
+
+A withdrawal is paid by hand, so the gateway makes sure somebody hears about it
+(`apps/gateway/src/alerts.ts`, `routes/market.ts`):
+
+1. `POST /me/market/withdraw` debits the prepaid balance, writes a `pending` row in
+   `withdrawal_requests` and announces it at once on the alert channel:
+   `[mesh] WITHDRAWAL requested #<id>: $<amount> to <wallet>`, with how many requests are waiting and
+   their total. One message per request. `notified_at` (migration 20) is stamped when it has been
+   sent; if the send fails, the next alert check (every `ALERT_CHECK_INTERVAL_MS`, 60 s) tries again.
+2. The daily digest carries a `withdrawals:` line: how many are waiting, their total, how long the
+   oldest has waited, and what was requested and paid in the last 24 hours.
+3. The operator opens **Admin → Withdrawals** (`/admin`, data from `GET /admin/market`): the queue,
+   oldest first, with the wallet to pay, the amount and how long it has waited. They send the
+   stablecoin from the treasury wallet themselves, paste the transaction hash and press **Mark paid**
+   (`POST /admin/market/withdrawals/:id/paid { txRef }`, audited as `withdrawal-paid`). The user then
+   sees the request as paid. The page and the gateway never move money.
+
+The channel is Telegram when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set. Without them the
+message only goes to the gateway log, and with `ALERTS_ENABLED=false` nothing is announced at all;
+`GET /admin/market → withdrawals.announcedVia` (`telegram`, `log` or `null`) says which, and the admin
+panel repeats it.
+
 The same balance pays for credits bought directly from Mesh at face value (`POST /me/credits/buy`, `prepaid_ledger` kind `credit_purchase`; `docs/PRICING.md` §7). A direct purchase has no seller, no discount and no fee: $1 of prepaid buys $1 of credit.
 
 Every fill records `settlement = 'prepaid'`. A USDG settlement adapter can be added without a schema change: it credits `prepaid_ledger` (`kind = 'topup'`, `ref = <tx>`) when a transfer lands, or fills directly with `settlement = 'external'` and the tx in `settlement_ref`. Withdrawals would be paid by the same adapter and marked with the payout `tx_ref`.
@@ -80,7 +111,7 @@ Public: `GET /market/config` (fee, limits, deposits, plus `starterTransferable` 
 
 Session (bearer or cookie + CSRF): `POST /market/listings { amountUsd, discountBps }`, `DELETE /market/listings/:id`, `POST /market/fills { listingId, amountUsd }`, `GET /me/market` (credit balance, `nonTransferableUsd`, `listableUsd`, prepaid balance and ledger, listings, fills), `POST /me/market/withdraw { amountUsd }`.
 
-Admin: `POST /admin/prepaid`, `POST /admin/market/withdrawals/:id/paid { txRef?, note? }`, `GET /admin/market`, `GET /admin/market/listings/:id`, `POST /admin/market/reap`.
+Admin: `POST /admin/prepaid`, `POST /admin/market/withdrawals/:id/paid { txRef?, note? }`, `GET /admin/market` (`withdrawals { pendingUsd, paidUsd, pending[] with notified_at, recentPaid[], announcedVia }`), `GET /admin/market/listings/:id`, `POST /admin/market/reap`.
 
 Errors are `{ error, message, statusCode }`: `insufficient_credits` (402, listing more than you hold), `non_transferable` (402, the balance covers the listing only by counting unused starter credit), `insufficient_prepaid` (402), `own_listing`, `listing_closed`, `insufficient_depth` (409), `below_minimum`, `discount_too_deep` (400). Writes are rate-limited to 30 a minute per IP, reads to 120. With `marketplace.enabled: false` every `/market` route is 404.
 

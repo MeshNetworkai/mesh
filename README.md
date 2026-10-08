@@ -38,8 +38,13 @@ feed is a mock and nothing is held.
 **Credit marketplace** (`docs/MARKETPLACE.md`): holders list unused credit at 0–70 % off, buyers pay
 from a prepaid USD balance and receive the credits at face value, 2.5 % fee split half to the next
 hour's holder pool and half to the treasury. Unused starter credit cannot be listed, and a listing
-does not stop the 90-day clock. During the beta the team tops up prepaid balances and pays
-withdrawals by hand; USDG checkout follows the token launch.
+does not stop the 90-day clock. Credits never go on chain: the marketplace settles in USDG
+(`marketplace.settlementSymbol`), which buyers deposit and sellers withdraw. During the beta the team
+tops up prepaid balances and pays withdrawals by hand; self-serve USDG checkout follows the token launch.
+
+**Node operators are paid in credits** (`docs/NODE_PROTOCOL.md` §7): every hour, rewards that are at
+least an hour old are added to the operator's credit balance, off chain, with no key involved. They
+spend those credits or sell them on the marketplace for USDG.
 
 ## Pages
 
@@ -52,7 +57,7 @@ withdrawals by hand; USDG checkout follows the token launch.
 | `/download` | Terminal, Homebrew and unsigned menu-bar DMG, with checksums and the "Open Anyway" steps | `apps/web/src/pages/Download.tsx` |
 | `/app`, `/app/keys`, `/app/chat`, `/app/market`, `/app/node`, `/app/stake` | Signed-in: balance and ledger, keys, chat with model picker and privacy tier, credit market (and buying credits from Mesh at face value), run a node, staking (live once the contract is deployed) | `apps/web/src/pages/*.tsx` |
 | `/terms`, `/privacy`, `/risk` | Plain-English drafts incl. marketplace clauses; lawyer review before the token trades | `apps/web/src/pages/Legal.tsx` |
-| `/admin` | Operator console: epochs, starter credits, prepaid top-ups, withdrawals, quarantine, audit | `apps/web/src/pages/Admin.tsx` |
+| `/admin` | Operator console: the withdrawal queue (wallet, amount, age, "Mark paid"), epochs, starter credits, token settings, quarantine, audit | `apps/web/src/pages/Admin.tsx` |
 
 Design rules (`docs/BRAND.md`): Onest and Inter only, sentence-case labels, no monospace labels, every
 number read from `config/tokenomics.json`. Roadmap: `docs/ROADMAP.md`. Status: `docs/STATUS.md`.
@@ -177,7 +182,7 @@ Mock holders: `mockwallet_alice` (60k), `mockwallet_bob` (30k), `mockwallet_caro
 | POST/DELETE | `/market/listings`, `/market/listings/:id`, `/market/fills`; GET `/me/market`; POST `/me/market/withdraw` | JWT | list credit at a discount (escrowed; unused starter credit is refused with `402 non_transferable`), cancel, fill from the prepaid balance, your listings/fills/prepaid ledger with `nonTransferableUsd` and `listableUsd`, request a withdrawal (`docs/MARKETPLACE.md`) |
 | GET | `/credits/config` | none | direct credit sales: `enabled`, `pricePerUsd` (always 1), `minUsd`, `maxUsd`, `settlement`, `deposits`, `creditExpiryDays`, `soldUsd`, `purchases`; 404 when `directSales.enabled` is false (`docs/PRICING.md` §7) |
 | POST | `/me/credits/buy` | JWT | `{amountUsd}` buy credits from Mesh at face value with the prepaid balance → 201 `{id, creditsUsd, paidUsd, created_at, expires_at, creditBalanceUsd, prepaidBalanceUsd}`; `402 insufficient_prepaid`, `400 below_minimum` / `above_maximum` |
-| POST | `/admin/prepaid`, `/admin/market/withdrawals/:id/paid`; GET `/admin/market` | ADMIN_TOKEN | beta settlement: top up a prepaid balance after an off-chain payment (idempotent on `ref`), mark a withdrawal paid |
+| POST | `/admin/prepaid`, `/admin/market/withdrawals/:id/paid`; GET `/admin/market` | ADMIN_TOKEN | beta settlement: top up a prepaid balance after an off-chain payment (idempotent on `ref`), see the withdrawals waiting to be paid, mark one paid. Each new request is announced on the alert channel and counted in the daily digest (`docs/MARKETPLACE.md` → Paying out) |
 | GET/POST | `/admin/starter`, `/admin/starter/toggle` | ADMIN_TOKEN | starter-credit programme status and runtime pause |
 | POST | `/admin/run-epoch` | ADMIN_TOKEN | `{epochStart?}` run/replay an epoch (idempotent); response lists each holder's `multiplier` and `holdingAgeApplied`, plus `housekeeping {expiredWallets, expiredUsd, reserve, reserveHeldUsd}` from the chores that follow every epoch (credit expiry, reserve reading) |
 | POST | `/admin/fake-fees` | ADMIN_TOKEN | `{amountUsd}` dev harness, mock adapter only |
@@ -375,7 +380,7 @@ at the proxy in production, as before; the page is only as protected as the toke
 - **Waiting for the token launch:** chain decision and `config/deploy.<network>.json` (the team deploys;
   the internal docs repo), including the stablecoin, swap route and price feed the first live sweep
   needs; the credit reserve itself (`totals.reserve.source` is `mock` until then), live chain
-  adapters, staking contract address, on-chain node payouts, USDG checkout for the marketplace,
+  adapters, staking contract address, USDG checkout for the marketplace (node payouts are credits and are already live),
   buyback floor. Roadmap: `docs/ROADMAP.md`.
 - **Single instance:** rate limits, relays, stats cache and alert state are per process (`docs/ARCHITECTURE.md` §8–9).
 

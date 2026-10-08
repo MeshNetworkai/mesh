@@ -94,6 +94,8 @@ export interface WithdrawalRow {
   tx_ref: string | null;
   created_at: number;
   paid_at: number | null;
+  /** When the operator channel was told about this request (alerts.ts); null until then. */
+  notified_at: number | null;
 }
 
 export interface Quote {
@@ -333,6 +335,26 @@ export function getWithdrawal(db: Db, id: number): WithdrawalRow | null {
 
 export function withdrawalsOf(db: Db, wallet: string, limit = 50): WithdrawalRow[] {
   return db.prepare(`SELECT * FROM withdrawal_requests WHERE wallet = ? ORDER BY created_at DESC, id DESC LIMIT ?`).all(wallet, limit) as WithdrawalRow[];
+}
+
+/** The withdrawals an operator still has to pay: how many, how much, and since when the oldest has waited. */
+export function withdrawalQueue(db: Db): { pending: number; pendingMicros: number; oldestAt: number | null } {
+  const row = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_micros), 0) AS v, MIN(created_at) AS oldest FROM withdrawal_requests WHERE status = 'pending'`).get() as { n: number; v: number; oldest: number | null };
+  return { pending: row.n, pendingMicros: row.v, oldestAt: row.oldest };
+}
+
+/** Pending requests the operator channel has not been told about yet, oldest first. */
+export function unannouncedWithdrawals(db: Db, limit = 20): WithdrawalRow[] {
+  return db.prepare(`SELECT * FROM withdrawal_requests WHERE status = 'pending' AND notified_at IS NULL ORDER BY id ASC LIMIT ?`).all(limit) as WithdrawalRow[];
+}
+
+export function markWithdrawalAnnounced(db: Db, id: number, now = nowSec()): void {
+  db.prepare(`UPDATE withdrawal_requests SET notified_at = ? WHERE id = ? AND notified_at IS NULL`).run(now, id);
+}
+
+/** The last withdrawals that were paid, newest first (admin history). */
+export function recentPaidWithdrawals(db: Db, limit = 10): WithdrawalRow[] {
+  return db.prepare(`SELECT * FROM withdrawal_requests WHERE status = 'paid' ORDER BY paid_at DESC, id DESC LIMIT ?`).all(limit) as WithdrawalRow[];
 }
 
 export function pendingWithdrawals(db: Db, limit = 200): WithdrawalRow[] {

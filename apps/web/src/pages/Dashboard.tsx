@@ -30,6 +30,7 @@ const KIND_LABELS: Record<string, string> = {
   market_buy: 'Bought on the market',
   purchase: 'Bought from Mesh',
   expiry: 'Expired',
+  node_payout: 'Node rewards',
 };
 
 function kindLabel(kind: string) {

@@ -23,7 +23,13 @@
   "nodeRewards": {
     "_comment": "usdPerMTokens is the base reward. A stake multiplier lifts it, but never above maxShareOfPriceBps of what the user paid for the job (9000 = 90% of $0.08 = $0.072/M), so the network leg always keeps at least a 10% margin.",
     "usdPerMTokens": 0.06,
-    "maxShareOfPriceBps": 9000
+    "maxShareOfPriceBps": 9000,
+    "payout": {
+      "_comment": "Node rewards are paid as AI credits, off chain: every hour, rewards accrued at least holdSeconds ago (so a spot check can still withhold them) are added to the operator's credit balance as one node_payout ledger row. Credits spend on any model or sell on the marketplace for the settlement stablecoin. Below minUsd the amount waits (docs/NODE_PROTOCOL.md, section 7).",
+      "enabled": true,
+      "holdSeconds": 3600,
+      "minUsd": 0.01
+    }
   },
   "stakeTiers": [
     {
@@ -107,6 +113,8 @@
     "minListingUsd": 1,
     "maxDiscountBps": 7000,
     "listingTtlHours": 168,
+    "settlementSymbol": "USDG",
+    "_comment_settlementSymbol": "Credits are sold for USDG: buyers deposit USDG into their prepaid balance, sellers withdraw USDG. Credits stay off chain; only the USDG moves on chain.",
     "deposits": {
       "_comment": "Self-serve prepaid top-ups: send USDG on Robinhood Chain to `receiver`, paste the tx hash on the Market page, the gateway verifies the transfer and credits the balance. Off until receiver + tokens are filled (the dev supplies the stablecoin addresses; receiver = the treasury multisig).",
       "enabled": true,

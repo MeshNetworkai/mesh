@@ -181,6 +181,10 @@ export function computeStats(ctx: AppContext) {
     starterRequiresHold: ctx.config.starterCredits.requireMinHold,
     /** Most a job may pay its node, as a share of what the user was billed (bps). */
     nodeRewardMaxShareBps: ctx.config.nodeRewards.maxShareOfPriceBps,
+    /** How node rewards are paid: `credits` (hourly, into the operator's credit balance, off chain) or null while payouts are off. */
+    nodeRewardsPaidAs: ctx.config.nodeRewards.payout.enabled ? ('credits' as const) : null,
+    /** The stablecoin the credit marketplace settles in (deposits and withdrawals). */
+    marketSettlementSymbol: ctx.config.marketplace.settlementSymbol,
     /** Credit reserve at the last hourly reading against credits owed (same block as GET /report totals.reserve). */
     reserve: reserveView(ctx),
     /** Points/leaderboard/referral programme: built but disabled by default; the web app hides every points surface when false. */

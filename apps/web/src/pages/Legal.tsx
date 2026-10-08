@@ -212,7 +212,7 @@ export function Terms() {
                 <li>
                   Buyers pay, and sellers are paid, in a prepaid US-dollar balance kept by the gateway. During the beta that balance is topped up by us
                   after an off-chain payment you arrange with us, and withdrawals are processed by us by hand: the amount leaves your balance when you
-                  request it and is sent to your wallet in a stablecoin when we mark it paid. We aim to process withdrawals promptly but do not promise
+                  request it and is sent to your wallet in {TOKENOMICS.marketplace.settlementSymbol} when we mark it paid. We aim to process withdrawals promptly but do not promise
                   a time. On-chain checkout will replace this and we will say so in the docs.
                 </li>
                 <li>
@@ -241,11 +241,12 @@ export function Terms() {
                 Jobs are routed to online, idle nodes that advertise the requested model and meet the reputation threshold. We do not guarantee
                 that your node receives any job, any number of jobs, or any amount of rewards. Rewards accrue as a US-dollar balance per completed
                 job at the published rate, with any stake multiplier, and never more than {pctFromBps(TOKENOMICS.nodeRewardMaxShareBps)} of what the user was
-                billed for that job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million tokens today). They are visible on your Node page. Paying accrued rewards
-                out on-chain is not live yet; it starts after the
-                token is launched by the team on Robinhood Chain. Until it is, the balance is a counter, not a payment, and we may change the
-                rate or the mechanism with notice in the docs. A sample of node answers is re-run elsewhere and compared; a job whose answer does not
-                hold up earns no reward.
+                billed for that job ({fmtCost(NODE_REWARD_CEILING_PER_M)} per million tokens today). They are visible on your Node page.{' '}
+                {TOKENOMICS.nodePayout.enabled
+                  ? `Rewards are paid as credits, not as money or tokens: about once an hour, after a short hold, what your nodes earned is added to your credit balance. Nothing is paid on chain. Those credits are credits under clause 4 in every respect: they are not redeemable by us, they expire, and the only way to turn them into ${TOKENOMICS.marketplace.settlementSymbol} is to sell them on the marketplace (clause 6), where a buyer may or may not exist.`
+                  : 'The balance is a counter, not a payment.'}{' '}
+                We may change the rate or the mechanism with notice in the docs. A sample of node answers is re-run elsewhere and compared; a job whose
+                answer does not hold up earns no reward, and a reward already paid for it is taken back from your credit balance.
               </p>
             </Clause>
             <Clause n="9" title="What you agree to as an operator">
@@ -470,14 +471,16 @@ export function Risk() {
             <Clause n="5" title="One operator, one server">
               <p>
                 The service is run by a single operator on a single server with a single database. It may be interrupted, changed or
-                discontinued. Sessions live in the browser. The token is not deployed yet, the chain is not final, and on-chain node payouts are not
-                live; the docs and the roadmap list what is.
+                discontinued. Sessions live in the browser. The token is not deployed yet; the docs and the roadmap list what is live.
               </p>
             </Clause>
-            <Clause n="6" title="Node rewards are a counter, not a paycheck">
+            <Clause n="6" title="Node rewards are paid in credits, not cash">
               <p>
-                Node rewards accrue as a balance and are not yet paid on-chain. There is no guarantee your Mac receives jobs, and the rate may
-                change. Treat the balance as something you can watch, not something you can spend, until payout ships.
+                Node rewards are paid as AI credits into your credit balance, not as money or tokens, and nothing is paid on chain. There is no
+                guarantee your Mac receives jobs, and the rate may change. Credits can be spent on inference. Turning them into{' '}
+                {TOKENOMICS.marketplace.settlementSymbol} means selling them on the marketplace, usually below face value, to a buyer who may not be
+                there; the withdrawal that follows is processed by the team by hand.{EXPIRY.enabled ? ` Unsold and unspent, they lapse after ${expiryDays}.` : ''} Do
+                not run a node counting on a cash income.
               </p>
             </Clause>
             <Clause n="7" title="Third-party providers and open models">

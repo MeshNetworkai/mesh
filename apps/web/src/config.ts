@@ -50,6 +50,12 @@ export const TOKENOMICS = {
   nodeRewardUsdPerMTokens: Number(tokenomics.nodeRewards?.usdPerMTokens ?? 0.06),
   /** Most a job may pay its node, as a share of what the user was billed (bps). A stake multiplier lifts a reward up to here and no further. */
   nodeRewardMaxShareBps: Number(tokenomics.nodeRewards?.maxShareOfPriceBps ?? 10_000),
+  /** Node rewards are paid as AI credits, off chain, once they have been held `holdSeconds` (docs/NODE_PROTOCOL.md §7). */
+  nodePayout: {
+    enabled: tokenomics.nodeRewards?.payout?.enabled === true,
+    holdSeconds: Number(tokenomics.nodeRewards?.payout?.holdSeconds ?? 3600),
+    minUsd: Number(tokenomics.nodeRewards?.payout?.minUsd ?? 0.01),
+  },
   /** Upstream (frontier/fast) pricing: list plus this markup, or minus this discount, in bps (exactly one is non-zero). */
   upstreamDiscountBps: Number(tokenomics.requestPricing?.upstreamDiscountBps ?? 0),
   upstreamMarkupBps: Number(tokenomics.requestPricing?.upstreamMarkupBps ?? 0),
@@ -88,6 +94,8 @@ export const TOKENOMICS = {
     maxDiscountBps: Number(tokenomics.marketplace?.maxDiscountBps ?? 7000),
     minListingUsd: Number(tokenomics.marketplace?.minListingUsd ?? 1),
     listingTtlHours: Number(tokenomics.marketplace?.listingTtlHours ?? 168),
+    /** The stablecoin the marketplace settles in: what buyers deposit and sellers withdraw. Credits stay off chain. */
+    settlementSymbol: String(tokenomics.marketplace?.settlementSymbol ?? 'USDC'),
   },
   /** Engine 2 (docs/PRICING.md §3): the holder share of the margin on paid usage. Built; `enabled` is the switch. GET /stats confirms the live state. */
   usageShare: {

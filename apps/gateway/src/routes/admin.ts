@@ -95,7 +95,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     audit(req, 'run-epoch', { epochStart: result.epochStart, status: result.status, feesUsdMicros: result.feesUsdMicros, holders: result.eligibleHolders, expiredUsdMicros: chores.expiredUsdMicros });
     return {
       ...result,
-      housekeeping: { expiredWallets: chores.expiredWallets, expiredUsd: microsToUsd(chores.expiredUsdMicros), reserve: chores.reserveSource, reserveHeldUsd: chores.reserveHeldUsdMicros === null ? null : microsToUsd(chores.reserveHeldUsdMicros), sweepWarnings: chores.sweepWarnings },
+      housekeeping: { nodePayoutWallets: chores.nodePayoutWallets, nodePayoutUsd: microsToUsd(chores.nodePayoutUsdMicros), expiredWallets: chores.expiredWallets, expiredUsd: microsToUsd(chores.expiredUsdMicros), reserve: chores.reserveSource, reserveHeldUsd: chores.reserveHeldUsdMicros === null ? null : microsToUsd(chores.reserveHeldUsdMicros), sweepWarnings: chores.sweepWarnings },
       feesUsd: microsToUsd(result.feesUsdMicros),
       holderPoolUsd: microsToUsd(result.holderPoolUsdMicros),
       treasuryUsd: microsToUsd(result.treasuryUsdMicros),

@@ -1,6 +1,6 @@
 // Credit marketplace client (docs/MARKETPLACE.md). Shapes mirror apps/gateway/src/routes/market.ts.
 import { MOCK } from '../config';
-import { rawRequest, rawSessionRequest } from './api';
+import { COOKIE_SESSION, rawRequest, rawSessionRequest } from './api';
 import * as mock from './mockMarket';
 export { quoteLocal, fmtDiscount, type MarketQuote } from './marketMath';
 
@@ -16,6 +16,8 @@ export interface MarketConfig {
   settlement: 'prepaid';
   /** Self-serve top-ups (docs/MARKETPLACE.md "Paying in"); `enabled` false until the stablecoin + receiver are configured. */
   deposits?: DepositsInfo;
+  /** The stablecoin buyers deposit and sellers withdraw (credits stay off chain). */
+  settlementSymbol?: string;
   /** False: unused starter credit cannot be listed. */
   starterTransferable?: boolean;
   /** Days after which credit lapses (a buyer's credit starts a fresh window), or null when credits do not expire. */
@@ -165,6 +167,28 @@ export interface MyMarket {
   config: MarketConfig;
 }
 
+/** A pending request as the operator sees it: `notified_at` is when the alert channel was told (null: not yet). */
+export interface AdminWithdrawal extends Withdrawal {
+  notified_at: number | null;
+}
+
+/** `withdrawals` on GET /admin/market: the queue an operator pays by hand, oldest first. */
+export interface AdminWithdrawals {
+  pendingUsd: number;
+  paidUsd: number;
+  pending: AdminWithdrawal[];
+  recentPaid: Withdrawal[];
+  /** `telegram`, or `log` when no bot is configured (server log only); null when alerts are off. */
+  announcedVia: string | null;
+}
+
+/** GET /admin/market (the parts the admin page uses). */
+export interface AdminMarket {
+  withdrawals: AdminWithdrawals;
+  prepaid: { outstandingUsd: number };
+  generatedAt: number;
+}
+
 export interface MarketWindow {
   filledUsd: number;
   paidUsd: number;
@@ -233,3 +257,15 @@ export const buyCredits = (token: string, amountUsd: number): Promise<Purchase> 
 
 export const withdraw = (token: string, amountUsd: number): Promise<Withdrawal & { prepaidBalanceUsd: number }> =>
   MOCK ? mock.mockWithdraw(amountUsd) : rawSessionRequest('/me/market/withdraw', { method: 'POST', body: JSON.stringify({ amountUsd }) }, token);
+
+// ---------- admin (operator) ----------
+
+const adminHeaders = (token: string): Record<string, string> => (token === COOKIE_SESSION ? {} : { 'x-admin-token': token });
+
+/** GET /admin/market — the withdrawal queue and what the platform holds in prepaid balances. */
+export const adminMarket = (token: string): Promise<AdminMarket> =>
+  MOCK ? mock.mockAdminMarket() : rawRequest<AdminMarket>('/admin/market', { headers: adminHeaders(token) });
+
+/** POST /admin/market/withdrawals/:id/paid — record that the payout was sent (audited). */
+export const adminMarkWithdrawalPaid = (token: string, id: number, body: { txRef?: string; note?: string }): Promise<Withdrawal> =>
+  MOCK ? mock.mockAdminMarkWithdrawalPaid(id, body) : rawRequest<Withdrawal>(`/admin/market/withdrawals/${id}/paid`, { method: 'POST', headers: adminHeaders(token), body: JSON.stringify(body) });

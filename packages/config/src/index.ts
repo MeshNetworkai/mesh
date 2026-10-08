@@ -82,6 +82,22 @@ export const TokenomicsSchema = z
          * whole price (the old behaviour: a staked node left no margin).
          */
         maxShareOfPriceBps: bps.default(10_000),
+        /**
+         * How node rewards are paid (apps/gateway/src/node-payouts.ts). When enabled, every reward that has
+         * been accrued for `holdSeconds` is paid to the operator's wallet as AI credits, off chain, by the
+         * chores that follow each epoch: one `node_payout` row in `credits_ledger` per wallet per run. The
+         * credits are ordinary ones: they spend on any model, can be listed on the marketplace and expire
+         * like any other. Disabled, rewards stay a counter.
+         */
+        payout: z
+          .object({
+            enabled: z.boolean().default(false),
+            /** A reward waits this long before it is paid, so a spot check can still withhold it. */
+            holdSeconds: z.number().int().min(0).default(3600),
+            /** Smallest payout written to a wallet's ledger, USD; less than this waits and accumulates. */
+            minUsd: z.number().min(0).default(0.01),
+          })
+          .default({}),
       })
       .default({ usdPerMTokens: 0.06 }),
     stakeTiers: z.array(StakeTierSchema).min(1),
@@ -282,6 +298,12 @@ export const TokenomicsSchema = z
         maxDiscountBps: bps.default(7000),
         /** Open listings expire (escrow returns to the seller) after this many hours. */
         listingTtlHours: z.number().int().positive().default(168),
+        /**
+         * The stablecoin the marketplace settles in: what buyers deposit into the prepaid balance and what
+         * sellers are paid when they withdraw. Credits themselves never go on chain; only this side does.
+         * A name for copy and operator messages; the token's address is in `deposits.tokens`.
+         */
+        settlementSymbol: z.string().min(1).max(12).default('USDC'),
         /**
          * Self-serve top-ups: a buyer sends a stablecoin on the EVM chain to `receiver`, pastes the tx hash,
          * the gateway verifies the ERC-20 Transfer on chain and credits the prepaid balance. Off while

@@ -28,7 +28,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 **Built and switched off** (one config flag each): holding-age weighting, points / leaderboard / referrals, invite gating, an upstream discount (`requestPricing.upstreamDiscountBps`; it replaces the markup and is a treasury-funded loss on top of the 5.5 % upstream fee).
 
-**Waiting for the token**: chain decision and deployment by the team, first live sweep (`sweepMode` ships as `swap`, so the stablecoin, the swap route on the vault and the Chainlink feed must be set first: `docs/RUNBOOK.md` §6), the reserve actually holding stablecoin, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDG checkout for the marketplace, buyback floor + NAV chart.
+**Waiting for the token**: chain decision and deployment by the team, first live sweep (`sweepMode` ships as `swap`, so the stablecoin, the swap route on the vault and the Chainlink feed must be set first: `docs/RUNBOOK.md` §6), the reserve actually holding stablecoin, staking contract address (`/app/stake` shows the empty state until then), USDG checkout for the marketplace (self-serve deposits need the USDG token address and a receiver in `marketplace.deposits`), buyback floor + NAV chart. Node payouts wait for nothing: they are credits, off chain.
 
 **Open before public launch** (the internal docs repo → Production readiness): web app bug hunt, Cloudflare in front, status page + node explorer, Telegram alert bot token, backup restore drill, legal review, Oliver's Mac linked to the live gateway, DMG opened once on a Mac, onboarding pack, starter-credit plan.
 
@@ -50,11 +50,11 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 | Gate | Command | Count |
 | --- | --- | --- |
-| Gateway unit + HTTP | `pnpm test` | 35 files, **379** tests (incl. `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts`: the ledger rebuild on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
+| Gateway unit + HTTP | `pnpm test` | 37 files, **393** tests (incl. `node-payouts.test.ts`: rewards paid as credits once, after the hold, clawed back when withheld late, sellable on the marketplace; `market.test.ts`: every withdrawal request announced once, retried when the send fails, counted in the digest; `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts` and `migration20.test.ts`: the ledger rebuild and the withdrawal-announcement column on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
 | Chain adapter | `pnpm --filter @mesh/chain-adapter test` | 8 files, **72** tests offline (Solana, EVM, Pons incl. the stale-feed and reserve-read cases); 11 more are skipped unless a local anvil is available |
 | Node agent | `pnpm --filter @mesh/node-agent test` | 6 files, **73** tests (incl. `update.test.ts` against a fake release server: good hash, bad hash, HTML body, same version, 5xx, daily loop, auto-install) |
 | EVM contracts | `cd contracts/evm && forge test` | 34 Foundry tests (17 token, 17 staking) |
-| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **29** Playwright tests, all passing (desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll) |
+| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **30** Playwright tests, all passing (incl. the admin withdrawal queue and "Mark paid"; desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll) |
 | Types / build | `pnpm -r typecheck`, `pnpm --filter web build` | green for web, config, chain-adapter, node-agent; gateway typecheck and the node-protocol / savings / network tests go red only while the privacy-tier edits to `routes/v1.ts`, `network.ts`, `routing.ts` are mid-flight |
 | Screenshots | `pnpm screenshots` → `docs/screens/` | 15 pages × 2 widths (landing, landing-beta, invite, app, keys, chat, node, market, stats, download, docs, admin, api, terms, 404), regenerated 8 Oct from the mock UI, which now prices upstream models as shipped (list + 6 %) instead of the old 20 % mock discount. `docs-1440.png` / `docs-390.png` are new; `report-*.png` is an older pair the script no longer writes |
 | Release tooling | `sh -n scripts/release/*.sh apps/menubar/scripts/*.sh`, `ruby -c homebrew-tap/Formula/mesh-node.rb`, YAML parse of `.github/workflows/*.yml` | green; `make-tarball.sh` exercised end to end (tarball → wrapper → `install.sh` → `mesh-node --version`) |
@@ -69,7 +69,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 | Credit reserve | reading and report built; the mock adapter has no pool wallet, so `totals.reserve.source` is `mock`, `heldUsd` is null and `reserve_short` is silent | goes live with the token: `creditPool`, `stable`, the vault route and `priceFeed` set (`docs/RUNBOOK.md` §6) |
 | Self-serve prepaid deposits | built; `marketplace.deposits.receiver` is null and `tokens` is empty, so the team tops balances up by hand | fill `receiver` and `tokens` after the launch (`docs/MARKETPLACE.md`) |
 | Live chain adapters | implemented and tested offline; `MESH_ADAPTER=mock` in dev; no `config/deploy.<network>.json` committed | needs a deployed token (below) |
-| Node reward payout | rewards accrue in USD in `node_rewards`; no on-chain payout | `transferTokens` path exists; product decision on cadence |
+| Node reward payout | **live, as AI credits, off chain**: hourly, after a 1-hour hold, into the operator's credit balance (`node-payouts.ts`, `credits_ledger` kind `node_payout`); operators cash in by selling credits on the marketplace for USDG | no on-chain payout is planned; the unused `transferTokens` path stays in the adapter. `nodeRewards.payout.enabled: false` turns rewards back into a counter |
 | Menu-bar app | Swift source complete (incl. "Check for updates"), never compiled; `release.yml` job B runs `swift build`/`make dmg` on `macos-latest`, so the first tag is also the first compile | first `swift build` on a Mac or the first tag (`docs/MENUBAR.md`) |
 | Mac distribution | unsigned DMG + Homebrew tap + `mesh-node update` built; `latest.json` on the web is the sample file; the tap repo `MeshNetworkai/homebrew-tap` does not exist yet; formula sha256 is a placeholder until the first release | push a `v*` tag; create the tap repo + `HOMEBREW_TAP_TOKEN`; deploy `latest.json` to `/downloads/` (`docs/DISTRIBUTION.md` §2) |
 | App signing / notarisation | not configured; the Open Anyway path is documented and shown on `/download` | add the `MACOS_*` / `NOTARY_*` secrets when the developer account exists (`docs/DISTRIBUTION.md` §5) |
@@ -85,7 +85,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 2. **Deploy the token, fee vault and staking** with `scripts/chain/*` and commit `config/deploy.<network>.json` (addresses only, no keys). Fill `meta.contractAddress`, `meta.totalSupply`.
 3. **Seed liquidity** (Raydium/Meteora or Uniswap v3) and, on EVM, `setFeeExempt(pool, true)`.
 4. **Secrets and hosts** on the VPS: `JWT_SECRET`, `ADMIN_TOKEN`, `KEY_PEPPER`, `OPENROUTER_API_KEY`, RPC / Helius key, signer keypair, `AUTH_DOMAIN`, `CORS_ORIGINS`, `ADMIN_IP_ALLOWLIST`, `TRUSTED_PROXY_CIDRS`; replace the placeholder hosts and social URLs. Follow `docs/RUNBOOK.md` §0–§7 and its pre-flight checks.
-5. **Decisions**: session TTL (7 d today), node payout cadence, whether holding-age weighting is on at launch, `geoBlock` list (empty today: no geo-block; the web hides the clause when empty), and whether the points programme ever comes back (it is a one-line flag).
+5. **Decisions**: session TTL (7 d today), whether holding-age weighting is on at launch, `geoBlock` list (empty today: no geo-block; the web hides the clause when empty), and whether the points programme ever comes back (it is a one-line flag).
 6. **Hardware**: a Mac with Xcode to compile the menu-bar app locally (CI does it on `macos-latest` too); a few friends' Macs for the first node batch (the internal docs repo). Notarisation only when the developer account exists.
 8. **First release**: create `github.com/MeshNetworkai/homebrew-tap` (empty) and the `HOMEBREW_TAP_TOKEN` secret, push `v0.1.0`, deploy `latest.json` to the web host (`docs/DISTRIBUTION.md` §2), try the DMG on a clean Mac through Open Anyway.
 7. **Legal review** of `/terms`, `/privacy`, `/risk` before the token is tradeable.
@@ -95,9 +95,9 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 ```sh
 pnpm install && pnpm build          # packages + gateway + web
-pnpm test                           # gateway (379)
+pnpm test                           # gateway (393)
 pnpm test:all                       # + chain-adapter (72, 11 skipped without anvil) + node-agent (73)
-pnpm e2e                            # Playwright (29) against the real gateway
+pnpm e2e                            # Playwright (30) against the real gateway
 VERSION=0.2.0 sh scripts/release/make-tarball.sh   # release tarball + sha256 (CI does this on tag v*)
 pnpm dev                            # gateway :8787 (mock adapter, mock upstream) + web :5173
 pnpm demo                           # scripted end-to-end run incl. a curl-simulated node

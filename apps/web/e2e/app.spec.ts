@@ -507,6 +507,35 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_admin');
   });
 
+  test('admin page: a requested withdrawal shows in the queue with the wallet and amount; Mark paid records the payout and clears it', async ({ page }) => {
+    // A user asks for $3 of their prepaid balance back.
+    const carol = await devLogin('mockwallet_carol');
+    await topUpPrepaid('mockwallet_carol', 8);
+    const asked = await page.request.post(`${GATEWAY_URL}/me/market/withdraw`, { headers: { authorization: `Bearer ${carol.token}` }, data: { amountUsd: 3 } });
+    expect(asked.status()).toBe(201);
+    const { id } = (await asked.json()) as { id: number };
+
+    await page.goto('/admin');
+    await page.getByLabel('Admin token').fill('e2e-admin-token');
+    await page.getByRole('button', { name: 'Open' }).click();
+    const panel = page.getByLabel('Withdrawals to pay');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('Nothing on this page moves money.');
+    const row = panel.getByRole('table', { name: 'Pending withdrawals' }).getByRole('row').filter({ hasText: `#${id}` });
+    await expect(row).toContainText('mockwall');
+    await expect(row).toContainText('$3.00');
+    // No transaction, no record: the button waits for the payout reference.
+    await expect(row.getByRole('button', { name: 'Mark paid' })).toBeDisabled();
+    await row.getByLabel(`Payout transaction for request ${id}`).fill('0xe2e-payout');
+    await row.getByRole('button', { name: 'Mark paid' }).click();
+    await expect(panel.getByRole('row').filter({ hasText: `#${id}` })).toHaveCount(0);
+    // The gateway has it as paid with the reference, and the user sees the same.
+    const mine = await (await page.request.get(`${GATEWAY_URL}/me/market`, { headers: { authorization: `Bearer ${carol.token}` } })).json();
+    expect(mine.withdrawals[0]).toMatchObject({ id, status: 'paid', txRef: '0xe2e-payout' });
+    await panel.getByRole('button', { name: /Show recently paid/ }).click();
+    await expect(panel.getByRole('table', { name: 'Recently paid withdrawals' })).toContainText('0xe2e-payout');
+  });
+
   test('top nav: Chat · Market · Run a node · Stats · Launchpad · Docs, market and node readable signed out', async ({ page }) => {
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Primary' });
@@ -623,6 +652,12 @@ test.describe('signed-in app', () => {
     await expect(page.locator('section#market')).toContainText('Starter credit cannot be listed.');
     await expect(page.locator('section#market').getByRole('heading', { name: 'Or buy from Mesh at face value' })).toBeVisible();
     await expect(page.locator('section#staking')).toContainText('A job never pays its node more than 90% of what the user was billed');
+    // Node operators are paid in credits, off chain, and cash in on the marketplace for USDG.
+    const run = page.locator('section#run');
+    await expect(run.getByRole('heading', { name: 'How you are paid' })).toBeVisible();
+    await expect(run).toContainText('In AI credits, every hour.');
+    await expect(run).toContainText('withdraw the proceeds in USDG');
+    await expect(page.locator('section#market')).toContainText('Credits never go on chain. What moves on chain is USDG');
     await page.locator('#faq summary', { hasText: 'Do credits expire?' }).click();
     await expect(page.locator('#faq')).toContainText('Every credit lapses 90 days after it landed in your wallet');
     await page.goto('/terms');
@@ -631,6 +666,7 @@ test.describe('signed-in app', () => {
     await expect(page.locator('main')).toContainText('Buying credits from us.');
     await page.goto('/risk');
     await expect(page.locator('main')).toContainText('The reserve does not make credits redeemable.');
+    await expect(page.locator('main')).toContainText('Node rewards are paid in credits, not cash');
   });
 
   test('download page: three options, checksum + version from /downloads/latest.json, Open Anyway walkthrough, nav + footer links', async ({ page }) => {

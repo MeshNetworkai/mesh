@@ -54,7 +54,7 @@ Never say:
 - "points", "leaderboard", "referral bonus" in public copy while the programme is disabled (`docs/POINTS.md`)
 - "guaranteed yield", "passive income", "APY", "earn while you sleep"
 - "better than ChatGPT", "fully private" (say where it runs instead), "zero logs" (we log billing rows)
-- "get paid in MESH" until on-chain payout ships; today rewards are a USD counter
+- "get paid in MESH" or "get paid in cash": node rewards are paid in AI credits, off chain; an operator turns them into USDG only by selling them on the marketplace
 - "holders earn from usage" in the present tense while `usageShare.enabled` is false (it is true as shipped), and never with a figure that suggests it is large: at the shipped prices it is $0.006 per million network tokens and $1.50 per $1,000 of frontier list usage
 - "at list", "at or below list", "price-matched" or "at cost" for frontier models; they are list plus 6 % (`requestPricing.upstreamMarkupBps`)
 - "credits never expire"; they lapse after 90 days (`creditExpiry.days`)
@@ -90,7 +90,7 @@ Landing section copy that was changed from the first build:
 | Where | Before | After | Why |
 | --- | --- | --- | --- |
 | Ask row | "nothing lands in a provider's logs" | "nothing is stored after the reply" + the network price | OpenRouter-routed requests do go to a provider |
-| Run row | "get paid in MESH for the answers it serves" | "earn $0.06 per million tokens it serves, tracked per job… stop any time" | Rewards accrue in USD; payout is not live |
+| Run row | "get paid in MESH for the answers it serves" | "earn $0.06 per million tokens it serves, tracked per job… stop any time" | Rewards are paid hourly as AI credits, not MESH and not cash |
 | Ink block | "with no logging and nothing stored" | "running with logging off and nothing kept after the reply. Other models go to OpenRouter at cost." (the "at cost" wording is retired: upstream models bill list plus the markup) | Says where it runs |
 | Hero footnote | — | "Credits are a share of fees, not a promise: read the risks." | Risk link above the fold |
 
@@ -112,7 +112,7 @@ Landing section copy that was changed from the first build:
 The legal pages are drafts written by the operator. They must be reviewed by a lawyer before the token is
 tradeable. They cover: credits as a licence not money, the two engines (usage share as "may"), the marketplace
 (escrow, 2.5 % fee not refunded, prepaid balances topped up and withdrawals processed by the team during the
-beta; starter credit not sellable), credit expiry after 90 days, direct purchases at face value, node operator terms (your Mac, your electricity, no guarantee of jobs, rewards are a counter until payout
+beta; starter credit not sellable), credit expiry after 90 days, direct purchases at face value, node operator terms (your Mac, your electricity, no guarantee of jobs, rewards are paid in credits, not cash
 ships, spot checks), the open beta and the undeployed token, and data handling (no prompt storage; billing rows,
 marketplace rows, heartbeats 48 h, nonces 5 min, link codes 15 min, starter-grant IP hash one day). The
 geo-restriction clause renders only when `geoBlock` is non-empty (it is empty as shipped).

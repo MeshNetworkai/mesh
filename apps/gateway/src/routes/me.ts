@@ -4,6 +4,7 @@ import { requireSession, sessionOf, type AppContext } from '../context.js';
 import { expireWallet, expiryOutlook, nonTransferableMicros } from '../expiry.js';
 import { balanceMicros, nodeRewardsTotal, recentLedger } from '../ledger.js';
 import { microsToUsd } from '../money.js';
+import { nodePayoutView } from '../node-payouts.js';
 import { walletHold } from '../reserve.js';
 import type { NodeRow } from '../routing.js';
 import { walletSavings } from '../savings.js';
@@ -47,6 +48,8 @@ export async function meRoutes(app: FastifyInstance, ctx: AppContext) {
       nodes: rows.map((n) => nodeStatsView(ctx, n)),
       earnedUsdTotal: microsToUsd(total.usdMicros),
       rewardUsdPerMTokens: ctx.config.nodeRewards.usdPerMTokens,
+      /** How rewards are paid: as AI credits into this wallet's balance once they have been held `holdSeconds` (node-payouts.ts). */
+      payout: nodePayoutView(ctx.db, wallet, ctx.config.nodeRewards.payout),
     };
   });
 }

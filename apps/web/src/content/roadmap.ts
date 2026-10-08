@@ -51,6 +51,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { title: 'Every request covers its cost', detail: 'Frontier models are billed list plus a markup that covers what the upstream charges, and a staked node is held below the price the user pays.', status: 'done' },
       { title: 'Credits that expire', detail: 'A credit lapses a fixed time after it lands, oldest spent first, so unused credit does not pile up. The dashboard shows what lapses next.', status: 'done' },
       { title: 'Buy credits at face value', detail: 'Anyone can buy credits from Mesh with a prepaid balance: no token and no seller needed.', status: 'done' },
+      { title: 'Node rewards paid in credits', detail: 'What a Mac earns lands in its owner’s credit balance every hour, off chain. Spend the credits or sell them on the marketplace.', status: 'done' },
       { title: 'Status page and public node explorer', detail: 'Uptime, incidents, and every online node with chip, models and reputation; no wallets.', status: 'done' },
     ],
   },
@@ -63,8 +64,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { title: 'First live epoch', detail: 'Real trading fees become credits for real holders.', status: 'next' },
       { title: 'Fees settled in a stablecoin, reserve published', detail: 'Each sweep swaps the fees on chain. The holder half is held apart from the treasury and its balance is published every epoch next to the credits it backs.', status: 'next' },
       { title: 'Staking live', detail: 'Lock tokens for a bigger node multiplier, a place at the front of the queue and, with the operator pledge, trusted status.', status: 'next' },
-      { title: 'USDG checkout for the market', detail: 'Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta.', status: 'next' },
-      { title: 'Node rewards paid out', detail: 'Accrued node earnings leave the counter and reach the operator wallet on a published cadence.', status: 'next' },
+      { title: 'USDG checkout for the market', detail: 'Buyers top up and sellers withdraw in USDG on chain. Replaces the team-credited prepaid balance used during the beta. Credits themselves stay off chain.', status: 'next' },
     ],
   },
   {

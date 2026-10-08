@@ -298,10 +298,29 @@ failures to `scored`; a quarantined node is excluded regardless of its rate.
 - **User price** for a network-served request: `requestPricing.networkPricePerMTokens` ($0.08) per 1M
   total tokens (prompt + completion), debited from the user's credits as `kind='usage'`.
 - **Node reward**: `nodeRewards.usdPerMTokens` ($0.06) per 1M total tokens per completed job, written to
-  the `node_rewards` ledger (`wallet, node_id, job_id, kind='node_reward', tokens, usd_micros, status`). Rewards
-  are USD-denominated accruals; on-chain payout from the treasury share is a later step
-  (`kind='payout'` rows will offset them). Failed / fallback jobs earn nothing. A job whose spot check
-  (§10) came back `mismatch` has its row set to `status='withheld'` and earns nothing either.
+  the `node_rewards` ledger (`wallet, node_id, job_id, kind='node_reward', tokens, usd_micros, status,
+  paid_ledger_id`). Failed / fallback jobs earn nothing. A job whose spot check (§10) came back
+  `mismatch` has its row set to `status='withheld'` and earns nothing either.
+- **Payout: AI credits, off chain** (`apps/gateway/src/node-payouts.ts`, config `nodeRewards.payout`,
+  shipped `{ enabled: true, holdSeconds: 3600, minUsd: 0.01 }`). Nothing about paying a node touches a
+  chain and no key is involved. After every epoch the chores (`jobs/housekeeping.ts`) take each
+  wallet's rewards that are accrued, unpaid and at least `holdSeconds` old, and add their sum to the
+  wallet's credit balance as one `credits_ledger` row of kind `node_payout` (ref
+  `node_payout:<cutoff>`); every reward it covers is stamped with that row's id (`paid_ledger_id`,
+  migration 21), so a reward is paid exactly once. The hold is there so a spot check can still
+  withhold the reward; if a verdict arrives after the payout anyway, the amount is taken back with a
+  negative `node_payout` row (`clawback:job:<id>`). A wallet owed less than `minUsd` waits until it
+  has accumulated that much. Rewards earned by a node that is quarantined (§10) are held until an
+  admin clears it.
+- **What the credits are**: ordinary credits. They spend on any model, expire
+  `creditExpiry.days` after they land like any other (`docs/PRICING.md` §6), and can be listed on the
+  credit marketplace, where a buyer pays for them in the settlement stablecoin
+  (`marketplace.settlementSymbol`, USDG) and the operator withdraws the proceeds
+  (`docs/MARKETPLACE.md`). That is the only route from node earnings to money: there is no payout in
+  `$MESH` or in a stablecoin, and no guarantee that a buyer exists.
+- **Where it shows**: `GET /me/nodes → payout { enabled, paidAs: "credits", holdSeconds, minUsd,
+  paidUsd, pendingUsd }`, a `node_payout` row in `GET /me → ledger`, `GET /report → totals.nodePayouts`
+  and `GET /stats → nodeRewardsPaidAs`. With `payout.enabled: false` rewards stay a counter.
 - **Stake multiplier and ceiling**: the reward wallet's stake tier multiplies the base reward
   (`stakeTiers[].multiplier`: 1×, 1.5×, 2×; `docs/STAKING.md`), but a job never pays its node more
   than `nodeRewards.maxShareOfPriceBps` (9000 = 90 %) of what the user was billed for it:

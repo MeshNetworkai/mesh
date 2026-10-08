@@ -5,7 +5,9 @@ import type { TokenomicsConfig } from '@mesh/config';
 import { requireAdmin, type AppContext } from './context.js';
 import type { Db } from './db.js';
 import type { Env } from './env.js';
+import { markWithdrawalAnnounced, unannouncedWithdrawals, withdrawalQueue } from './market.js';
 import { microsToUsd } from './money.js';
+import { nodePayoutTotals } from './node-payouts.js';
 import { reserveView } from './reserve-report.js';
 import { NODE_ONLINE_SEC } from './routing.js';
 
@@ -26,7 +28,12 @@ import { NODE_ONLINE_SEC } from './routing.js';
  *   reserve_short       the credit-pool wallet holds less stablecoin than reserve.minCoverageBps of the
  *                       credits owed (reserve-report.ts); silent while there is no reading (mock adapter)
  *
- * Plus a daily digest at 09:00 Asia/Dubai: fees, credits, requests, nodes, errors (24 h).
+ * Plus a daily digest at 09:00 Asia/Dubai: fees, credits, requests, nodes, withdrawals waiting to be
+ * paid, errors (24 h).
+ *
+ * Withdrawals are paid by hand, so each request is also announced as an event: one message per new
+ * `withdrawal_requests` row (`notifyWithdrawals`), sent straight after POST /me/market/withdraw and
+ * again on every check until it has gone out. It is not a level alert and never "resolves".
  */
 
 export type AlertKey = 'missed_epoch' | 'failed_sweep' | 'upstream_error_rate' | 'fleet_drop' | 'db_size' | 'disk_low' | 'reserve_short';
@@ -83,7 +90,7 @@ export interface DiskInfo {
 
 export interface AlertMonitorOptions {
   db: Db;
-  config: Pick<TokenomicsConfig, 'epochSeconds'> & Partial<Pick<TokenomicsConfig, 'reserve'>>;
+  config: Pick<TokenomicsConfig, 'epochSeconds'> & Partial<Pick<TokenomicsConfig, 'reserve'>> & { marketplace?: Pick<TokenomicsConfig['marketplace'], 'settlementSymbol'> };
   env: Pick<Env, 'EPOCH_CRON' | 'MESH_DB_PATH'>;
   sender: AlertSender;
   /** Milliseconds clock; injectable for tests. */
@@ -181,6 +188,8 @@ export class AlertMonitor {
   private lastFailedSweepSeen: { epochId: number; errorId: number };
   private lastDigestDay: string | null = null;
   private timer: NodeJS.Timeout | null = null;
+  /** A withdrawal announcement run is in flight (the request route and the timer may both ask for one). */
+  private announcing: Promise<number> | null = null;
   /** Every message handed to the sender (bounded), for /health/alerts and tests. */
   readonly sent: Array<{ at: number; text: string; ok: boolean }> = [];
   deliveryFailures = 0;
@@ -288,10 +297,39 @@ export class AlertMonitor {
     return { firing: r.short, detail: `credit pool holds $${r.heldUsd.toFixed(2)} against $${r.requiredUsd.toFixed(2)} of credits owed (${(r.coverage * 100).toFixed(1)} %, min ${r.minCoverageBps / 100} %)` };
   }
 
+  /**
+   * Tell the operator channel about every pending withdrawal it has not heard of yet: one message per
+   * request, stamped `notified_at` once it has been sent. A message that fails to send leaves the row
+   * unstamped, so the next check tries again. Returns how many went out. Safe to call at any time; calls
+   * that overlap share one run.
+   */
+  notifyWithdrawals(): Promise<number> {
+    if (this.announcing) return this.announcing;
+    const run = (async () => {
+      let sent = 0;
+      for (const w of unannouncedWithdrawals(this.db)) {
+        const q = withdrawalQueue(this.db);
+        const ok = await this.deliver(
+          `[mesh] WITHDRAWAL requested #${w.id}: $${microsToUsd(w.amount_micros).toFixed(2)} to ${w.wallet}\n` +
+            `pending now: ${q.pending} request(s), $${microsToUsd(q.pendingMicros).toFixed(2)}. Send the ${this.opts.config.marketplace?.settlementSymbol ?? 'stablecoin'} to that wallet, then mark it paid in Admin → Withdrawals (POST /admin/market/withdrawals/${w.id}/paid).`,
+        );
+        if (!ok) break;
+        markWithdrawalAnnounced(this.db, w.id, Math.floor(this.now() / 1000));
+        sent++;
+      }
+      return sent;
+    })();
+    this.announcing = run.finally(() => {
+      this.announcing = null;
+    });
+    return this.announcing;
+  }
+
   /** Evaluate every condition, notify on transitions, send the digest when due. */
   async check(): Promise<AlertState[]> {
     const now = this.now();
     this.lastCheckAt = now;
+    await this.notifyWithdrawals();
     const results: Array<[AlertKey, { firing: boolean; detail: string }]> = [
       ['missed_epoch', this.evalMissedEpoch(now)],
       ['failed_sweep', this.evalFailedSweep()],
@@ -340,13 +378,19 @@ export class AlertMonitor {
     const errs = db.prepare(`SELECT code, COUNT(*) AS n FROM errors_log WHERE created_at >= ? GROUP BY code ORDER BY n DESC LIMIT 5`).all(since) as Array<{ code: string; n: number }>;
     const errTotal = errs.reduce((a, e) => a + e.n, 0);
     const firing = [...this.states.values()].filter((s) => s.firing).map((s) => s.key);
+    const wq = withdrawalQueue(db);
+    const wdNew = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_micros), 0) AS v FROM withdrawal_requests WHERE created_at >= ?`).get(since) as { n: number; v: number };
+    const wdPaid = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_micros), 0) AS v FROM withdrawal_requests WHERE status = 'paid' AND paid_at >= ?`).get(since) as { n: number; v: number };
+    const oldestH = wq.oldestAt === null ? 0 : Math.max(0, Math.floor((Math.floor(now / 1000) - wq.oldestAt) / 3600));
+    const np = nodePayoutTotals(db, since);
     const { day } = localDayHour(now, this.thresholds.digestTimeZone);
     return [
       `[mesh] daily digest ${day} (${this.thresholds.digestTimeZone}, last 24 h)`,
       `fees: $${microsToUsd(ep.fees).toFixed(2)} over ${ep.n} epoch(s)${ep.failed ? `, ${ep.failed} failed` : ''}; holder pool $${microsToUsd(ep.pool).toFixed(2)}`,
       `credits: +$${microsToUsd(dist).toFixed(2)} distributed, -$${microsToUsd(used).toFixed(4)} used`,
       `requests: ${req.n} from ${req.wallets} wallet(s), ${req.byNode ?? 0} served by nodes`,
-      `nodes: ${nodes.online ?? 0} online / ${nodes.total} registered; rewards accrued $${microsToUsd(rewards).toFixed(4)}`,
+      `nodes: ${nodes.online ?? 0} online / ${nodes.total} registered; rewards accrued $${microsToUsd(rewards).toFixed(4)}, paid as credits $${microsToUsd(np.paidMicros).toFixed(4)} to ${np.wallets} wallet(s), $${microsToUsd(np.pendingMicros).toFixed(4)} waiting`,
+      `withdrawals: ${wq.pending === 0 ? 'none waiting' : `${wq.pending} waiting to be paid ($${microsToUsd(wq.pendingMicros).toFixed(2)}), oldest ${oldestH} h`}; last 24 h: ${wdNew.n} requested ($${microsToUsd(wdNew.v).toFixed(2)}), ${wdPaid.n} paid ($${microsToUsd(wdPaid.v).toFixed(2)})`,
       `errors: ${errTotal}${errs.length ? ` (${errs.map((e) => `${e.code} ×${e.n}`).join(', ')})` : ''}`,
       `alerts firing: ${firing.length ? firing.join(', ') : 'none'}`,
     ].join('\n');
@@ -365,7 +409,7 @@ export class AlertMonitor {
     };
   }
 
-  private async deliver(text: string): Promise<void> {
+  private async deliver(text: string): Promise<boolean> {
     let ok = true;
     try {
       await this.opts.sender.send(text);
@@ -377,6 +421,7 @@ export class AlertMonitor {
     this.sent.push({ at: this.now(), text, ok });
     if (this.sent.length > 200) this.sent.splice(0, this.sent.length - 200);
     if (ok) this.log.info({ alert: text.split('\n')[0] }, 'alert sent');
+    return ok;
   }
 }
 

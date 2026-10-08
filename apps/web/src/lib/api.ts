@@ -21,6 +21,7 @@ import type {
   MeshRoute,
   Model,
   MyNode,
+  MyNodeEarnings,
   MyStake,
   MyPoints,
   MyReferral,
@@ -397,6 +398,13 @@ export const listMyNodes = async (token: string): Promise<MyNode[]> => {
   const body = await sessionRequest<{ nodes?: MyNode[] } | MyNode[]>('/me/nodes', {}, token);
   const rows = Array.isArray(body) ? body : (body.nodes ?? []);
   return rows.map((n) => ({ ...n, models: Array.isArray(n.models) ? n.models : [], status: n.status ?? 'offline', lastSeen: n.lastSeen ?? null }));
+};
+
+/** GET /me/nodes — what the wallet's nodes have earned and how it is paid (as AI credits; `payout` is null on older gateways). */
+export const getMyNodeEarnings = async (token: string): Promise<MyNodeEarnings> => {
+  if (MOCK) return mock.mockMyNodeEarnings();
+  const body = await sessionRequest<{ earnedUsdTotal?: number; payout?: MyNodeEarnings['payout'] } | MyNode[]>('/me/nodes', {}, token);
+  return Array.isArray(body) ? { earnedUsdTotal: 0, payout: null } : { earnedUsdTotal: body.earnedUsdTotal ?? 0, payout: body.payout ?? null };
 };
 
 /** POST /nodes/register/challenge — the registration text the wallet signs (shared with the agent's signed flow). */

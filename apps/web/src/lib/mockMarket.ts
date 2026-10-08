@@ -2,7 +2,7 @@
 import { ApiError } from './api';
 import { mockAccount } from './mock';
 import { TOKENOMICS } from '../config';
-import type { Book, CreatedListing, CreditsConfig, Fill, FillResult, Listing, MarketConfig, MarketStats, MyMarket, OpenListings, PrepaidRow, Purchase, Withdrawal } from './market';
+import type { AdminMarket, Book, CreatedListing, CreditsConfig, Fill, FillResult, Listing, MarketConfig, MarketStats, MyMarket, OpenListings, PrepaidRow, Purchase, Withdrawal } from './market';
 import { quoteLocal } from './marketMath';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -10,7 +10,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const HOUR = 3_600;
 const DAY = 86_400;
 const EXPIRY_DAYS = TOKENOMICS.creditExpiry.enabled ? TOKENOMICS.creditExpiry.days : null;
-const CFG: MarketConfig = { starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDG', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
+const CFG: MarketConfig = { settlementSymbol: TOKENOMICS.marketplace.settlementSymbol, starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: TOKENOMICS.marketplace.settlementSymbol, address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
 const ME = mockAccount.wallet;
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -258,7 +258,7 @@ export const mockWithdraw = async (amountUsd: number): Promise<Withdrawal & { pr
   return { ...w, prepaidBalanceUsd: prepaidBalance() };
 };
 
-export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: 'USDG', blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });
+export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: TOKENOMICS.marketplace.settlementSymbol, blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });
 
 // ---------- direct sales (POST /me/credits/buy) ----------
 
@@ -286,4 +286,44 @@ export const mockBuyCredits = async (amountUsd: number): Promise<Purchase> => {
   sold.purchases += 1;
   const at = now();
   return { id: pid, creditsUsd: amt, paidUsd: amt, created_at: at, expires_at: EXPIRY_DAYS === null ? null : at + EXPIRY_DAYS * DAY, creditBalanceUsd: mockAccount.balanceMicros / 1e6, prepaidBalanceUsd: prepaidBalance() };
+};
+
+// ---------- operator view (GET /admin/market) ----------
+
+/** Other wallets' requests waiting to be paid, so the admin panel has a queue to show in mock mode. */
+const otherWithdrawals: Withdrawal[] = [
+  { id: 9001, wallet: '3pQ9fXw2LmT8vKc4Rz1bNy7sGdH5jUeA6oPiK2IM', amountUsd: 42.5, status: 'pending', note: null, txRef: null, created_at: now() - 26 * HOUR, paid_at: null },
+  { id: 9002, wallet: '0x8f3A1c7De29B45a6F0c1E9d2b7A4c5E6f7a8e21c', amountUsd: 11.25, status: 'pending', note: null, txRef: null, created_at: now() - 40 * 60, paid_at: null },
+  { id: 9000, wallet: '5KqT1mVx9bNc3Zr8LpW2yHd6uGe4jSfA7oXiQ0out', amountUsd: 10, status: 'paid', note: null, txRef: '0x5c1e…payout-3', created_at: now() - 4 * DAY, paid_at: now() - 4 * DAY + 3 * HOUR },
+];
+
+export const mockAdminMarket = async (): Promise<AdminMarket> => {
+  await sleep(200);
+  const all = [...otherWithdrawals, ...withdrawals];
+  const pending = all.filter((w) => w.status === 'pending').sort((a, b) => a.created_at - b.created_at);
+  const paid = all.filter((w) => w.status === 'paid').sort((a, b) => (b.paid_at ?? 0) - (a.paid_at ?? 0));
+  return {
+    withdrawals: {
+      pendingUsd: r6(pending.reduce((a, w) => a + w.amountUsd, 0)),
+      paidUsd: r6(paid.reduce((a, w) => a + w.amountUsd, 0)),
+      pending: pending.map((w) => ({ ...w, notified_at: w.created_at + 2 })),
+      recentPaid: paid.slice(0, 10),
+      announcedVia: 'telegram',
+    },
+    prepaid: { outstandingUsd: r6(prepaidBalance() + 412.6) },
+    generatedAt: now(),
+  };
+};
+
+export const mockAdminMarkWithdrawalPaid = async (wid: number, body: { txRef?: string; note?: string }): Promise<Withdrawal> => {
+  await sleep(350);
+  const w = [...otherWithdrawals, ...withdrawals].find((x) => x.id === wid);
+  if (!w) throw new ApiError(404, 'no such withdrawal request', 'not_found');
+  if (w.status !== 'paid') {
+    w.status = 'paid';
+    w.paid_at = now();
+  }
+  w.txRef = body.txRef ?? w.txRef;
+  w.note = body.note ?? w.note;
+  return w;
 };

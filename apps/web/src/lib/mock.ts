@@ -27,6 +27,7 @@ import type {
   MeshRoute,
   Model,
   MyNode,
+  MyNodeEarnings,
   MyPoints,
   MyReferral,
   NodePledge,
@@ -238,6 +239,8 @@ export const mockStats = async (): Promise<Stats> => {
     starterTransferable: TOKENOMICS.starterCredits.transferable,
     starterRequiresHold: TOKENOMICS.starterCredits.requireMinHold,
     nodeRewardMaxShareBps: TOKENOMICS.nodeRewardMaxShareBps,
+    nodeRewardsPaidAs: TOKENOMICS.nodePayout.enabled ? ('credits' as const) : null,
+    marketSettlementSymbol: TOKENOMICS.marketplace.settlementSymbol,
     reserve: mockReserve(),
     series24h: s,
     epochSeconds: EPOCH,
@@ -660,6 +663,13 @@ export const mockLinkCode = async (): Promise<LinkCode> => {
   return { code, wallet: MOCK_WALLET, chain: TOKENOMICS.chain, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), expiresInSec: 900 };
 };
 
+/** Mock earnings: most of what the nodes earned has already landed as credits; the last hour is still held. */
+export const mockMyNodeEarnings = async (): Promise<MyNodeEarnings> => {
+  await sleep(150);
+  const cfg = TOKENOMICS.nodePayout;
+  return { earnedUsdTotal: 30.4444, payout: { enabled: cfg.enabled, paidAs: 'credits', holdSeconds: cfg.holdSeconds, minUsd: cfg.minUsd, paidUsd: cfg.enabled ? 30.3581 : 0, pendingUsd: cfg.enabled ? 0.0863 : 30.4444 } };
+};
+
 export const mockMyNodes = async (): Promise<MyNode[]> => {
   await sleep(300);
   if (wantEmptyNodes()) return [];
@@ -819,6 +829,7 @@ const REPORT_METHOD = {
     "Credit reserve: the holder share of every sweep is swapped to the stablecoin on chain and held in the credit-pool wallet, apart from the treasury. heldUsd is that wallet's stablecoin balance at the last hourly reading; requiredUsd is every credit a wallet could spend plus credit escrowed in open listings; coverage = heldUsd ÷ requiredUsd.",
   creditExpiry: 'Credit expiry: every credit lapses creditExpiry.days after it landed, oldest first; expiredUsd is the total debited so far. Lapsed credit lowers requiredUsd, so the reserve that backed it shows up as surplus.',
   directSales: 'Direct sales: credits bought from Mesh at face value with a prepaid balance. The payment backs the credit 1:1; it is not treasury income until the credit is spent and leaves a margin.',
+  nodePayouts: "Node payouts: node rewards are paid as AI credits, off chain. paidUsd is the total added to operators' credit balances; pendingUsd is earned and not paid yet. Paid rewards are credits like any other: they count in credits owed, can be spent or listed on the marketplace, and expire.",
 };
 
 export const mockReport = async (): Promise<Report> => {
@@ -860,6 +871,7 @@ export const mockReport = async (): Promise<Report> => {
       },
       reserve: mockReserve(round2(totals.creditsOutUsd + totals.starterCreditsUsd - totals.creditsUsedUsd)),
       creditExpiry: { enabled: TOKENOMICS.creditExpiry.enabled, days: TOKENOMICS.creditExpiry.days, expiredUsd: TOKENOMICS.creditExpiry.enabled ? 1_184.3 : 0, wallets: TOKENOMICS.creditExpiry.enabled ? 96 : 0, last30dUsd: TOKENOMICS.creditExpiry.enabled ? 412.75 : 0 },
+      nodePayouts: { enabled: TOKENOMICS.nodePayout.enabled, paidAs: 'credits' as const, holdSeconds: TOKENOMICS.nodePayout.holdSeconds, minUsd: TOKENOMICS.nodePayout.minUsd, paidUsd: TOKENOMICS.nodePayout.enabled ? round2(totals.nodeRewardsUsd - 0.42) : 0, wallets: TOKENOMICS.nodePayout.enabled ? 31 : 0, pendingUsd: TOKENOMICS.nodePayout.enabled ? 0.42 : totals.nodeRewardsUsd, last30dUsd: TOKENOMICS.nodePayout.enabled ? round2(last30d.nodeRewardsUsd) : 0 },
       directSales: { enabled: TOKENOMICS.directSales.enabled, soldUsd: TOKENOMICS.directSales.enabled ? 1_250 : 0, purchases: TOKENOMICS.directSales.enabled ? 37 : 0, wallets: TOKENOMICS.directSales.enabled ? 21 : 0, last30dUsd: TOKENOMICS.directSales.enabled ? 640 : 0 },
     },
     last7d,

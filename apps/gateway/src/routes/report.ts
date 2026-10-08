@@ -6,6 +6,7 @@ import { expiredTotals } from '../expiry.js';
 import { treasuryBalanceMicros, treasuryTotalsByKind } from '../ledger.js';
 import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
+import { nodePayoutTotals } from '../node-payouts.js';
 import { reserveView } from '../reserve-report.js';
 import { usageShareTotals } from '../usage-share.js';
 import { publicEpochView, type EpochRow } from './stats.js';
@@ -181,6 +182,8 @@ export const REPORT_METHOD = {
     'Credit expiry (docs/PRICING.md): every credit lapses creditExpiry.days after it landed, oldest first; expiredUsd is the total debited so far (expiry ledger rows). Lapsed credit lowers requiredUsd, so the reserve that backed it shows up as surplus.',
   directSales:
     'Direct sales (docs/PRICING.md): credits bought from Mesh at face value with a prepaid balance (purchase ledger rows). The payment backs the credit 1:1; it is not treasury income until the credit is spent and leaves a margin.',
+  nodePayouts:
+    'Node payouts (docs/NODE_PROTOCOL.md): node rewards are paid as AI credits, off chain. paidUsd is the total added to operators\' credit balances (node_payout ledger rows); pendingUsd is earned and not paid yet (inside the hold, below the minimum, or a quarantined node). Paid rewards are credits like any other: they count in credits owed, can be spent or listed on the marketplace, and expire.',
   guestChat:
     'Free guest messages (POST /v1/guest/chat) are paid by the treasury: upstreamCostUsd is what the upstream charged for guest messages it served (guest_chat treasury rows); nodeRewardsUsd is what Mesh nodes earned serving guest messages (already inside node rewards accrued). Requests are counted in requests_log under the guest wallet.',
 };
@@ -256,6 +259,14 @@ export function creditExpiryReport(ctx: AppContext, now = nowSec()) {
   return { enabled: cfg.enabled, days: cfg.days, expiredUsd: microsToUsd(all.expiredMicros), wallets: all.wallets, last30dUsd: microsToUsd(last30.expiredMicros) };
 }
 
+/** Node rewards paid as credits (node-payouts.ts). */
+export function nodePayoutsReport(ctx: AppContext, now = nowSec()) {
+  const cfg = ctx.config.nodeRewards.payout;
+  const all = nodePayoutTotals(ctx.db);
+  const last30 = nodePayoutTotals(ctx.db, now - 30 * DAY);
+  return { enabled: cfg.enabled, paidAs: 'credits' as const, holdSeconds: cfg.holdSeconds, minUsd: cfg.minUsd, paidUsd: microsToUsd(all.paidMicros), wallets: all.wallets, pendingUsd: microsToUsd(all.pendingMicros), last30dUsd: microsToUsd(last30.paidMicros) };
+}
+
 /** Credits sold by Mesh at face value (direct-sales.ts). */
 export function directSalesReport(ctx: AppContext, now = nowSec()) {
   const cfg = ctx.config.directSales;
@@ -299,6 +310,7 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
       reserve: reserveView(ctx),
       creditExpiry: creditExpiryReport(ctx, now),
       directSales: directSalesReport(ctx, now),
+      nodePayouts: nodePayoutsReport(ctx, now),
     },
     last7d,
     last30d,
