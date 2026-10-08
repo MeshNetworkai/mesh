@@ -15,7 +15,7 @@ export async function meRoutes(app: FastifyInstance, ctx: AppContext) {
     const { wallet, chain } = sessionOf(req);
     expireWallet(ctx.db, wallet, ctx.config.creditExpiry, undefined, ctx.reservations.reserved(walletHold(wallet)));
     const micros = balanceMicros(ctx.db, wallet);
-    const locked = ctx.config.starterCredits.transferable ? 0 : nonTransferableMicros(ctx.db, wallet);
+    const locked = ctx.config.starterCredits.transferable ? 0 : nonTransferableMicros(ctx.db, wallet, ctx.config.creditExpiry);
     return {
       wallet,
       chain,

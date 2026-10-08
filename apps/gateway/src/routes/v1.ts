@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { bearer, keySpendExhausted, lookupApiKey, type ApiKeyRow } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { nowSec } from '../db.js';
-import { expireWallet } from '../expiry.js';
+import { settleExpiry } from '../expiry.js';
 import { addLedgerEntry, balanceMicros } from '../ledger.js';
 import { microsToUsd } from '../money.js';
 import { syncPoints } from '../points.js';
@@ -117,8 +117,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     }
 
     // Credit that has outlived creditExpiry.days leaves the balance before it can be spent (expiry.ts).
-    expireWallet(ctx.db, key.wallet, ctx.config.creditExpiry, nowSec(), ctx.reservations.reserved(walletHold(key.wallet)));
-    const balance = balanceMicros(ctx.db, key.wallet);
+    const balance = settleExpiry(ctx.db, key.wallet, ctx.config.creditExpiry, nowSec(), ctx.reservations.reserved(walletHold(key.wallet))).balanceMicros;
     if (balance <= 0) {
       return openaiError(
         reply,

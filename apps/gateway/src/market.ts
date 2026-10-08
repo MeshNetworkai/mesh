@@ -316,8 +316,9 @@ export function fillsOf(db: Db, wallet: string, limit = 50): { asBuyer: FillRow[
 // ---------------- withdrawals ----------------
 
 /** Ask for prepaid USD to be paid out. The amount leaves the balance at once (so it cannot be spent twice) and an admin marks the request paid. */
-export function requestWithdrawal(db: Db, input: { wallet: string; amountMicros: number }, now = nowSec()): WithdrawalRow {
+export function requestWithdrawal(db: Db, input: { wallet: string; amountMicros: number; /** `marketplace.minWithdrawalUsd` in micro-USD; 0 or absent = no minimum. */ minMicros?: number }, now = nowSec()): WithdrawalRow {
   if (!Number.isInteger(input.amountMicros) || input.amountMicros <= 0) throw new MarketError(400, 'bad_amount', 'amount must be a positive number of USD');
+  if (input.amountMicros < (input.minMicros ?? 0)) throw new MarketError(400, 'below_minimum', `withdrawals start at $${usdStr(input.minMicros ?? 0)}`);
   const tx = db.transaction(() => {
     const bal = prepaidBalanceMicros(db, input.wallet);
     if (bal < input.amountMicros) throw new MarketError(402, 'insufficient_prepaid', `prepaid balance is $${usdStr(bal)}; cannot withdraw $${usdStr(input.amountMicros)}`);

@@ -216,6 +216,12 @@ describe('credit marketplace', () => {
   it('withdrawals: the amount leaves the prepaid balance at once; the admin marks it paid (audited)', async () => {
     const bad = await app.inject({ method: 'POST', url: '/me/market/withdraw', headers: H(alice), payload: { amountUsd: 1000 } });
     expect(bad.statusCode).toBe(402);
+    // each request is paid by hand, so dust is refused before it reaches the operator
+    expect(cfg.minWithdrawalUsd).toBe(1);
+    const dust = await app.inject({ method: 'POST', url: '/me/market/withdraw', headers: H(alice), payload: { amountUsd: 0.5 } });
+    expect(dust.statusCode).toBe(400);
+    expect(dust.json()).toMatchObject({ error: 'below_minimum', message: 'withdrawals start at $1.00' });
+    expect((await app.inject({ method: 'GET', url: '/market/config' })).json().minWithdrawalUsd).toBe(1);
     const r = await app.inject({ method: 'POST', url: '/me/market/withdraw', headers: H(alice), payload: { amountUsd: 50 } });
     expect(r.statusCode).toBe(201);
     expect(r.json()).toMatchObject({ wallet: 'alice', amountUsd: 50, status: 'pending', prepaidBalanceUsd: 18.25 });

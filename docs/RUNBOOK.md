@@ -252,9 +252,10 @@ happens if one of the three is missing at the first sweep:
 
 | Missing | What the epoch does | Lost? |
 | --- | --- | --- |
-| stablecoin or route on the vault | `sweep()` reverts, the epoch fails (`failed_sweep`, §11a) | no: the fees stay in the vault and nothing is minted |
+| stablecoin or route on the vault | that asset's `sweep()` reverts: it is left in the vault and logged as `sweep_skipped`, which raises `failed_sweep` (§11a); anything else swept in the same epoch is credited | no: the fees stay in the vault and nothing is minted for them |
 | price feed (none configured, no `fixedEthUsd`) | ETH fees are left unswept, the epoch records $0 of fees for them | no: a later epoch sweeps them (§11h) |
 | price feed stale (answer older than an hour) or unreadable | the same: left unswept; logged as `sweep_skipped`, which raises `failed_sweep` | no (§11h) |
+| a quote token with no price source (the NVDA token of an NVDA-paired launch, `docs/LAUNCH-DAY.md`) | swapped without a slippage floor and credited with the USDG the swap returned; Admin → Token → Check shows `quoteToken.price.<address>` as a warning | no: expected until a price source for it is added |
 
 Dry-run one epoch **before** announcing (idempotent per hour; a second call returns `skipped`):
 
@@ -315,12 +316,14 @@ arrives at 09:00 Dubai with fees, credits, requests, nodes and errors for the la
 The reserve line: `source: "chain"` once the live adapter runs, `asOf` within the last hour,
 `coverage` ≥ 1 and `short: false`. `source: "mock"` means the gateway is still on the mock adapter
 (nothing is held, the alert is silent); `source: "unavailable"` means the last read of the pool
-wallet failed (`reserve_read_failed` in `recentErrors`), usually the RPC. An hour with trades whose
+wallet failed (`reserve_read_failed` in `recentErrors`), usually the RPC. While the read fails the
+`reserve_short` alert keeps the state it had: it does not report itself resolved. An hour with trades whose
 epoch shows `feesUsd: 0` together with a `sweep_skipped` row in `recentErrors` (and a `failed_sweep`
 alert) is a stale price feed (§11h).
 
-Alert → playbook map: `missed_epoch`/`failed_sweep` → §11a (when its text says "left unswept" it is a
-stale price feed: §11h); `upstream_error_rate` → §11b;
+Alert → playbook map: `missed_epoch`/`failed_sweep` → §11a (when its text says "no fresh price … left
+unswept" it is a stale price feed: §11h; "sweep of … failed … left unswept in the vault" is one asset
+whose transaction failed: §11a step 3, the Pons line); `upstream_error_rate` → §11b;
 `fleet_drop` → §11c; `db_size`/`disk_low` → §11e (grow the disk or prune `heartbeats`/`requests_log`);
 `reserve_short` → §11g. A `[mesh] WITHDRAWAL requested #…` message is not an alert that resolves: it is
 a payout to make (§11j).
@@ -416,17 +419,22 @@ is because of bad ledger writes, see §11e (DB restore) **first**, then roll the
 
 ### 11a. Sweep failed / epoch missed (`failed_sweep`, `missed_epoch`)
 
-1. What happened: `curl -s $G/admin/overview -H "$A" | jq '.recentErrors | map(select(.code=="epoch_failed"))[:3]'`
-   and `docker compose logs --since 2h gateway | grep 'epoch run failed'`.
+1. What happened: `curl -s $G/admin/overview -H "$A" | jq '.recentErrors | map(select(.code=="epoch_failed" or .code=="sweep_skipped"))[:3]'`
+   and `docker compose logs --since 2h gateway | grep -E 'epoch run failed|sweep left fees unswept'`.
+   `epoch_failed`: the whole epoch did not run. `sweep_skipped`: the epoch ran and credited what it
+   could; the asset named in the message is still in the vault (or the escrow) and the next epoch
+   tries it again.
 2. Nothing was written for that hour (`runEpoch` writes ledger + epoch row in one transaction), so
    holders simply have not been credited yet. Nothing to undo.
 3. Fix the cause:
    - RPC/indexer down → wait or switch `*_RPC_URL`, `docker compose up -d`.
    - **[Solana]** signer out of SOL / **[EVM]** signer out of gas → fund it (`solana transfer` /
      `cast send`), then re-run.
-   - **[Pons]** the swap reverted: no stablecoin or no route on the vault (set them, §6), or the pool
-     could not meet the slippage floor (`slippageBps`, 1 % below the feed price). The fees stay in the
-     vault; fix the cause and re-run.
+   - **[Pons]** the swap reverted (`sweep_skipped`: "sweep of <asset> failed … left unswept in the
+     vault"): no stablecoin or no route on the vault (set them, §6), or the pool could not meet the
+     slippage floor (`slippageBps`, 1 % below the feed price). The epoch itself went through and
+     credited any other asset; this one's fees stay in the vault and the next epoch retries them, so
+     fix the cause and wait for the hour (or re-run).
    - A stale or unreadable price feed does **not** fail the sweep: the fees are left unswept and the
      epoch records nothing for them (§11h). Do not guess a price.
    - Cron silently not firing (`missed_epoch` without `failed_sweep`) → `docker compose restart gateway`,
@@ -569,7 +577,7 @@ the Chainlink feed in `priceFeed` only; an answer older than an hour (`priceMaxA
 failed read gives no price, and the sweep leaves ETH fees where they are instead of minting credits
 against a guess. The hour's epoch records only what could be priced (usually `feesUsd: 0`, status
 `empty`) and there is no `epoch_failed` row. The chores that run after the epoch
-(`jobs/housekeeping.ts`) read the adapter's `lastSweep.warnings` and write one `errors_log` row with
+(`jobs/housekeeping.ts`) read the adapter's `lastSweep.unswept` and write one `errors_log` row with
 code `sweep_skipped` per asset left behind; the `failed_sweep` alert fires on it, the row shows under
 recent errors in `/admin/overview`, and `POST /admin/run-epoch` returns the text in
 `.housekeeping.sweepWarnings`. The fees keep accumulating in the Pons escrow (or in the vault if an

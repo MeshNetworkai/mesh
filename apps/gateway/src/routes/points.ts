@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { bearer, verifySession } from '../auth.js';
+import { WalletField, bearer, verifySession } from '../auth.js';
 import { requireAdmin, requireSession, sessionOf, type AppContext, type Session } from '../context.js';
 import { nowSec, recordAdminAction } from '../db.js';
 import { jwtSecrets } from '../env.js';
@@ -110,7 +110,7 @@ export async function pointsRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ---- admin: manual adjustment, audited in admin_actions ----
   const AdjustBody = z.object({
-    wallet: z.string().min(1).max(128),
+    wallet: WalletField,
     points: z.number().finite().refine((p) => p !== 0, 'points must be non-zero'),
     note: z.string().min(1).max(280),
     /** Optional idempotency key; a repeat with the same ref is a no-op. */

@@ -1,7 +1,24 @@
+import { normalizeEvmAddress } from '@mesh/chain-adapter';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SignJWT, jwtVerify } from 'jose';
+import { z } from 'zod';
 import type { Db } from './db.js';
 import { nowSec } from './db.js';
+
+// ---------- wallet identity ----------
+
+/**
+ * The one spelling of a wallet used as an account key. An EVM address means the same account in any
+ * letter case, and wallets report it lowercase, checksummed or upper-case, so it is kept lowercase, which
+ * is also how the chain adapter reports holders (every ledger is keyed on this string). Anything else is
+ * only trimmed: a Solana base58 key is case-sensitive.
+ */
+export function canonicalWallet(wallet: string): string {
+  return normalizeEvmAddress(wallet) ?? wallet.trim();
+}
+
+/** A wallet taken from a request body, in its canonical spelling. */
+export const WalletField = z.string().trim().min(1).max(128).transform(canonicalWallet);
 
 // ---------- nonces (SQLite-backed, 5 minute expiry, single use) ----------
 
@@ -182,7 +199,8 @@ export async function verifySession(
     try {
       const { payload } = await jwtVerify(token, new TextEncoder().encode(s), { issuer: 'mesh-gateway', algorithms: ['HS256'] });
       if (!payload.sub || payload.aud !== undefined) return null;
-      return { wallet: payload.sub, chain: String(payload.chain ?? 'unknown'), exp: payload.exp };
+      // Canonical here too: a session issued before wallets were canonicalised still carries the old spelling.
+      return { wallet: canonicalWallet(payload.sub), chain: String(payload.chain ?? 'unknown'), exp: payload.exp };
     } catch {
       /* try the next secret */
     }

@@ -179,6 +179,19 @@ export async function checkPonsConfig(
   // Raw sweeps leave the holder share in ETH while credits are fixed in USD: the pool carries the price risk.
   if (cfg.sweepMode === 'raw') push('sweepMode', 'warn', 'sweepMode is "raw": the holder share reaches the credit pool as ETH, not the stablecoin, so the reserve moves with the ETH price. Use "swap" in production.');
   else push('sweepMode', 'ok', 'sweepMode "swap": fees settle in the stablecoin on chain');
+  // The adapter prices ETH (the feed) and the stablecoin only. Any other quote token, such as a tokenised
+  // stock the launch is paired with, has no price source: say what that means for its fees.
+  const settles = (cfg.stable ?? cfg.usdc)?.toLowerCase();
+  for (const q of cfg.quoteTokens ?? []) {
+    if (q === zeroAddress || q.toLowerCase() === settles) continue;
+    push(
+      `quoteToken.price.${q}`,
+      'warn',
+      cfg.sweepMode === 'raw'
+        ? `quote token ${q} has no price source: raw sweeps cannot value it and leave it unswept. Use sweepMode "swap".`
+        : `quote token ${q} has no price source: its fees are swapped without a slippage floor and credited with the stablecoin the swap returns`,
+    );
+  }
 
   report.ok = items.every((i) => i.status !== 'fail');
   return report;

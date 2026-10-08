@@ -54,6 +54,20 @@ down. `sweep()` leaves any asset it cannot price unswept and adds a warning to `
 (`no fresh price for <asset>: <amount> left unswept, no credits minted for it this epoch`). The asset
 stays in the Pons escrow, or in the vault if a `pull()` for another asset already claimed it, and a
 later sweep picks it up. The stablecoin itself needs no price and is swept regardless.
+
+The exception is a quote token with no price source in `swap` mode (anything that is not ETH or the
+stablecoin and has no `fixedPrices` entry, such as the stock token an NVDA-paired launch pays fees
+in). There the price would only set the slippage floor, and waiting would mean never sweeping, so it
+is swapped with `minOut` 0 and credited with the stablecoin the `Swept` event reports; the sweep adds
+a `no price source for <asset>: swapped without a slippage floor` warning. `checkPonsConfig` reports
+each such token as `quoteToken.price.<address>` (warn). In `raw` mode it stays unswept.
+
+Each asset is swept on its own. When the transaction for one of them fails (a swap that reverts on its
+slippage floor, an RPC error) the sweep does not throw: the assets already swept have moved on chain
+and are reported, and the failed one stays in the vault for the next sweep. Everything left behind,
+for either reason, is listed in `lastSweep.unswept` (`SweepDetail.unswept`, one message per asset),
+which is what the gateway logs as `sweep_skipped`. Only a failed `pull()` still throws: nothing has
+moved at that point.
 `pendingFeesUsd()` returns `null` while a pending asset has no price.
 
 **Reserve.** `reserve()` reads the `creditPool` wallet: `{ wallet, stable, stableUsd, otherUnits,

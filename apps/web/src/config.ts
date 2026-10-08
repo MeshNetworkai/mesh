@@ -94,8 +94,10 @@ export const TOKENOMICS = {
     maxDiscountBps: Number(tokenomics.marketplace?.maxDiscountBps ?? 7000),
     minListingUsd: Number(tokenomics.marketplace?.minListingUsd ?? 1),
     listingTtlHours: Number(tokenomics.marketplace?.listingTtlHours ?? 168),
+    /** Smallest withdrawal of prepaid balance, USD (0 = no minimum). The live value is on GET /market/config. */
+    minWithdrawalUsd: Number(tokenomics.marketplace?.minWithdrawalUsd ?? 0),
     /** The stablecoin the marketplace settles in: what buyers deposit and sellers withdraw. Credits stay off chain. */
-    settlementSymbol: String(tokenomics.marketplace?.settlementSymbol ?? 'USDC'),
+    settlementSymbol: String(tokenomics.marketplace?.settlementSymbol ?? 'USDG'),
   },
   /** Engine 2 (docs/PRICING.md §3): the holder share of the margin on paid usage. Built; `enabled` is the switch. GET /stats confirms the live state. */
   usageShare: {
@@ -155,9 +157,6 @@ export const NODE_REWARD_CEILING_PER_M: number = Math.round(TOKENOMICS.networkPr
 export function nodeRewardPerM(multiplier = 1): number {
   return Math.min(Math.round(TOKENOMICS.nodeRewardUsdPerMTokens * multiplier * 1e6) / 1e6, NODE_REWARD_CEILING_PER_M);
 }
-
-/** Which way the fee sweep settles on the configured network: `swap` (to the stablecoin, on chain) or `raw`. */
-export const SWEEP_MODE: string = String(((DEPLOY_NETWORK === 'robinhood-testnet' ? deployRobinhoodTestnet : deployRobinhood) as { sweepMode?: string }).sweepMode ?? 'swap');
 
 export const MOCK = import.meta.env.VITE_MOCK === '1' || import.meta.env.VITE_MOCK === 'true';
 

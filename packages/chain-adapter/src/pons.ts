@@ -44,7 +44,11 @@ export interface PonsEvmAdapterOptions extends EvmAdapterOptions {
    */
   priceFeed?: Address;
   fixedEthUsd?: number;
-  /** USD prices for non-ETH, non-stable quote tokens in raw mode (token units). */
+  /**
+   * USD prices for non-ETH, non-stable quote tokens (per whole token): the valuation in raw mode, the
+   * slippage floor in swap mode. A token without one cannot be swept in raw mode; in swap mode it is
+   * swapped without a floor and credited with the stablecoin the swap returns.
+   */
   fixedPrices?: Record<string, number>;
   /** Max age of the Chainlink answer before it is considered stale (default 3600 s). */
   priceMaxAgeSec?: number;
@@ -240,6 +244,11 @@ export class PonsEvmAdapter extends EvmAdapter {
     const mode = this.opts.sweepMode ?? 'swap';
     const slippageBps = assertBps(this.opts.slippageBps ?? 100, 'slippageBps');
     const warnings: string[] = [];
+    const unswept: string[] = [];
+    const leave = (message: string) => {
+      unswept.push(message);
+      warnings.push(message);
+    };
     const txIds: Hex[] = [];
     const assets: PonsAssetSweep[] = [];
     const pending = await this.pendingAssets();
@@ -262,16 +271,26 @@ export class PonsEvmAdapter extends EvmAdapter {
       ethUsd,
       priceSource,
       warnings,
+      unswept,
     });
     if (total === 0n) return empty();
 
-    // An asset without a price is not swept at all: it stays in the escrow (or, once pulled, in the vault)
-    // and is picked up by a later epoch. Sweeping it anyway would either mint no credits for fees that
-    // did move (raw) or swap with no slippage floor (swap). The stablecoin itself never needs a price.
+    // What a missing price means depends on what the price is for. In raw mode it IS the credit (the asset
+    // is valued off-chain), so an unpriced asset is not swept at all: it stays in the escrow (or, once
+    // pulled, in the vault) and a later epoch picks it up. In swap mode the credit is the stablecoin the
+    // swap returns and the price only sets the slippage floor. ETH still waits for its price there (a
+    // stale feed comes back, and with it the floor). A quote token that has no price source at all, such
+    // as a tokenised stock the launch is paired with, is swapped without a floor rather than never: no
+    // credit is minted against a guess either way. The stablecoin itself never needs a price.
+    const floorless = (asset: Address) => mode === 'swap' && asset !== ETH_ASSET && this.assetUsd(asset, ethUsd) === null;
     const sweepable = pending.filter((p) => {
       if (p.inEscrow + p.held === 0n) return false;
       if (this.assetUsd(p.asset, ethUsd) !== null) return true;
-      warnings.push(`no fresh price for ${p.asset}: ${toUnits(p.inEscrow + p.held, p.decimals)} left unswept, no credits minted for it this epoch`);
+      if (floorless(p.asset)) {
+        warnings.push(`no price source for ${p.asset}: swapped without a slippage floor, credited with the stablecoin the swap returns`);
+        return true;
+      }
+      leave(`no fresh price for ${p.asset}: ${toUnits(p.inEscrow + p.held, p.decimals)} left unswept, no credits minted for it this epoch`);
       return false;
     });
     if (sweepable.length === 0) return empty();
@@ -279,11 +298,12 @@ export class PonsEvmAdapter extends EvmAdapter {
     if (dryRun) {
       for (const p of sweepable) {
         const gross = toUnits(p.inEscrow + p.held, p.decimals);
-        const usd = gross * this.assetUsd(p.asset, ethUsd)!;
+        // A rehearsal has no swap to read the proceeds from: an asset without a price shows as $0 here.
+        const usd = gross * (this.assetUsd(p.asset, ethUsd) ?? 0);
         const holderUsd = (usd * holderBps) / 10_000;
         assets.push({ asset: p.asset, grossIn: gross, holderOut: holderUsd, treasuryOut: usd - holderUsd, outAsset: p.asset, usd, mode: 'raw' });
       }
-      return this.finish(assets, 'dry-run', txIds, dryRun, ethUsd, priceSource, warnings);
+      return this.finish(assets, 'dry-run', txIds, dryRun, ethUsd, priceSource, warnings, unswept);
     }
 
     // 1. escrow → vault
@@ -292,47 +312,55 @@ export class PonsEvmAdapter extends EvmAdapter {
       const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'pull' });
       txIds.push(r.transactionHash);
     }
-    // 2. vault → creditPool / treasury, per asset
+    // 2. vault → creditPool / treasury, per asset. Each asset stands alone: when one fails (a swap that
+    // reverts on its slippage floor, an RPC error) the assets already swept have moved on chain, so the
+    // sweep reports them and leaves the failed one in the vault for the next epoch. Failing the whole
+    // epoch here would lose the credits for fees that did move.
     for (const p of sweepable) {
-      const heldNow =
-        p.asset === ETH_ASSET
-          ? await this.publicClient.getBalance({ address: vault })
-          : await this.publicClient.readContract({ address: p.asset, abi: erc20Abi, functionName: 'balanceOf', args: [vault] });
-      if (heldNow === 0n) continue;
-      const gross = toUnits(heldNow, p.decimals);
-      const px = this.assetUsd(p.asset, ethUsd)!;
-      if (mode === 'raw') {
-        const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweepRaw', args: [p.asset] });
-        txIds.push(r.transactionHash);
-        const ev = this.decodeSwept(r, 'SweptRaw');
-        const holderOut = toUnits(ev?.holderOut ?? 0n, p.decimals);
-        const treasuryOut = toUnits(ev?.treasuryOut ?? 0n, p.decimals);
-        assets.push({ asset: p.asset, grossIn: gross, holderOut, treasuryOut, outAsset: p.asset, usd: gross * px, mode: 'raw', txId: r.transactionHash });
-      } else {
-        // minOut in stable units from the off-chain price: the swap reverts rather than settle below it.
-        const expectedUsd = gross * px;
-        const minOut = this.isStable(p.asset) ? 0n : BigInt(Math.floor(expectedUsd * (10_000 - slippageBps) * 10 ** this.stableDecimals())) / 10_000n;
-        const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweep', args: [p.asset, minOut] });
-        txIds.push(r.transactionHash);
-        const ev = this.decodeSwept(r, 'Swept');
-        const holderOut = toUnits(ev?.holderOut ?? 0n, this.stableDecimals());
-        const treasuryOut = toUnits(ev?.treasuryOut ?? 0n, this.stableDecimals());
-        assets.push({
-          asset: p.asset,
-          grossIn: gross,
-          holderOut,
-          treasuryOut,
-          outAsset: this.opts.stable ?? p.asset,
-          usd: holderOut + treasuryOut,
-          mode: this.isStable(p.asset) ? 'stable' : 'swap',
-          txId: r.transactionHash,
-        });
+      try {
+        const heldNow =
+          p.asset === ETH_ASSET
+            ? await this.publicClient.getBalance({ address: vault })
+            : await this.publicClient.readContract({ address: p.asset, abi: erc20Abi, functionName: 'balanceOf', args: [vault] });
+        if (heldNow === 0n) continue;
+        const gross = toUnits(heldNow, p.decimals);
+        const px = this.assetUsd(p.asset, ethUsd);
+        if (mode === 'raw') {
+          const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweepRaw', args: [p.asset] });
+          txIds.push(r.transactionHash);
+          const ev = this.decodeSwept(r, 'SweptRaw');
+          const holderOut = toUnits(ev?.holderOut ?? 0n, p.decimals);
+          const treasuryOut = toUnits(ev?.treasuryOut ?? 0n, p.decimals);
+          // px is never null here: raw mode only sweeps what it can value (see `sweepable`).
+          assets.push({ asset: p.asset, grossIn: gross, holderOut, treasuryOut, outAsset: p.asset, usd: gross * (px ?? 0), mode: 'raw', txId: r.transactionHash });
+        } else {
+          // minOut in stable units from the off-chain price: the swap reverts rather than settle below it.
+          // No floor for the stablecoin (nothing is swapped) or for a quote token without a price source.
+          const minOut = this.isStable(p.asset) || px === null ? 0n : BigInt(Math.floor(gross * px * (10_000 - slippageBps) * 10 ** this.stableDecimals())) / 10_000n;
+          const r = await this.send({ address: vault, abi: ponsFeeVaultAbi, functionName: 'sweep', args: [p.asset, minOut] });
+          txIds.push(r.transactionHash);
+          const ev = this.decodeSwept(r, 'Swept');
+          const holderOut = toUnits(ev?.holderOut ?? 0n, this.stableDecimals());
+          const treasuryOut = toUnits(ev?.treasuryOut ?? 0n, this.stableDecimals());
+          assets.push({
+            asset: p.asset,
+            grossIn: gross,
+            holderOut,
+            treasuryOut,
+            outAsset: this.opts.stable ?? p.asset,
+            usd: holderOut + treasuryOut,
+            mode: this.isStable(p.asset) ? 'stable' : 'swap',
+            txId: r.transactionHash,
+          });
+        }
+      } catch (err) {
+        leave(`sweep of ${p.asset} failed (${(err as Error).message ?? String(err)}): left unswept in the vault, no credits minted for it this epoch`);
       }
     }
-    return this.finish(assets, txIds[0] ?? '', txIds, dryRun, ethUsd, priceSource, warnings);
+    return this.finish(assets, txIds[0] ?? '', txIds, dryRun, ethUsd, priceSource, warnings, unswept);
   }
 
-  private finish(assets: PonsAssetSweep[], txId: string, txIds: Hex[], dryRun: boolean, ethUsd: number | null, priceSource: PonsSweepDetail['priceSource'], warnings: string[]): PonsSweepDetail {
+  private finish(assets: PonsAssetSweep[], txId: string, txIds: Hex[], dryRun: boolean, ethUsd: number | null, priceSource: PonsSweepDetail['priceSource'], warnings: string[], unswept: string[]): PonsSweepDetail {
     const amountUsd = Math.round(assets.reduce((n, a) => n + a.usd, 0) * 1e6) / 1e6;
     const eth = assets.find((a) => a.asset === ETH_ASSET);
     const swapped = assets.filter((a) => a.mode === 'swap');
@@ -350,6 +378,7 @@ export class PonsEvmAdapter extends EvmAdapter {
       ethUsd,
       priceSource,
       warnings,
+      unswept,
     };
   }
 

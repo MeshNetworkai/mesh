@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { Address, PublicClient } from 'viem';
+import { encodeAbiParameters, encodeEventTopics, type Address, type PublicClient } from 'viem';
+import { ponsFeeVaultAbi } from '../src/evm/abi.js';
 import { ETH_ASSET, PONS_MAINNET, PonsEvmAdapter } from '../src/pons.js';
 import { applyEvmOverrides, createAdapter, evmConfigReady, parseDeployConfig, type EvmDeployConfig } from '../src/index.js';
 import { EvmAdapter } from '../src/evm.js';
@@ -13,12 +14,14 @@ const POOL = '0x4000000000000000000000000000000000000004' as Address;
 const CREDIT_POOL = '0x7000000000000000000000000000000000000007' as Address;
 const USDG = '0x8000000000000000000000000000000000000008' as Address;
 const FEED = '0x9000000000000000000000000000000000000009' as Address;
+/** A quote token the adapter has no price for (the tokenised stock an NVDA-paired launch pays fees in). */
+const STOCK = '0x6000000000000000000000000000000000000006' as Address;
 const ALICE = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address;
 const E18 = 10n ** 18n;
 const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');
 
 /** Minimal fake chain: escrow balances per asset, vault balances, a Chainlink feed, Transfer logs. */
-function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigint; vaultUsdg?: bigint; poolEth?: bigint; poolUsdg?: bigint; feedAnswer?: bigint; feedAgeSec?: number; logs?: Array<{ block: bigint; from: Address; to: Address; value: bigint }> } = {}) {
+function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; escrowStock?: bigint; vaultEth?: bigint; vaultUsdg?: bigint; vaultStock?: bigint; poolEth?: bigint; poolUsdg?: bigint; feedAnswer?: bigint; feedAgeSec?: number; logs?: Array<{ block: bigint; from: Address; to: Address; value: bigint }> } = {}) {
   const calls: string[] = [];
   const T0 = 1_700_000_000;
   const client = {
@@ -39,7 +42,8 @@ function fakeChain(p: { escrowEth?: bigint; escrowUsdg?: bigint; vaultEth?: bigi
       calls.push(`read:${functionName}@${address}`);
       if (functionName === 'decimals') return address === FEED ? 8 : address === USDG ? 6 : 18;
       if (functionName === 'balanceOf' && address === PONS_MAINNET.escrow) return p.escrowEth ?? 0n;
-      if (functionName === 'balanceOfToken' && address === PONS_MAINNET.escrow) return (args?.[1] as string).toLowerCase() === USDG.toLowerCase() ? (p.escrowUsdg ?? 0n) : 0n;
+      if (functionName === 'balanceOfToken' && address === PONS_MAINNET.escrow) return (args?.[1] as string).toLowerCase() === USDG.toLowerCase() ? (p.escrowUsdg ?? 0n) : (args?.[1] as string).toLowerCase() === STOCK.toLowerCase() ? (p.escrowStock ?? 0n) : 0n;
+      if (functionName === 'balanceOf' && address === STOCK) return (args?.[0] as string) === VAULT ? (p.vaultStock ?? 0n) : 0n;
       if (functionName === 'balanceOf' && address === USDG) return (args?.[0] as string) === VAULT ? (p.vaultUsdg ?? 0n) : (args?.[0] as string) === CREDIT_POOL ? (p.poolUsdg ?? 0n) : 0n;
       if (functionName === 'balanceOf') return 0n;
       if (functionName === 'latestRoundData') {
@@ -108,6 +112,79 @@ describe('PonsEvmAdapter pricing', () => {
   });
 });
 
+describe('PonsEvmAdapter.collectFees (live sweep)', () => {
+  it('one asset failing does not lose the assets already swept', async () => {
+    const { client } = fakeChain({ vaultEth: E18, vaultUsdg: 250_000_000n });
+    const a = adapter(client, { dryRun: false, sweepMode: 'raw', fixedEthUsd: 1000, quoteTokens: [ETH_ASSET, USDG], stable: USDG, stableDecimals: 6 });
+    // ETH sweeps; the stablecoin's transaction reverts.
+    (a as unknown as { send: (req: { args?: readonly unknown[] }) => Promise<unknown> }).send = async (req) => {
+      if (req.args?.[0] !== ETH_ASSET) throw new Error('tx 0xdead reverted');
+      return { transactionHash: '0xaaa', logs: [] };
+    };
+    expect(await a.collectFees()).toEqual({ amountUsd: 1000, txId: '0xaaa' });
+    const d = a.lastSweep!;
+    expect(d.assets.map((x) => x.asset)).toEqual([ETH_ASSET]);
+    expect(d.unswept).toHaveLength(1);
+    expect(d.unswept![0]).toMatch(/sweep of 0x8000000000000000000000000000000000000008 failed \(tx 0xdead reverted\): left unswept in the vault/);
+  });
+
+  it('swap mode: a quote token with no price source is swapped without a floor and credited with the USDG the swap returned', async () => {
+    const { client } = fakeChain({ vaultStock: 5n * E18 });
+    const a = adapter(client, { dryRun: false, sweepMode: 'swap', quoteTokens: [ETH_ASSET, STOCK], stable: USDG, stableDecimals: 6 });
+    const sent: Array<{ functionName: string; args?: readonly unknown[] }> = [];
+    // The vault's Swept event: 5 tokens in, 400 + 400 USDG out (holder / treasury).
+    const swept = {
+      topics: encodeEventTopics({ abi: ponsFeeVaultAbi, eventName: 'Swept', args: { asset: STOCK } }),
+      data: encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }], [5n * E18, 400_000_000n, 400_000_000n]),
+    };
+    (a as unknown as { send: (req: { functionName: string; args?: readonly unknown[] }) => Promise<unknown> }).send = async (req) => {
+      sent.push(req);
+      return { transactionHash: '0xccc', logs: [swept] };
+    };
+    expect(await a.pendingFeesUsd()).toBeNull(); // nothing to value it with before the swap
+    expect(await a.collectFees()).toEqual({ amountUsd: 800, txId: '0xccc' });
+    expect(sent).toEqual([{ address: VAULT, abi: ponsFeeVaultAbi, functionName: 'sweep', args: [STOCK.toLowerCase(), 0n] }]);
+    const d = a.lastSweep!;
+    expect(d.assets).toHaveLength(1);
+    expect(d.assets[0]).toMatchObject({ asset: STOCK.toLowerCase(), grossIn: 5, holderOut: 400, treasuryOut: 400, usd: 800, mode: 'swap' });
+    expect(d.unswept).toEqual([]); // it was swept: no failed-sweep alert
+    expect(d.warnings.join(' ')).toMatch(/no price source for 0x6000000000000000000000000000000000000006: swapped without a slippage floor/);
+  });
+
+  it('swap mode: with a fixed price the same token gets a slippage floor; ETH without a price still waits', async () => {
+    const { client } = fakeChain({ vaultStock: 5n * E18, vaultEth: E18 });
+    const a = adapter(client, { dryRun: false, sweepMode: 'swap', quoteTokens: [ETH_ASSET, STOCK], stable: USDG, stableDecimals: 6, slippageBps: 100, fixedPrices: { [STOCK.toLowerCase()]: 160 } });
+    const sent: Array<readonly unknown[] | undefined> = [];
+    (a as unknown as { send: (req: { args?: readonly unknown[] }) => Promise<unknown> }).send = async (req) => {
+      sent.push(req.args);
+      return { transactionHash: '0xddd', logs: [] };
+    };
+    await a.collectFees();
+    expect(sent).toEqual([[STOCK.toLowerCase(), 792_000_000n]]); // 5 × $160 less 1 %, in USDG base units
+    expect(a.lastSweep!.unswept).toHaveLength(1);
+    expect(a.lastSweep!.unswept![0]).toMatch(/no fresh price for 0x0000000000000000000000000000000000000000/);
+  });
+
+  it('raw mode: a quote token with no price source cannot be valued and is left unswept', async () => {
+    const { client } = fakeChain({ vaultStock: 5n * E18 });
+    const a = adapter(client, { dryRun: false, sweepMode: 'raw', quoteTokens: [ETH_ASSET, STOCK], stable: USDG, stableDecimals: 6 });
+    (a as unknown as { send: () => Promise<unknown> }).send = async () => {
+      throw new Error('nothing should be sent');
+    };
+    expect(await a.collectFees()).toEqual({ amountUsd: 0, txId: '' });
+    expect(a.lastSweep!.unswept).toHaveLength(1);
+    expect(a.lastSweep!.unswept![0]).toMatch(/no fresh price for 0x6000000000000000000000000000000000000006: 5 left unswept/);
+  });
+
+  it('a clean sweep leaves nothing behind', async () => {
+    const { client } = fakeChain({ vaultEth: E18 });
+    const a = adapter(client, { dryRun: false, sweepMode: 'raw', fixedEthUsd: 1000 });
+    (a as unknown as { send: () => Promise<unknown> }).send = async () => ({ transactionHash: '0xbbb', logs: [] });
+    expect(await a.collectFees()).toEqual({ amountUsd: 1000, txId: '0xbbb' });
+    expect(a.lastSweep!.unswept).toEqual([]);
+  });
+});
+
 describe('PonsEvmAdapter.collectFees (dry run)', () => {
   it('values ETH in escrow + ETH already pulled with the fixed price', async () => {
     const { client } = fakeChain({ escrowEth: 1n * E18, vaultEth: E18 / 2n });
@@ -149,6 +226,8 @@ describe('PonsEvmAdapter.collectFees (dry run)', () => {
     expect(r.amountUsd).toBe(250);
     expect(a.lastSweep!.assets.map((x) => x.asset)).toEqual([USDG.toLowerCase()]);
     expect(a.lastSweep!.warnings.join(' ')).toMatch(/left unswept/);
+    expect(a.lastSweep!.unswept).toHaveLength(1);
+    expect(a.lastSweep!.unswept![0]).toMatch(/no fresh price for 0x0000000000000000000000000000000000000000/);
     // the same fees are valued and swept once the feed is fresh again
     const fresh = adapter(fakeChain({ escrowEth: E18, escrowUsdg: 250_000_000n, feedAnswer: 3_000_00000000n }).client, { priceFeed: FEED, quoteTokens: [ETH_ASSET, USDG], stable: USDG, stableDecimals: 6 });
     expect((await fresh.collectFees()).amountUsd).toBe(3250);

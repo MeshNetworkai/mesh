@@ -1257,7 +1257,7 @@ export const mockAdminChainCheck = async (token: string): Promise<ChainCheckRepo
     { check: 'feeVault.stable', status: 'ok', detail: 'vault has no stable set: only sweepRaw works (sweepMode raw, fine)' },
     { check: 'feeVault.holderShareBps', status: 'ok', detail: 'holder share 5000 bps', value: 5000 },
     { check: 'excludeWallets.curve', status: 'warn', detail: 'no `curve` address yet: add the Pons bonding-curve address (and the pool after graduation) to excludeWallets' },
-    { check: 'priceFeed', status: 'warn', detail: 'no priceFeed and no fixedEthUsd: ETH fees will be valued at $0 until one is set' },
+    { check: 'priceFeed', status: 'warn', detail: 'no priceFeed and no fixedEthUsd: ETH fees stay unswept (no credits minted) until one is set' },
     { check: 'deployBlock', status: 'ok', detail: `scans start at block ${v.effective.deployBlock as number}` },
   ];
   pushAdminAction('chain-check', { ok: true, rpcReachable: true, fails: [] });

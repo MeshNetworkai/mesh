@@ -105,6 +105,8 @@ export interface AlertMonitorOptions {
 
 // ---------------- senders ----------------
 
+const TELEGRAM_TIMEOUT_MS = 10_000;
+
 export function telegramSender(botToken: string, chatId: string, fetchImpl: typeof fetch = fetch): AlertSender {
   return {
     name: 'telegram',
@@ -113,6 +115,8 @@ export function telegramSender(botToken: string, chatId: string, fetchImpl: type
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+        // A send that hangs would hold up every check behind it (check() awaits its deliveries).
+        signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`telegram sendMessage failed: HTTP ${res.status}`);
     },
@@ -293,6 +297,8 @@ export class AlertMonitor {
 
   evalReserve(): { firing: boolean; detail: string } {
     const r = reserveView({ db: this.db, config: { reserve: this.opts.config.reserve ?? { minCoverageBps: 10_000 } } });
+    // A failed read says nothing about the reserve: keep the alert as it was rather than report it resolved.
+    if (r.source === 'unavailable') return { firing: this.states.get('reserve_short')?.firing ?? false, detail: 'the last read of the credit-pool wallet failed; waiting for the next epoch' };
     if (r.short === null || r.heldUsd === null || r.coverage === null) return { firing: false, detail: `reserve ${r.source}: nothing to compare` };
     return { firing: r.short, detail: `credit pool holds $${r.heldUsd.toFixed(2)} against $${r.requiredUsd.toFixed(2)} of credits owed (${(r.coverage * 100).toFixed(1)} %, min ${r.minCoverageBps / 100} %)` };
   }

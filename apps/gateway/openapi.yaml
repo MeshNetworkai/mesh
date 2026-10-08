@@ -304,6 +304,10 @@ paths:
       description: |
         Returns a SIWE / SIWS-style message for the wallet to sign. The nonce is single-use and expires in 5 minutes.
         Sign `message` exactly as returned, then call `POST /auth/verify`. Rate limited per IP (20/min by default).
+
+        An EVM address is one account in any letter case: send it lowercase, checksummed or upper-case and
+        the gateway uses the lowercase spelling everywhere (the returned `wallet`, the message, the session
+        and every ledger). A Solana key is case-sensitive and used as sent.
       operationId: authNonce
       requestBody:
         required: true
@@ -313,7 +317,7 @@ paths:
               type: object
               required: [wallet]
               properties:
-                wallet: { type: string, maxLength: 128, description: Base58 (Solana) or 0x address (EVM). }
+                wallet: { type: string, maxLength: 128, description: 'Base58 (Solana) or 0x address (EVM, any letter case).' }
             example: { wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k }
       responses:
         '200':
@@ -1321,7 +1325,7 @@ paths:
           description: The `marketplace` block of `config/tokenomics.json`. Settlement is `prepaid` in this version.
           content:
             application/json:
-              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: prepaid, starterTransferable: false, creditExpiryDays: 90 }
+              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, minWithdrawalUsd: 1, settlement: prepaid, settlementSymbol: USDG, starterTransferable: false, creditExpiryDays: 90 }
         '404': { description: 'The marketplace is disabled (`marketplace.enabled: false`).' }
   /market/book:
     get:
@@ -1459,7 +1463,7 @@ paths:
     post:
       tags: [Market]
       summary: Request a payout of prepaid USD
-      description: The amount leaves the prepaid balance at once (`withdrawal` row). The request is announced to the operator (alert channel, daily digest, Admin → Withdrawals), who sends the stablecoin by hand and marks it paid.
+      description: The amount leaves the prepaid balance at once (`withdrawal` row). The request is announced to the operator (alert channel, daily digest, Admin → Withdrawals), who sends the stablecoin by hand and marks it paid. Because each one is paid by hand, requests under `minWithdrawalUsd` (`GET /market/config`, $1 as shipped) are refused; a smaller balance still pays for buys.
       operationId: requestMarketWithdrawal
       security: [{ session: [] }]
       requestBody:
@@ -1469,6 +1473,7 @@ paths:
             schema: { type: object, required: [amountUsd], properties: { amountUsd: { type: number } } }
       responses:
         '201': { description: '`{ id, wallet, amountUsd, status: pending, created_at, prepaidBalanceUsd }`.' }
+        '400': { description: '`bad_amount`, or `below_minimum` when the amount is under `minWithdrawalUsd`.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { description: '`insufficient_prepaid`.' }
   /credits/config:

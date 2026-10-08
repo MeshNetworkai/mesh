@@ -289,6 +289,17 @@ price and are swept regardless. Nothing is lost; it is delayed. It is not silent
 after the epoch (`jobs/housekeeping.ts`) log each asset left behind as `sweep_skipped`, and the
 `failed_sweep` alert fires on it.
 
+One case is swept without a price. In `swap` mode the price is only the swap's slippage floor; the
+credit is the stablecoin the swap returns. A quote token that has no price source at all (not ETH,
+not the stablecoin: the tokenised stock an NVDA-paired launch pays its fees in) is therefore swapped
+with no floor rather than never, and credited with what came back. ETH still waits for its feed, and
+in `raw` mode, where the price is the valuation itself, an unpriced asset is never swept.
+
+The same holds when the sweep of one asset fails on chain (a swap that reverts on its slippage floor,
+an RPC error): the assets already swept in that epoch have moved and are credited, the failed one
+stays in the vault for the next epoch, and it is reported the same way (`SweepDetail.unswept`). One
+bad asset does not fail the epoch for the others.
+
 ### The published number
 
 After every epoch (`jobs/housekeeping.ts`) the gateway reads the credit-pool wallet
@@ -319,7 +330,11 @@ the latest one next to what is owed in credits, on `GET /report → totals.reser
 Example: the pool holds $100 of stablecoin, wallets hold $50 of spendable credit and $30 sits in
 open listings. `requiredUsd` is $80, `coverage` 1.25, `surplusUsd` $20, `short` false. If the pool
 held $50 instead, coverage would be 0.625, the surplus −$30 and `short` true. A short reading raises
-the `reserve_short` alert (`apps/gateway/src/alerts.ts`).
+the `reserve_short` alert (`apps/gateway/src/alerts.ts`). A reading that fails (`unavailable`) says
+nothing either way: the alert keeps the state it had until the wallet can be read again.
+
+Credits owed are counted wallet by wallet. A wallet that is overdrawn (a request that cost more than
+was left in it) counts as zero; it is not netted against what other wallets hold.
 
 Before the token launch the adapter is the mock: `source` is `mock`, `heldUsd`, `coverage` and
 `short` are null, and the alert stays silent. The beta's credits are not backed by a reserve.
@@ -360,9 +375,11 @@ adjustment. The rules (`apps/gateway/src/expiry.ts`):
   sold starts a fresh 90 days in the buyer's wallet.
 - **A request in flight keeps its credit.** Credit a running request has reserved (`reserve.ts`) is
   not expired under it.
-- **One row per lapse.** The ledger has no lots; the amount is derived from sums (grants older than
-  the cutoff minus everything consumed since), which is exact because every credit has the same
-  lifetime. It is debited with one `expiry` row in `credits_ledger`.
+- **One row per lapse.** The ledger has no lots; the amount is derived from two sums: the balance
+  minus the grants that are still inside the 90 days. Whatever left the wallet came off the oldest
+  credit first, so any part of the balance those grants cannot account for has outlived its window.
+  That is exact because every credit has the same lifetime. It is debited with one `expiry` row in
+  `credits_ledger`.
 
 When it runs: for every wallet after each epoch (`jobs/housekeeping.ts`, also on
 `POST /admin/run-epoch`), and lazily for one wallet on `POST /v1/chat/completions`, `GET /me`,

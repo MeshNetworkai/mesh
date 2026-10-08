@@ -222,7 +222,10 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
     }
   };
   const wdAmt = Number(wd);
-  const wdOk = Number.isFinite(wdAmt) && wdAmt > 0 && prepaid !== null && wdAmt <= prepaid + 1e-9;
+  // Withdrawals are paid by hand, so the gateway refuses dust (GET /market/config `minWithdrawalUsd`).
+  const wdMin = mine?.config.minWithdrawalUsd ?? 0;
+  const wdTooSmall = Number.isFinite(wdAmt) && wdAmt > 0 && wdAmt < wdMin;
+  const wdOk = Number.isFinite(wdAmt) && wdAmt > 0 && !wdTooSmall && prepaid !== null && wdAmt <= prepaid + 1e-9;
   const pending = (mine?.withdrawals ?? []).filter((w) => w.status === 'pending');
 
   const withdraw = async (e: FormEvent) => {
@@ -327,7 +330,10 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
               {busy ? <Spinner /> : 'Request'}
             </button>
           </div>
-          <p className="hint">The amount leaves your balance now; the team sends {SETTLE} to this wallet and marks it paid.</p>
+          {wdTooSmall ? <Notice kind="bad">Withdrawals start at {fmtUsd(wdMin, 0)}.</Notice> : null}
+          <p className="hint">
+            The amount leaves your balance now; the team sends {SETTLE} to this wallet and marks it paid.{wdMin > 0 ? ` Minimum ${fmtUsd(wdMin, 0)}.` : ''}
+          </p>
         </form>
       ) : (
         <p className="hint">Buys are paid from here, sales are paid into here. {deposits?.enabled ? `Top up with ${deposits.tokens.map((t) => t.symbol).join(' or ')} on ${deposits.chainName}; withdrawals are paid out by the team.` : BETA_TOPUP}</p>
@@ -667,8 +673,12 @@ function ProceedsCard({ mine, loading, onChanged }: { mine: MyMarket | null; loa
   const earned = sold.reduce((a, f) => a + f.sellerReceivedUsd, 0);
   const pending = (mine?.withdrawals ?? []).filter((w) => w.status === 'pending');
 
+  // Below the withdrawal minimum the balance can still pay for buys, or wait for more sales.
+  const claimMin = mine?.config.minWithdrawalUsd ?? 0;
+  const claimable = prepaid !== null && floor2(prepaid) > 0 && floor2(prepaid) >= claimMin;
+
   const claim = async () => {
-    if (!token || !prepaid) return;
+    if (!token || !prepaid || !claimable) return;
     setBusy(true);
     try {
       const w = await market.withdraw(token, floor2(prepaid));
@@ -720,9 +730,10 @@ function ProceedsCard({ mine, loading, onChanged }: { mine: MyMarket | null; loa
           <span className="small muted num">
             {sold.length > 0 ? `${fmtUsd(earned)} earned from ${sold.length} sale${sold.length === 1 ? '' : 's'}, all time` : 'Proceeds from your listings land here as prepaid USD.'}
             {pending.length > 0 ? ` · ${fmtUsd(pending.reduce((a, w) => a + w.amountUsd, 0))} being paid out` : ''}
+            {prepaid && !claimable ? ` · claims start at ${fmtUsd(claimMin, 0)}` : ''}
           </span>
         </div>
-        <button type="button" className="btn secondary" onClick={() => void claim()} disabled={!prepaid || busy}>
+        <button type="button" className="btn secondary" onClick={() => void claim()} disabled={!claimable || busy}>
           {busy ? <Spinner /> : 'Claim'}
         </button>
       </div>

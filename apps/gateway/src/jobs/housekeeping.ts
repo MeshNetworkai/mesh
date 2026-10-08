@@ -1,3 +1,4 @@
+import type { SweepDetail } from '@mesh/chain-adapter';
 import type { AppContext } from '../context.js';
 import { recordError } from '../db.js';
 import { expireAll } from '../expiry.js';
@@ -10,7 +11,7 @@ export interface HousekeepingResult {
   expiredUsdMicros: number;
   reserveSource: string;
   reserveHeldUsdMicros: number | null;
-  /** Warnings from the epoch's sweep that were logged (fees left unswept for want of a fresh price). */
+  /** What the epoch's sweep left behind, as logged (`SweepDetail.unswept`: no fresh price, or an asset whose sweep failed). */
   sweepWarnings: string[];
   /** Node rewards paid as credits in this run (node-payouts.ts). */
   nodePayoutWallets: number;
@@ -21,15 +22,16 @@ export interface HousekeepingResult {
 const reportedSweeps = new WeakSet<object>();
 
 /**
- * A live adapter keeps the detail of its last sweep (`lastSweep`, chain-adapter pons.ts). When that sweep
- * left fees behind because it had no fresh price, nothing else says so: the epoch simply reads as empty.
- * Log it as `sweep_skipped`, which the `failed_sweep` alert (alerts.ts) and the admin overview pick up.
+ * A live adapter keeps the detail of its last sweep (`lastSweep`, chain-adapter types.ts `SweepDetail`).
+ * When that sweep left fees behind (no fresh price, or the sweep of an asset failed) nothing else says so:
+ * the epoch simply reads as smaller than it should be. Log each as `sweep_skipped`, which the
+ * `failed_sweep` alert (alerts.ts) and the admin overview pick up.
  */
 export function logSweepWarnings(ctx: Pick<AppContext, 'db' | 'adapter'>): string[] {
-  const last = (ctx.adapter as { lastSweep?: { warnings?: unknown } }).lastSweep;
+  const last = (ctx.adapter as { lastSweep?: Pick<SweepDetail, 'unswept'> }).lastSweep;
   if (!last || typeof last !== 'object' || reportedSweeps.has(last)) return [];
   reportedSweeps.add(last);
-  const skipped = (Array.isArray(last.warnings) ? last.warnings : []).filter((w): w is string => typeof w === 'string' && w.includes('left unswept'));
+  const skipped = last.unswept ?? [];
   for (const message of skipped) recordError(ctx.db, { route: 'epoch sweep', status: 503, code: 'sweep_skipped', message });
   return skipped;
 }

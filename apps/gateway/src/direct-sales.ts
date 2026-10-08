@@ -41,7 +41,7 @@ export function buyCredits(db: Db, cfg: DirectSalesConfig, input: { wallet: stri
     const id = `buy_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     const ref = `purchase:${id}`;
     addPrepaidEntry(db, { wallet, deltaMicros: -amountMicros, kind: 'credit_purchase', ref }, now);
-    addLedgerEntry(db, { wallet, deltaMicros: amountMicros, kind: 'purchase', ref });
+    addLedgerEntry(db, { wallet, deltaMicros: amountMicros, kind: 'purchase', ref }, now);
     return { id, wallet, creditsMicros: amountMicros, paidMicros: amountMicros, createdAt: now };
   });
   return tx();

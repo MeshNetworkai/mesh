@@ -10,7 +10,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const HOUR = 3_600;
 const DAY = 86_400;
 const EXPIRY_DAYS = TOKENOMICS.creditExpiry.enabled ? TOKENOMICS.creditExpiry.days : null;
-const CFG: MarketConfig = { settlementSymbol: TOKENOMICS.marketplace.settlementSymbol, starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: TOKENOMICS.marketplace.settlementSymbol, address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
+const CFG: MarketConfig = { settlementSymbol: TOKENOMICS.marketplace.settlementSymbol, starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, minWithdrawalUsd: TOKENOMICS.marketplace.minWithdrawalUsd, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: TOKENOMICS.marketplace.settlementSymbol, address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
 const ME = mockAccount.wallet;
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -251,6 +251,7 @@ export const mockWithdraw = async (amountUsd: number): Promise<Withdrawal & { pr
   const amt = r6(amountUsd);
   const bal = prepaidBalance();
   if (amt <= 0) throw new ApiError(400, 'amount must be a positive number of USD', 'bad_amount');
+  if (amt < (CFG.minWithdrawalUsd ?? 0)) throw new ApiError(400, `withdrawals start at $${(CFG.minWithdrawalUsd ?? 0).toFixed(2)}`, 'below_minimum');
   if (bal + 1e-9 < amt) throw new ApiError(402, `prepaid balance is $${bal.toFixed(2)}; cannot withdraw $${amt.toFixed(2)}`, 'insufficient_prepaid');
   const w: Withdrawal = { id: withdrawals.length + 1, wallet: ME, amountUsd: amt, status: 'pending', note: null, txRef: null, created_at: now(), paid_at: null };
   withdrawals.push(w);

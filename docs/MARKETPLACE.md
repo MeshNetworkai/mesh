@@ -17,13 +17,13 @@ credits every hour (`docs/NODE_PROTOCOL.md` §7): selling here is how either tur
 1. **List.** A seller offers `amount` of credit at `discount` (0–70%). Credit past its 90 days is lapsed first, and unused starter credit is held back (below). The credit then leaves their spendable balance at once: a `market_escrow` row in `credits_ledger` (negative), so the gateway will not serve requests against it. The listing stays open for 7 days (`listingTtlHours`).
 2. **Fill.** A buyer takes any part of a listing (down to $0.01, or the whole remainder). They pay the discounted price from their **prepaid balance**; the credits land in their `credits_ledger` at face value (`market_buy`) and start a fresh 90 days there. The seller is paid into their own prepaid balance, net of the fee. Partial fills leave the listing open; the last fill marks it `filled`.
 3. **Cancel or expire.** Whatever is left goes back to the seller's spendable balance (`market_refund`) with its original date: the listing did not stop the clock. A sweep of expired listings runs once a minute and on every read of the book.
-4. **Withdraw.** Prepaid USD can be withdrawn. The amount leaves the balance when the request is made; an operator pays it out (USDG to the wallet) and marks the request paid.
+4. **Withdraw.** Prepaid USD can be withdrawn, from `marketplace.minWithdrawalUsd` ($1 as shipped) upwards: every request is paid by hand with an on-chain transfer, so smaller ones are refused (`400 below_minimum`) and stay in the balance, where they still pay for buys. The amount leaves the balance when the request is made; an operator pays it out (USDG to the wallet) and marks the request paid.
 
 ## What can be listed, and the 90-day clock
 
 Config: `starterCredits.transferable: false` and `creditExpiry { enabled: true, days: 90 }` in `config/tokenomics.json`; rules in `docs/PRICING.md` §6.
 
-- **Starter credit is not sellable.** What is left of a wallet's starter grant can be spent on requests but not listed. Requests spend the starter grant first, so credit a wallet earned or bought stays listable. `POST /market/listings` for more than the listable amount answers `402 non_transferable`; `GET /me/market` shows `nonTransferableUsd` and `listableUsd` (balance − unused starter credit − credit held by requests in flight). `GET /market/config → starterTransferable` tells the page which rule is on.
+- **Starter credit is not sellable.** What is left of a wallet's starter grant can be spent on requests but not listed. Requests made since the grant spend it first, so credit a wallet earned or bought stays listable; requests from before the grant, and other credit lapsing, do not unlock it, and once the grant itself is 90 days old nothing of it is left to hold back. `POST /market/listings` for more than the listable amount answers `402 non_transferable`; `GET /me/market` shows `nonTransferableUsd` and `listableUsd` (balance − unused starter credit − credit held by requests in flight). `GET /market/config → starterTransferable` tells the page which rule is on.
 - **Every credit lapses after 90 days**, including credit bought here. The oldest credit is spent, listed and lapsed first.
 - **A listing does not stop the clock.** Credit in an open listing is out of the balance, so it is not debited while it is listed. If it sells, the buyer's 90 days start at the fill. If it comes back (cancel, or the 7-day listing expiry), it comes back with its original date; when that date has already passed it lapses at the next check. Example: $10 lands on day 0 and $6 of it is listed on day 85. On day 90 the $4 still in the wallet lapses. Nobody buys, the listing expires on day 92, and the $6 returns already past its date: it lapses at the next check.
 - **When lapsed credit is removed.** After every hourly epoch for all wallets, and for the wallet itself on `POST /market/listings` and `GET /me/market` (also on `GET /me` and on every chat request), so a balance past its date can never be listed.
@@ -113,10 +113,10 @@ Session (bearer or cookie + CSRF): `POST /market/listings { amountUsd, discountB
 
 Admin: `POST /admin/prepaid`, `POST /admin/market/withdrawals/:id/paid { txRef?, note? }`, `GET /admin/market` (`withdrawals { pendingUsd, paidUsd, pending[] with notified_at, recentPaid[], announcedVia }`), `GET /admin/market/listings/:id`, `POST /admin/market/reap`.
 
-Errors are `{ error, message, statusCode }`: `insufficient_credits` (402, listing more than you hold), `non_transferable` (402, the balance covers the listing only by counting unused starter credit), `insufficient_prepaid` (402), `own_listing`, `listing_closed`, `insufficient_depth` (409), `below_minimum`, `discount_too_deep` (400). Writes are rate-limited to 30 a minute per IP, reads to 120. With `marketplace.enabled: false` every `/market` route is 404.
+Errors are `{ error, message, statusCode }`: `insufficient_credits` (402, listing more than you hold), `non_transferable` (402, the balance covers the listing only by counting unused starter credit), `insufficient_prepaid` (402), `own_listing`, `listing_closed`, `insufficient_depth` (409), `below_minimum` (a listing under `minListingUsd`, a fill under the minimum, a withdrawal under `minWithdrawalUsd`), `discount_too_deep` (400). Writes are rate-limited to 30 a minute per IP, reads to 120. With `marketplace.enabled: false` every `/market` route is 404.
 
 ## Config
 
 ```json
-"marketplace": { "enabled": true, "feeBps": 250, "feeToHoldersBps": 5000, "minListingUsd": 1, "maxDiscountBps": 7000, "listingTtlHours": 168 }
+"marketplace": { "enabled": true, "feeBps": 250, "feeToHoldersBps": 5000, "minListingUsd": 1, "maxDiscountBps": 7000, "listingTtlHours": 168, "minWithdrawalUsd": 1 }
 ```

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { WalletField } from '../auth.js';
 import { markAdminAudited, requireAdmin, requireSession, sessionOf, type AppContext } from '../context.js';
 import { nowSec, recordAdminAction, recordError } from '../db.js';
 import { creditDeposit, depositsInfo, rpcVerifier } from '../deposits.js';
@@ -41,7 +42,7 @@ const FillBody = z.object({ listingId: z.string().min(1).max(64), amountUsd: Amo
 const WithdrawBody = z.object({ amountUsd: Amount });
 const QuoteQuery = z.object({ amountUsd: z.coerce.number().positive().max(1_000_000), discountBps: z.coerce.number().int().min(0).max(10_000) });
 const PageQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0), discountBps: z.coerce.number().int().min(0).max(10_000).optional() });
-const PrepaidBody = z.object({ wallet: z.string().min(1).max(128), amountUsd: Amount, note: z.string().trim().min(1).max(500), ref: z.string().trim().min(1).max(200).optional() });
+const PrepaidBody = z.object({ wallet: WalletField, amountUsd: Amount, note: z.string().trim().min(1).max(500), ref: z.string().trim().min(1).max(200).optional() });
 const PaidBody = z.object({ txRef: z.string().trim().min(1).max(200).optional(), note: z.string().trim().max(500).optional() }).optional();
 
 const usd = (micros: number) => microsToUsd(micros);
@@ -135,6 +136,8 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     minFillUsd: usd(MIN_FILL_MICROS),
     maxDiscountBps: cfg.maxDiscountBps,
     listingTtlHours: cfg.listingTtlHours,
+    /** Smallest withdrawal of prepaid balance, USD (0 = no minimum): each one is paid by hand. */
+    minWithdrawalUsd: cfg.minWithdrawalUsd,
     settlement: 'prepaid' as const,
     /** The stablecoin buyers deposit and sellers withdraw. Credits stay off chain. */
     settlementSymbol: cfg.settlementSymbol,
@@ -147,7 +150,7 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
   /** Lapse what is due, then how much of the balance may not be sold. */
   const settle = (wallet: string) => {
     expireWallet(ctx.db, wallet, ctx.config.creditExpiry, undefined, ctx.reservations.reserved(walletHold(wallet)));
-    return ctx.config.starterCredits.transferable ? 0 : nonTransferableMicros(ctx.db, wallet);
+    return ctx.config.starterCredits.transferable ? 0 : nonTransferableMicros(ctx.db, wallet, ctx.config.creditExpiry);
   };
   const verifier = () => (ctx.depositVerifier ??= rpcVerifier({ chainId: cfg.deposits.chainId, rpcUrl: ctx.env.MESH_EVM_RPC_URL }));
   const DepositBody = z.object({ txHash: z.string().min(66).max(66) });
@@ -305,7 +308,7 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const { wallet } = sessionOf(req);
     try {
-      const row = requestWithdrawal(ctx.db, { wallet, amountMicros: usdToMicros(parsed.data.amountUsd) });
+      const row = requestWithdrawal(ctx.db, { wallet, amountMicros: usdToMicros(parsed.data.amountUsd), minMicros: usdToMicros(cfg.minWithdrawalUsd) });
       req.log.info({ wallet, withdrawalId: row.id, amountUsd: usd(row.amount_micros) }, 'withdrawal requested');
       // Paid by hand: tell the operator channel now rather than at the next alert check (alerts.ts).
       void ctx.alerts?.notifyWithdrawals().catch((err) => req.log.error({ err }, 'withdrawal announcement failed'));

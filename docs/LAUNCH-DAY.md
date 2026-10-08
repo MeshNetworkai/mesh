@@ -63,8 +63,9 @@ or with cast: `cast send <vault> "setRoute(address,uint8,address,uint24,bytes)" 
 
 ## If something goes wrong
 
-- Sweep reverts, epoch recorded as failed: usually no route or no pool liquidity. Fees stay in the
-  vault. Set the route (above) and the next epoch catches up.
+- Sweep reverts: usually no route or no pool liquidity. The epoch itself still runs; the asset whose
+  swap failed stays in the vault, the gateway logs `sweep_skipped` for it and the `failed_sweep` alert
+  fires (Telegram, Admin → overview). Set the route (above) and the next epoch catches up.
 - Sweeper out of gas: send it ETH. The epoch retries next hour.
 - Wrong fee recipient on Pons: fees accrue in the Pons escrow for whoever is set; fix with
   `transferCreatorFeeRecipient` from the launch wallet, then the vault's `pull()` claims them.
@@ -74,5 +75,14 @@ or with cast: `cast send <vault> "setRoute(address,uint8,address,uint24,bytes)" 
 
 ## Known gap for an NVDA launch
 
-The admin panel's "pending fees" figure shows — for NVDA until a price source is added (the adapter prices
-ETH and USDG only). Sweeps are unaffected: the gateway credits the actual USDG the swap returned.
+The adapter prices ETH and USDG only, so until a price source for NVDA is added:
+
+- The admin panel's "pending fees" figure shows — for NVDA.
+- NVDA fees are swapped **without a slippage floor** (`minOut` 0): there is no price to derive one
+  from. The gateway credits the actual USDG the swap returned, so credits and the reserve always
+  match; what a bad fill would cost is that hour's fees fetching fewer dollars. With about $3M in the
+  NVDA/USDG pool and an hourly sweep the price impact is small. Admin → Token → **Check** shows this
+  as a warning (`quoteToken.price.<address>`); it is expected and does not block the flip.
+
+ETH fees (an ETH-paired launch, `MESH_QUOTE=eth`) are different: they wait for a fresh ETH price and are
+swapped with a 1 % floor (`priceFeed`, `slippageBps`).

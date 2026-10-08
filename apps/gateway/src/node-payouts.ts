@@ -53,7 +53,7 @@ export function payNodeRewards(db: Db, cfg: NodePayoutConfig, opts: { now?: numb
     const total = rows.reduce((a, r) => a + r.v, 0);
     if (rows.length === 0 || total < minMicros) return { rewards: 0, total: 0 };
     ensureWallet(db, wallet, opts.chain ?? 'evm');
-    const ledgerId = addLedgerEntry(db, { wallet, deltaMicros: total, kind: 'node_payout', ref: `node_payout:${cutoff}` });
+    const ledgerId = addLedgerEntry(db, { wallet, deltaMicros: total, kind: 'node_payout', ref: `node_payout:${cutoff}` }, now);
     const stamp = db.prepare(`UPDATE node_rewards SET paid_ledger_id = ? WHERE id = ? AND paid_ledger_id IS NULL`);
     for (const r of rows) stamp.run(ledgerId, r.id);
     return { rewards: rows.length, total };

@@ -537,8 +537,9 @@ export function Docs() {
             <h3 id="reserve">The reserve</h3>
             <ul>
               <li>
-                <b>Swapped at the sweep.</b> Trading fees arrive in ETH. Each {epochWord} the fee vault swaps them to a stablecoin on chain and splits the result: {holderPct} to
-                the credit-pool wallet, {treasuryPct} to the treasury. Credits are minted against the dollars actually received, so the pool does not carry the ETH price.
+                <b>Swapped at the sweep.</b> Trading fees arrive in the asset the token trades against. Each {epochWord} the fee vault swaps them to a stablecoin on chain and splits
+                the result: {holderPct} to the credit-pool wallet, {treasuryPct} to the treasury. Credits are minted against the dollars actually received, so the pool does not carry
+                that asset's price.
               </li>
               <li>
                 <b>Held apart.</b> The credit pool is its own wallet. It pays for the inference credits buy; it is not the treasury and does not fund operations.
@@ -559,9 +560,10 @@ export function Docs() {
             </ul>
             <h3 id="price-feed">When the price feed is stale</h3>
             <p>
-              The swap needs a current ETH price to set its slippage floor. If the price feed is more than an hour old or cannot be read, the gateway leaves the ETH fees where
-              they are, in the launchpad's escrow or our fee vault, and mints no credits for them that {epochWord}. Nothing is lost: the next epoch with a fresh price sweeps
-              them, and they go to the holders of that {epochWord}. No credits are ever minted against a guessed price.
+              For fees that arrive in ETH the swap takes its slippage floor from an ETH price feed. If that feed is more than an hour old or cannot be read, the gateway leaves
+              the ETH fees where they are, in the launchpad's escrow or our fee vault, and mints no credits for them that {epochWord}. Nothing is lost: the next epoch with a
+              fresh price sweeps them, and they go to the holders of that {epochWord}. Fees in an asset the gateway has no price feed for are swapped at the pool's own price.
+              Either way credits are minted only against the dollars a swap actually returned, never against a guessed price.
             </p>
           </div>
         </div>
@@ -699,7 +701,10 @@ export function Docs() {
               ) : null}
               <li>Buyers take any part of the listing. Each fill pays you the discounted price minus the fee, into your prepaid US-dollar balance.</li>
               <li>Cancel any time, or let it expire after {listingDays} days; the remainder returns to your credits.</li>
-              <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in {SETTLE} and marks it done.</li>
+              <li>
+                Withdraw the prepaid balance from the market page{T.marketplace.minWithdrawalUsd > 0 ? `, from ${fmtUsd(T.marketplace.minWithdrawalUsd, 0)} upwards` : ''}. The amount leaves your balance when you ask; during the
+                beta the team pays it out in {SETTLE} and marks it done.
+              </li>
             </ul>
             <h3>How to buy</h3>
             <ul>

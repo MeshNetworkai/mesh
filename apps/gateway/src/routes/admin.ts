@@ -1,12 +1,12 @@
 import { MockAdapter } from '@mesh/chain-adapter';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { ADMIN_SESSION_TTL_SEC, safeEqual, signAdminSession, signSession } from '../auth.js';
+import { ADMIN_SESSION_TTL_SEC, WalletField, safeEqual, signAdminSession, signSession } from '../auth.js';
 import { admit, admitOldest, betaView, createInviteCodes, listWaitlist, waitlistCounts } from '../beta.js';
 import { adminAudited, adminHeaderToken, authViaOf, clearAdminCookies, markAdminAudited, requireAdmin, setAdminCookies, setSessionCookies, type AppContext } from '../context.js';
-import { nowSec, recordAdminAction } from '../db.js';
+import { nowSec, recordAdminAction, recordError } from '../db.js';
 import { runEpoch } from '../jobs/distribute.js';
-import { runHousekeeping } from '../jobs/housekeeping.js';
+import { runHousekeeping, type HousekeepingResult } from '../jobs/housekeeping.js';
 import { addLedgerEntry, balanceMicros, ensureWallet, treasuryBalanceMicros } from '../ledger.js';
 import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
@@ -16,13 +16,13 @@ import { chainRoutes } from './chain.js';
 import { getNode } from './nodes.js';
 
 const FakeFeesBody = z.object({ amountUsd: z.number().positive() });
-const StarterItem = z.object({ wallet: z.string().min(1).max(128), amountUsd: z.number().positive().max(10_000) });
+const StarterItem = z.object({ wallet: WalletField, amountUsd: z.number().positive().max(10_000) });
 const StarterBatchBody = z.object({ items: z.array(StarterItem).min(1).max(500), note: z.string().max(200).optional() });
 const RunEpochBody = z.object({ epochStart: z.number().int().nonnegative().optional() }).optional();
-const DevLoginBody = z.object({ wallet: z.string().min(1).max(128), chain: z.enum(['solana', 'evm']).optional() });
+const DevLoginBody = z.object({ wallet: WalletField, chain: z.enum(['solana', 'evm']).optional() });
 const InvitesBody = z.object({ count: z.number().int().min(1).max(1000).default(1), uses: z.number().int().min(1).max(10_000).default(1) });
 const AdmitBody = z.object({ n: z.number().int().min(1).max(5000).optional() }).optional();
-const AdmitWalletBody = z.object({ wallet: z.string().min(1).max(128) });
+const AdmitWalletBody = z.object({ wallet: WalletField });
 const WaitlistQuery = z.object({ limit: z.coerce.number().int().min(1).max(5000).default(500), status: z.enum(['waiting', 'invited', 'all']).default('all') });
 const QuarantineBody = z.object({ reason: z.string().min(1).max(200).default('manual') }).optional();
 
@@ -90,12 +90,21 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const parsed = RunEpochBody.safeParse(req.body ?? undefined);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
     const result = await runEpoch(ctx, parsed.data?.epochStart);
-    // Same chores the cron runs after an epoch: lapse credit past its window, read the reserve.
-    const chores = await runHousekeeping(ctx);
-    audit(req, 'run-epoch', { epochStart: result.epochStart, status: result.status, feesUsdMicros: result.feesUsdMicros, holders: result.eligibleHolders, expiredUsdMicros: chores.expiredUsdMicros });
+    // Same chores the cron runs after an epoch: pay node rewards, lapse credit past its window, read the
+    // reserve. The epoch above is already committed, so a chore that fails is logged and reported (as it is
+    // for the cron, index.ts), not turned into a 500 that hides an epoch that did run.
+    let chores: HousekeepingResult | null = null;
+    try {
+      chores = await runHousekeeping(ctx);
+    } catch (err) {
+      req.log.error({ err }, 'housekeeping failed');
+      recordError(ctx.db, { route: 'admin run-epoch housekeeping', status: 500, code: 'housekeeping_failed', message: (err as Error).message ?? String(err) });
+    }
+    audit(req, 'run-epoch', { epochStart: result.epochStart, status: result.status, feesUsdMicros: result.feesUsdMicros, holders: result.eligibleHolders, expiredUsdMicros: chores?.expiredUsdMicros ?? null });
     return {
       ...result,
-      housekeeping: { nodePayoutWallets: chores.nodePayoutWallets, nodePayoutUsd: microsToUsd(chores.nodePayoutUsdMicros), expiredWallets: chores.expiredWallets, expiredUsd: microsToUsd(chores.expiredUsdMicros), reserve: chores.reserveSource, reserveHeldUsd: chores.reserveHeldUsdMicros === null ? null : microsToUsd(chores.reserveHeldUsdMicros), sweepWarnings: chores.sweepWarnings },
+      /** Null when the chores failed after the epoch ran (logged as `housekeeping_failed`); they run again with the next epoch. */
+      housekeeping: chores && { nodePayoutWallets: chores.nodePayoutWallets, nodePayoutUsd: microsToUsd(chores.nodePayoutUsdMicros), expiredWallets: chores.expiredWallets, expiredUsd: microsToUsd(chores.expiredUsdMicros), reserve: chores.reserveSource, reserveHeldUsd: chores.reserveHeldUsdMicros === null ? null : microsToUsd(chores.reserveHeldUsdMicros), sweepWarnings: chores.sweepWarnings },
       feesUsd: microsToUsd(result.feesUsdMicros),
       holderPoolUsd: microsToUsd(result.holderPoolUsdMicros),
       treasuryUsd: microsToUsd(result.treasuryUsdMicros),

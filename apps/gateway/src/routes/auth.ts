@@ -1,7 +1,7 @@
 import { verifierFor, type Chain } from '@mesh/chain-adapter';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { CSRF_COOKIE, NONCE_TTL_SEC, SESSION_TTL_SEC, loginMessage, parseLoginMessage, signSession } from '../auth.js';
+import { CSRF_COOKIE, NONCE_TTL_SEC, SESSION_TTL_SEC, WalletField, canonicalWallet, loginMessage, parseLoginMessage, signSession } from '../auth.js';
 import { betaView, inviteRequired, isAdmitted, redeemInvite } from '../beta.js';
 import { clearSessionCookies, cookiesOf, resolveSession, setSessionCookies, type AppContext } from '../context.js';
 import { nowSec } from '../db.js';
@@ -11,9 +11,9 @@ import { maybeGrantStarter } from '../starter.js';
 /** Auth bodies are tiny; anything bigger is abuse. */
 export const SMALL_BODY = 16 * 1024;
 
-const NonceBody = z.object({ wallet: z.string().min(1).max(128) });
+const NonceBody = z.object({ wallet: WalletField });
 const VerifyBody = z.object({
-  wallet: z.string().min(1).max(128),
+  wallet: WalletField,
   signature: z.string().min(1),
   chain: z.enum(['solana', 'evm']).optional(),
   /** Optional: the nonce from /auth/nonce (defaults to the newest live one for the wallet). */
@@ -70,7 +70,7 @@ export async function authRoutes(app: FastifyInstance, ctx: AppContext) {
       const fields = parseLoginMessage(parsed.data.message);
       if (!fields) return reply.code(400).send({ error: 'bad_message', message: 'message is not a Mesh sign-in message' });
       if (fields.domain !== domain) return reply.code(400).send({ error: 'domain_mismatch', message: `message domain must be ${domain}` });
-      if (fields.wallet !== wallet) return reply.code(400).send({ error: 'wallet_mismatch', message: 'message wallet differs from request wallet' });
+      if (canonicalWallet(fields.wallet) !== wallet) return reply.code(400).send({ error: 'wallet_mismatch', message: 'message wallet differs from request wallet' });
       if (nonceHint && fields.nonce !== nonceHint) return reply.code(400).send({ error: 'nonce_mismatch' });
       nonceHint = fields.nonce;
     }

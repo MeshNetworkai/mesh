@@ -299,11 +299,16 @@ export const TokenomicsSchema = z
         /** Open listings expire (escrow returns to the seller) after this many hours. */
         listingTtlHours: z.number().int().positive().default(168),
         /**
+         * Smallest withdrawal of prepaid balance, USD. Every request is announced to the operator and paid by
+         * hand with an on-chain transfer, so a floor keeps dust requests out of that queue. 0 = no minimum.
+         */
+        minWithdrawalUsd: z.number().min(0).default(0),
+        /**
          * The stablecoin the marketplace settles in: what buyers deposit into the prepaid balance and what
          * sellers are paid when they withdraw. Credits themselves never go on chain; only this side does.
          * A name for copy and operator messages; the token's address is in `deposits.tokens`.
          */
-        settlementSymbol: z.string().min(1).max(12).default('USDC'),
+        settlementSymbol: z.string().min(1).max(12).default('USDG'),
         /**
          * Self-serve top-ups: a buyer sends a stablecoin on the EVM chain to `receiver`, pastes the tx hash,
          * the gateway verifies the ERC-20 Transfer on chain and credits the prepaid balance. Off while

@@ -63,9 +63,13 @@ export async function snapshotReserve(ctx: Pick<AppContext, 'db' | 'adapter'>, n
   }
 }
 
-/** Credit wallets can spend now, plus credit escrowed in open marketplace listings (it is owed to a buyer or back to the seller). */
+/**
+ * Credit wallets can spend now, plus credit escrowed in open marketplace listings (it is owed to a buyer or
+ * back to the seller). A wallet that is overdrawn (a request that cost more than was left, a reward clawed
+ * back after it was spent) owes Mesh, not the other way round: it counts as zero, not against the rest.
+ */
 export function creditsOwedMicros(db: Db): { spendable: number; escrowed: number } {
-  const spendable = (db.prepare(`SELECT COALESCE(SUM(delta_usd_micros), 0) AS v FROM credits_ledger`).get() as { v: number }).v;
+  const spendable = (db.prepare(`SELECT COALESCE(SUM(b), 0) AS v FROM (SELECT SUM(delta_usd_micros) AS b FROM credits_ledger GROUP BY wallet) WHERE b > 0`).get() as { v: number }).v;
   const escrowed = (db.prepare(`SELECT COALESCE(SUM(remaining_micros), 0) AS v FROM market_listings WHERE status = 'open'`).get() as { v: number }).v;
   return { spendable, escrowed };
 }

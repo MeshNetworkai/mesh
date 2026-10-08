@@ -441,3 +441,56 @@ Operating guidance:
   (stake-based trust) or remove it from the allowlist and restart. Re-pledging is one signature.
 - Keep `OLLAMA_DEBUG` unset on any `ollama serve` you run yourself; with it the server log contains
   request bodies.
+
+## Session 10: audit of the credit economics (2026-10-08)
+
+A review of everything added for the credit economics (stablecoin reserve, upstream cost, expiry,
+non-transferable starter credit, direct sales, node payouts as credits, withdrawal announcements).
+What it found and what changed:
+
+| # | Finding | Severity | Status |
+| --- | --- | --- | --- |
+| E1 | A wallet was whatever string the client sent, so one EVM address in two letter cases was two accounts, while holders are snapshotted lowercase | High | Fixed |
+| E2 | One asset's sweep failing after another had already been swept failed the epoch and lost the credits for the fees that had moved | High | Fixed |
+| E3 | Starter credit became sellable through usage from before the grant, or when unrelated older credit lapsed | Medium | Fixed |
+| E4 | Withdrawals had no minimum while every request pages the operator and is paid by hand | Medium | Fixed |
+| E5 | `reserve_short` reported itself resolved when the reserve read failed | Medium | Fixed |
+| E6 | Expiry added three ledger scans to every API request, and the hourly sweep rescanned every old wallet | Medium | Fixed |
+| E7 | `POST /admin/run-epoch` answered 500, without an audit row, when a chore failed after the epoch ran | Low | Fixed |
+| E8 | The Telegram sender had no timeout; a hung send held up every alert check | Low | Fixed |
+| E9 | Credits owed netted overdrawn wallets against the rest | Low | Fixed |
+| E10 | A wallet can spend starter credit on network models served by a node of a second wallet it controls; most of it comes back as sellable node-payout credit | Medium | Open (see below) |
+| E11 | With the launch paired against the NVDA token, the rule "an asset without a price is not swept" would have left every fee unswept: the adapter has no price for NVDA | High | Fixed |
+
+Details:
+
+- **E1, one spelling per wallet** (`auth.ts:canonicalWallet`, `WalletField`): every wallet taken from a
+  request (sign-in, node registration, admin tools, the waitlist) and every session token is
+  canonicalised: an EVM address is lowercased, which is how the chain adapter reports holders; a Solana
+  key is case-sensitive and only trimmed. Before this a wallet that signed in checksummed was a
+  different account from the one its distributions were credited to, `requireMinHold` could not find
+  its balance, and an admin pasting a checksummed address topped up an account nobody could open.
+  Migration 22 lowercases the EVM addresses already stored, which merges such accounts (balances are
+  sums over the ledgers); nothing is deleted from a ledger.
+- **E2, sweeps are per asset** (`chain-adapter/pons.ts`): each asset's sweep stands alone. A failure is
+  reported in `SweepDetail.unswept` (logged as `sweep_skipped`, which raises `failed_sweep`) and the
+  asset stays in the vault for the next epoch; what was swept is credited. Only `pull()` still throws.
+- **E3** (`expiry.ts:nonTransferableMicros`): only requests made since the grant count against it, and
+  it is held back until it is used or its own 90 days are up.
+- **E4** (`marketplace.minWithdrawalUsd`, $1 as shipped): smaller requests are refused with
+  `below_minimum` before they reach the queue or the alert channel.
+- **E5** (`alerts.ts:evalReserve`): an `unavailable` reading keeps the alert in the state it had.
+- **E6** (`expiry.ts`): what has lapsed is the balance minus the grants still inside the window, one
+  pass over the wallet's rows; the request path reads its balance from the same pass
+  (`settleExpiry`), and the hourly sweep finds the wallets with lapsed credit in one grouped query.
+- **E11** (`chain-adapter/pons.ts`): in `swap` mode a quote token with no price source is swapped
+  without a slippage floor and credited with the stablecoin the swap returned (`docs/LAUNCH-DAY.md`,
+  "Known gap"). ETH still waits for its feed; `raw` mode still leaves an unpriced asset unswept.
+  `checkPonsConfig` warns about each such token.
+- **E10, open by design:** the self-serve rule (`relay.ts`) only knows the same wallet. Two wallets
+  working together turn non-transferable starter credit into node rewards, which are ordinary
+  credits. What bounds it: starter credit needs a wallet that holds the minimum (`requireMinHold`),
+  is capped (`maxWallets` × `amountUsd`, $1,000 as shipped) and per IP, the node must win the routing,
+  and at most 90 % of what is spent comes back. Lower `starterCredits.maxWallets`, or turn the
+  programme off (`POST /admin/starter/toggle`), if it is abused. Decision for the launch: starter
+  credits stay on and are switched off later if needed.

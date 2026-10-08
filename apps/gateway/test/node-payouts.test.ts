@@ -35,7 +35,8 @@ describe('shipped config', () => {
     // a config written before these keys existed keeps the old behaviour: rewards stay a counter
     const old = parseTokenomics({ ...testConfig, nodeRewards: { usdPerMTokens: 0.06 }, marketplace: { enabled: true } });
     expect(old.nodeRewards.payout.enabled).toBe(false);
-    expect(old.marketplace.settlementSymbol).toBe('USDC');
+    expect(old.marketplace.settlementSymbol).toBe('USDG');
+    expect(old.marketplace.minWithdrawalUsd).toBe(0);
   });
 });
 

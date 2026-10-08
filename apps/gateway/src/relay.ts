@@ -538,7 +538,8 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
   };
   /** The upstream's own usage chunk, with `cost` set to what the wallet is charged (see `reprice`). Anything else passes through. */
   const repriceLine = (line: string): string => {
-    if (!reprice || !line.startsWith('data:') || !line.includes('"usage"')) return line;
+    // Content chunks that only carry `"usage":null` are not worth a second parse.
+    if (!reprice || !line.startsWith('data:') || !line.includes('"usage"') || line.includes('"usage":null')) return line;
     const eol = line.endsWith('\r\n') ? '\r\n' : line.endsWith('\n') ? '\n' : '';
     try {
       const obj = JSON.parse(line.slice(5).trim()) as { usage?: unknown; model?: unknown };
@@ -567,7 +568,7 @@ export async function relayChat(ctx: AppContext, req: FastifyRequest, reply: Fas
       out += repriceLine(line);
     }
     if (flush) {
-      out += pending;
+      out += repriceLine(pending);
       pending = '';
     }
     await writeOut(out);

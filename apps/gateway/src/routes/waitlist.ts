@@ -1,12 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { canonicalWallet } from '../auth.js';
 import { EMAIL_RE, betaView, joinWaitlist } from '../beta.js';
 import type { AppContext } from '../context.js';
 import { SMALL_BODY, fixedWindowLimiter } from './auth.js';
 
 const JoinBody = z
   .object({
-    wallet: z.string().trim().min(8).max(128).optional(),
+    wallet: z.string().trim().min(8).max(128).transform(canonicalWallet).optional(),
     email: z.string().trim().max(254).regex(EMAIL_RE, 'not an e-mail address').optional(),
   })
   .refine((b) => Boolean(b.wallet || b.email), { message: 'wallet or email is required' });

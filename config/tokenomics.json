@@ -113,6 +113,8 @@
     "minListingUsd": 1,
     "maxDiscountBps": 7000,
     "listingTtlHours": 168,
+    "minWithdrawalUsd": 1,
+    "_comment_minWithdrawalUsd": "Smallest withdrawal of prepaid balance. Each request pages the operator and is paid by hand on chain, so dust requests are refused.",
     "settlementSymbol": "USDG",
     "_comment_settlementSymbol": "Credits are sold for USDG: buyers deposit USDG into their prepaid balance, sellers withdraw USDG. Credits stay off chain; only the USDG moves on chain.",
     "deposits": {

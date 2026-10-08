@@ -189,6 +189,26 @@ describe('credit expiry over HTTP', () => {
   });
 });
 
+describe('POST /admin/run-epoch when a chore fails', () => {
+  it('the epoch that already ran is reported and audited; the failure is logged, not turned into a 500', async () => {
+    const { app } = await testServer({});
+    try {
+      Object.defineProperty(app.ctx.adapter, 'lastSweep', {
+        get() {
+          throw new Error('boom');
+        },
+      });
+      const epoch = await app.inject({ method: 'POST', url: '/admin/run-epoch', headers: ADMIN, payload: {} });
+      expect(epoch.statusCode).toBe(200);
+      expect(epoch.json().housekeeping).toBeNull();
+      expect(app.ctx.db.prepare(`SELECT code, message FROM errors_log ORDER BY id DESC LIMIT 1`).get()).toEqual({ code: 'housekeeping_failed', message: 'boom' });
+      expect((app.ctx.db.prepare(`SELECT action FROM admin_actions ORDER BY id DESC LIMIT 1`).get() as { action: string }).action).toBe('run-epoch');
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('starter credit cannot be sold', () => {
   const apps: App[] = [];
   afterEach(async () => {
@@ -197,16 +217,32 @@ describe('starter credit cannot be sold', () => {
 
   it('nonTransferableMicros: what is left of the grant after requests; earned credit is never held back', () => {
     const db = memDb();
+    const held = (wallet: string) => nonTransferableMicros(db, wallet, EXPIRY, NOW + 10);
     row(db, 'alice', 2, 'starter', NOW, 'starter:auto');
-    expect(nonTransferableMicros(db, 'alice')).toBe(2 * M);
+    expect(held('alice')).toBe(2 * M);
     row(db, 'alice', 5, 'distribution', NOW + 1, 'epoch:1');
-    expect(nonTransferableMicros(db, 'alice')).toBe(2 * M);
+    expect(held('alice')).toBe(2 * M);
     row(db, 'alice', -0.5, 'usage', NOW + 2); // requests spend the starter grant first
-    expect(nonTransferableMicros(db, 'alice')).toBe(1.5 * M);
+    expect(held('alice')).toBe(1.5 * M);
     row(db, 'alice', -3, 'usage', NOW + 3); // grant used up
-    expect(nonTransferableMicros(db, 'alice')).toBe(0);
+    expect(held('alice')).toBe(0);
     row(db, 'bob', 9, 'distribution', NOW, 'epoch:1');
-    expect(nonTransferableMicros(db, 'bob')).toBe(0);
+    expect(held('bob')).toBe(0);
+  });
+
+  it('requests made before the grant and other credit lapsing do not unlock it; its own date does', () => {
+    const db = memDb();
+    row(db, 'carol', 10, 'distribution', NOW - 80 * DAY, 'epoch:1');
+    row(db, 'carol', -5, 'usage', NOW - 70 * DAY); // spent before any starter credit existed
+    row(db, 'carol', 2, 'starter', NOW, 'admin');
+    expect(nonTransferableMicros(db, 'carol', EXPIRY, NOW + 1)).toBe(2 * M);
+    // the old distribution lapses: the starter credit is still held back
+    expect(expireWallet(db, 'carol', EXPIRY, NOW + 11 * DAY)).toBe(5 * M);
+    expect(nonTransferableMicros(db, 'carol', EXPIRY, NOW + 11 * DAY)).toBe(2 * M);
+    // 90 days after the grant nothing of it is left to hold back
+    expect(nonTransferableMicros(db, 'carol', EXPIRY, NOW + 90 * DAY)).toBe(0);
+    // with expiry off the grant never ages out
+    expect(nonTransferableMicros(db, 'carol', { enabled: false, days: 90 }, NOW + 900 * DAY)).toBe(2 * M);
   });
 
   it('a wallet can spend its starter credit but list only what it earned or bought', async () => {
@@ -385,6 +421,15 @@ describe('the published reserve', () => {
   });
 });
 
+describe('credits owed', () => {
+  it('an overdrawn wallet counts as zero, not against what the others are owed', () => {
+    const db = memDb();
+    grantCredit(db, 'alice', 100);
+    row(db, 'bob', -5, 'usage', NOW); // a request that cost more than bob had left
+    expect(reserveView({ db, config: testConfig })).toMatchObject({ creditsSpendableUsd: 100, requiredUsd: 100 });
+  });
+});
+
 describe('reserve_short alert', () => {
   it('fires when the pool holds less than the credits owed, stays silent without a reading, resolves when topped up', async () => {
     const db = memDb();
@@ -412,7 +457,15 @@ describe('reserve_short alert', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatch(/ALERT reserve_short: credit pool holds \$60\.00 against \$100\.00 of credits owed \(60\.0 %, min 100 %\)/);
 
-    await snapshotReserve({ db, adapter: pool(100) }, NOW + 2);
+    // a failed read says nothing about the reserve: the alert is neither cleared nor raised again
+    const down = Object.assign(new MockAdapter({ chain: 'evm' }), { reserve: async (): Promise<ReserveReading> => Promise.reject(new Error('rpc down')) });
+    await snapshotReserve({ db, adapter: down }, NOW + 2);
+    now += 60_000;
+    await mon.check();
+    expect(messages).toHaveLength(1);
+    expect(mon.status().alerts.find((a) => a.key === 'reserve_short')).toMatchObject({ firing: true });
+
+    await snapshotReserve({ db, adapter: pool(100) }, NOW + 3);
     now += 60_000;
     await mon.check();
     expect(messages).toHaveLength(2);
@@ -427,7 +480,8 @@ describe('a sweep that leaves fees behind is not silent', () => {
     const messages: string[] = [];
     let now = NOW * 1000;
     const mon = new AlertMonitor({ db, config: { epochSeconds: 3600 }, env: { EPOCH_CRON: 'off', MESH_DB_PATH: ':memory:' }, sender: { name: 'fake', send: async (t) => void messages.push(t) }, now: () => now, dbSize: () => null, disk: () => null });
-    const sweep = { warnings: ['chainlink answer is 7200s old (max 3600): ETH fees stay unswept until the feed is fresh', 'no fresh price for 0x0000000000000000000000000000000000000000: 1.5 left unswept, no credits minted for it this epoch'] };
+    const warnings = ['chainlink answer is 7200s old (max 3600): ETH fees stay unswept until the feed is fresh', 'no fresh price for 0x0000000000000000000000000000000000000000: 1.5 left unswept, no credits minted for it this epoch'];
+    const sweep = { warnings, unswept: [warnings[1]] };
     const adapter = Object.assign(new MockAdapter({ chain: 'evm' }), { lastSweep: sweep });
 
     expect(logSweepWarnings({ db, adapter })).toEqual([sweep.warnings[1]]);
@@ -441,7 +495,7 @@ describe('a sweep that leaves fees behind is not silent', () => {
     expect(messages[0]).toMatch(/ALERT failed_sweep: 1 failed sweep\(s\).*left unswept/);
 
     // a clean sweep, or the mock adapter (no lastSweep), logs nothing
-    expect(logSweepWarnings({ db, adapter: Object.assign(new MockAdapter({ chain: 'evm' }), { lastSweep: { warnings: [] } }) })).toEqual([]);
+    expect(logSweepWarnings({ db, adapter: Object.assign(new MockAdapter({ chain: 'evm' }), { lastSweep: { warnings: [], unswept: [] } }) })).toEqual([]);
     expect(logSweepWarnings({ db, adapter: new MockAdapter({ chain: 'evm' }) })).toEqual([]);
   });
 });

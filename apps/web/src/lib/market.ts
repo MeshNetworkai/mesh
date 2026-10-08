@@ -13,6 +13,8 @@ export interface MarketConfig {
   minFillUsd: number;
   maxDiscountBps: number;
   listingTtlHours: number;
+  /** Smallest withdrawal of prepaid balance, USD (0 or absent = no minimum). */
+  minWithdrawalUsd?: number;
   settlement: 'prepaid';
   /** Self-serve top-ups (docs/MARKETPLACE.md "Paying in"); `enabled` false until the stablecoin + receiver are configured. */
   deposits?: DepositsInfo;

@@ -27,13 +27,14 @@ export function ensureWallet(db: Db, wallet: string, chain: string): void {
 export function addLedgerEntry(
   db: Db,
   entry: { wallet: string; deltaMicros: number; kind: LedgerKind; ref?: string | null },
+  ts = nowSec(),
 ): number {
   if (!Number.isInteger(entry.deltaMicros)) throw new Error('deltaMicros must be an integer');
   const res = db
     .prepare(
       `INSERT INTO credits_ledger (wallet, delta_usd_micros, kind, ref, created_at) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run(entry.wallet, entry.deltaMicros, entry.kind, entry.ref ?? null, nowSec());
+    .run(entry.wallet, entry.deltaMicros, entry.kind, entry.ref ?? null, ts);
   return Number(res.lastInsertRowid);
 }
 

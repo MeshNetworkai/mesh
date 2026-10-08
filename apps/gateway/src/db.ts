@@ -4,6 +4,13 @@ import { dirname } from 'node:path';
 
 export type Db = Database.Database;
 
+/** SQL test: `col` holds an EVM address that is not all lowercase (checksummed, or upper-case as some wallets report it). */
+const mixedCaseEvm = (col: string) => `length(${col}) = 42 AND substr(${col}, 1, 2) IN ('0x', '0X') AND ${col} != lower(${col})`;
+
+/** Lowercase the EVM addresses in `table.col`. `orIgnore` where the column is part of a unique key: a row whose lowercase twin exists is left alone. */
+const lowercaseWallets = (table: string, col = 'wallet', orIgnore = false) =>
+  `UPDATE ${orIgnore ? 'OR IGNORE ' : ''}${table} SET ${col} = lower(${col}) WHERE ${mixedCaseEvm(col)};`;
+
 const MIGRATIONS: Array<{ id: number; sql: string }> = [
   {
     id: 1,
@@ -656,6 +663,30 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     ALTER TABLE node_rewards ADD COLUMN paid_ledger_id INTEGER;
     CREATE INDEX IF NOT EXISTS node_rewards_unpaid ON node_rewards(wallet, created_at) WHERE paid_ledger_id IS NULL;
     `,
+  },
+  {
+    // One spelling per wallet (auth.ts `canonicalWallet`). An EVM address is the same account in any letter
+    // case, but it used to be stored exactly as the client sent it, while the chain adapter reports holders
+    // lowercase: a wallet that signed in checksummed, or that an admin pasted checksummed, was a different
+    // account from the one its distributions were credited to. Every stored EVM address is lowercased here,
+    // which merges such accounts (balances are sums over the ledgers). Nothing is deleted from a ledger: a
+    // row that cannot move because its lowercase twin already holds the same unique key stays as it is.
+    id: 22,
+    sql: [
+      // wallets is the parent of api_keys (foreign key): add the lowercase row, move the keys, drop the old row.
+      `INSERT OR IGNORE INTO wallets (wallet, chain, created_at, last_login)
+         SELECT lower(wallet), chain, created_at, last_login FROM wallets WHERE ${mixedCaseEvm('wallet')};`,
+      lowercaseWallets('api_keys'),
+      `DELETE FROM wallets WHERE ${mixedCaseEvm('wallet')};`,
+      ...['auth_nonces', 'requests_log', 'nodes', 'jobs', 'node_rewards', 'node_link_codes', 'prepaid_ledger', 'withdrawal_requests', 'usage_share_log', 'market_deposits'].map((t) => lowercaseWallets(t)),
+      lowercaseWallets('jobs', 'requester_wallet'),
+      lowercaseWallets('market_listings', 'seller_wallet'),
+      lowercaseWallets('market_fills', 'buyer_wallet'),
+      lowercaseWallets('market_fills', 'seller_wallet'),
+      lowercaseWallets('referrals', 'referrer'),
+      // The wallet is part of a unique key in these.
+      ...['credits_ledger', 'points_ledger', 'holder_age', 'admissions', 'referral_codes', 'referrals', 'starter_grants', 'waitlist'].map((t) => lowercaseWallets(t, 'wallet', true)),
+    ].join('\n'),
   },
 ];
 

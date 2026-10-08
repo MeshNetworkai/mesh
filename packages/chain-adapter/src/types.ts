@@ -107,4 +107,10 @@ export interface SweepDetail {
   priceUsd: number;
   dryRun: boolean;
   txIds: string[];
+  /**
+   * Fees that were found and left where they are, one message per asset: no fresh price to value them, or
+   * the sweep of that asset failed. Nothing was credited for them; a later epoch picks them up. The
+   * gateway logs each as `sweep_skipped` (jobs/housekeeping.ts), which raises the failed-sweep alert.
+   */
+  unswept?: string[];
 }

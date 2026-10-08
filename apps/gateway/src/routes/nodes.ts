@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { verifierFor, type Chain } from '@mesh/chain-adapter';
-import { bearer, pledgeMessage, registerMessage, safeEqual, verifySession } from '../auth.js';
+import { WalletField, bearer, pledgeMessage, registerMessage, safeEqual, verifySession } from '../auth.js';
 import { inviteRequired, isAdmitted } from '../beta.js';
 import { nodeVerificationStats } from '../verification.js';
 import { requireSession, resolveSession, sessionOf, type AppContext } from '../context.js';
@@ -57,7 +57,7 @@ interface LinkCodeRow {
 
 const RegisterBody = z.object({
   /** Reward wallet. Optional when `linkCode` is sent (the code carries the wallet). */
-  wallet: z.string().min(1).max(128).optional(),
+  wallet: WalletField.optional(),
   /** One-time code from POST /nodes/link (the wallet signed in the browser); replaces nonce+signature. */
   linkCode: z.string().min(LINK_CODE_LENGTH).max(32).optional(),
   chip: z.string().min(1).max(64).optional(),
@@ -81,7 +81,7 @@ const RegisterBody = z.object({
   chain: z.enum(['solana', 'evm']).optional(),
 });
 const ChallengeBody = z.object({
-  wallet: z.string().min(1).max(128),
+  wallet: WalletField,
   nodeId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).optional(),
 });
 const LinkBody = z.object({
@@ -349,7 +349,7 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
     // strict bucket is keyed on the wallet (retrying "Link a Mac" a dozen times must not lock out the
     // whole NAT); anonymous callers (the CLI's signed flow) stay on the IP key.
     const session = await resolveSession(ctx, req);
-    const proven = session && session.wallet.toLowerCase() === parsed.data.wallet.toLowerCase() ? session.wallet : null;
+    const proven = session && session.wallet === parsed.data.wallet ? session.wallet : null;
     if (strictHit(req, reply, proven)) return reply;
     const issued = ctx.nonces.issue(parsed.data.wallet, registerDomain(domain));
     const message = registerMessage({ domain, uri, wallet: issued.wallet, nonce: issued.nonce, issuedAt: issued.issuedAt, expiresAt: issued.expiresAt, nodeId: parsed.data.nodeId ?? null });

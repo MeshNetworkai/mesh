@@ -1,8 +1,9 @@
 import { MockAdapter } from '@mesh/chain-adapter';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NONCE_TTL_SEC, NonceStore, loginMessage, parseLoginMessage, verifySession } from '../src/auth.js';
-import { memDb, testServer } from './helpers.js';
+import { NONCE_TTL_SEC, NonceStore, canonicalWallet, loginMessage, parseLoginMessage, signSession, verifySession } from '../src/auth.js';
+import { prepaidBalanceMicros } from '../src/market.js';
+import { ADMIN, memDb, testServer } from './helpers.js';
 
 describe('NonceStore (SQLite)', () => {
   it('is single use and expires after 5 minutes', () => {
@@ -100,6 +101,31 @@ describe('/auth flow', () => {
     const ok = await app.inject({ method: 'POST', url: '/auth/verify', payload: { wallet: account.address, signature, chain: 'evm', message: n.json().message } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().chain).toBe('evm');
+  });
+
+  it('an EVM address is one account in any letter case: checksummed, lowercase and upper-case all sign in as the lowercase wallet', async () => {
+    const { app } = await testServer();
+    apps.push(app);
+    const account = privateKeyToAccount(generatePrivateKey());
+    const lower = account.address.toLowerCase();
+    expect(account.address).not.toBe(lower); // viem reports the checksummed spelling
+    for (const spelling of [account.address, lower, `0X${account.address.slice(2).toUpperCase()}`]) {
+      const n = (await app.inject({ method: 'POST', url: '/auth/nonce', payload: { wallet: spelling } })).json();
+      expect(n.wallet).toBe(lower);
+      expect(n.message).toContain(lower);
+      const ok = await app.inject({ method: 'POST', url: '/auth/verify', payload: { wallet: spelling, signature: await account.signMessage({ message: n.message }), chain: 'evm', message: n.message } });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().wallet).toBe(lower);
+    }
+    expect(app.ctx.db.prepare(`SELECT wallet FROM wallets`).all()).toEqual([{ wallet: lower }]);
+    // a session issued before wallets were canonical (the old spelling in the token) is the same account
+    const old = await signSession(app.ctx.env.JWT_SECRET, account.address, 'evm');
+    expect((await app.inject({ method: 'GET', url: '/me', headers: { authorization: `Bearer ${old}` } })).json().wallet).toBe(lower);
+    // admin tools that take a pasted address land on the same account too
+    await app.inject({ method: 'POST', url: '/admin/prepaid', headers: ADMIN, payload: { wallet: account.address, amountUsd: 5, note: 'pasted checksummed' } });
+    expect(prepaidBalanceMicros(app.ctx.db, lower)).toBe(5_000_000);
+    // a key that is not an EVM address is case-sensitive and left as it is
+    expect(canonicalWallet(' So1anaKeyIsCaseSensitive1111111111111111111 ')).toBe('So1anaKeyIsCaseSensitive1111111111111111111');
   });
 
   it('rate limits /auth/* per IP', async () => {
