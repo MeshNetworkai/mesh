@@ -1,0 +1,2226 @@
+openapi: 3.1.0
+info:
+  title: Mesh gateway
+  version: 0.1.0
+  summary: Trading fees become hourly AI inference credits, spent through an OpenAI-compatible gateway, served by Macs and frontier providers, and sold on a marketplace when unused.
+  description: |
+    Mesh is a token whose trading fees buy AI inference for the people holding it. A 1.5 % fee on every
+    $MESH trade is swept once an hour; half goes to the network treasury and half is split, pro rata, across
+    every wallet holding at least 1,000 tokens (time-weighted over the hour) as credits denominated in US
+    dollars. A second engine, a share of the margin on paid requests and marketplace fees, pays into the same
+    hourly pool (`GET /stats → usageShareEnabled`).
+    Holders spend credits through this gateway with their own API keys: open models on Macs in the network at
+    a flat price per million tokens, frontier models through zero-data-retention providers at list plus a 6 %
+    markup that covers what the upstream charges Mesh (`GET /v1/models` carries both prices). Credits nobody
+    will use are sold on the credit marketplace (`/market/*`, docs/MARKETPLACE.md), and anyone can buy credits
+    from Mesh at face value with a prepaid balance (`/me/credits/buy`). A holder's first sign-in receives
+    starter credits, which can be spent but not sold.
+
+    What stands behind a credit, and what limits it:
+
+    * **Reserve.** The holder share of every sweep is swapped to a stablecoin on chain and kept in a
+      credit-pool wallet apart from the treasury. `GET /report → totals.reserve` publishes that balance next
+      to the credits owed.
+    * **Expiry.** Every credit lapses 90 days after it landed, oldest first (`GET /me → expiry`,
+      `GET /stats → creditExpiryDays`).
+    * **Price feed.** When the price feed is stale, ETH fees stay unswept and no credits are minted for them
+      until it is fresh.
+
+    Three kinds of credentials appear below:
+
+    * **Session** — a 7-day JWT from `POST /auth/verify`, sent as `Authorization: Bearer <jwt>`. Used by the web app.
+    * **API key** — `mesh_sk_…` from `POST /keys`, sent as `Authorization: Bearer mesh_sk_…`. Used by OpenAI clients on `/v1`.
+    * **Node token** — `mesh_node_…` from `POST /nodes/register`, sent as a bearer by the node agent on `/nodes/{id}/*`.
+
+    Public endpoints need nothing. Nothing on this API stores prompts or replies; the gateway logs model, token
+    counts, cost and latency per request so it can bill you. Credits are a share of fees, not a promise.
+  contact:
+    name: Mesh
+    url: https://app.example.com/docs
+  license:
+    name: MIT
+servers:
+  - url: https://api.example.com
+    description: Production (replace before posting)
+  - url: http://localhost:8787
+    description: Local gateway (`pnpm dev`)
+tags:
+  - name: Public
+    description: No credentials. Everything a holder, a trader or a journalist can check.
+  - name: Auth
+    description: Wallet sign-in. The wallet signs a short message; the gateway returns a session JWT.
+  - name: Account
+    description: Session endpoints for the signed-in wallet.
+  - name: Keys
+    description: API keys for `/v1`. All keys spend from one wallet balance.
+  - name: Inference
+    description: OpenAI-compatible endpoints. Point any OpenAI SDK at `/v1`.
+  - name: Nodes
+    description: The Mac network. Registration, link codes, and the job protocol used by `mesh-node`.
+  - name: Market
+    description: Credit marketplace. Holders sell unused credits at a discount; buyers pay the discounted price from a prepaid USD balance and receive the credits at face value. Mesh keeps 2.5% of the price, half to the next hourly distribution, half to the treasury. See docs/MARKETPLACE.md.
+  - name: Credits
+    description: Buy credits from Mesh at face value with a prepaid USD balance. The payment backs the credit 1:1; this is the route to credits that needs no token and no seller on the marketplace. See docs/PRICING.md.
+  - name: Admin
+    description: Operator endpoints (`x-admin-token` or the admin cookie from `POST /admin/login`). Every call is audited.
+security: []
+paths:
+  /status:
+    get:
+      summary: Public status page data — verdict, components, hourly error counts (codes only), anonymised fleet
+      tags: [Public]
+      responses:
+        '200': { description: Operational or degraded }
+        '503': { description: Down (same body) }
+  /health:
+    get:
+      tags: [Public]
+      summary: Liveness and configuration summary
+      operationId: getHealth
+      responses:
+        '200':
+          description: Gateway is up and the database answers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example:
+                ok: true
+                db: ok
+                adapter: mock
+                chain: solana
+                upstream: openrouter
+                upstreamMode: live
+                epochCron: '0 * * * *'
+                lastEpoch: { epochStart: 1759485600, status: complete, ageSec: 1420 }
+                geoBlock: [AE, US, GB]
+                time: 1759487020
+        '503':
+          description: 'Database check failed. Same body with `ok: false`.'
+  /stats:
+    get:
+      tags: [Public]
+      summary: Network totals, last epoch and 24 hourly buckets
+      description: Cached for `STATS_CACHE_MS` (10 s by default); `cache-control` and `x-cache-age-ms` say how old the body is.
+      operationId: getStats
+      responses:
+        '200':
+          description: Current stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+              example:
+                token: { name: Mesh, ticker: MESH, chain: solana, tradeFeeBps: 150, holderShareBps: 5000, treasuryShareBps: 5000, minHoldTokens: 1000, epochSeconds: 3600, description: 'Trading fees buy AI inference for holders, every hour.', website: 'https://mesh.local' }
+                totalFeesUsd: 1842.3
+                creditsDistributedUsd: 921.15
+                creditsUsedUsd: 412.08
+                epochsRun: 96
+                lastEpoch: { epochStart: 1759485600, epochEnd: 1759489200, eligibleHolders: 1284, feesUsd: 412.8, status: complete }
+                holdersEligibleLastEpoch: 1284
+                feesThisEpochUsd: 38.2
+                requestsLast24h: 5120
+                spendLast24hUsd: 4.26
+                nodesOnline: 37
+                servedByNetworkPercent: 71.2
+                servedByNetwork24h: 3645
+                jobs24h: 3702
+                networkTokens24h: 18200000
+                networkPricePerMTokens: 0.08
+                networkSavingsUsd24h: 9.87
+                showSavings: true
+                pointsEnabled: false
+                nodeRewardUsdPerMTokens: 0.06
+                starterGrants: { enabled: true, amountUsd: 2, granted: 212, remaining: 288 }
+                series24h:
+                  - { hour: 1759402800, feesUsd: 14.2, creditsDistributedUsd: 7.1, requests: 210, spendUsd: 0.17 }
+                epochSeconds: 3600
+                upstream: openrouter
+                generatedAt: 1759487020
+  /epochs:
+    get:
+      tags: [Public]
+      summary: Epoch history, newest first
+      description: Every hour is listed, including hours with no trades. The fee transaction id is not exposed.
+      operationId: listEpochs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 48 }
+      responses:
+        '200':
+          description: Epochs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [epochs, total, limit, epochSeconds, generatedAt]
+                properties:
+                  epochs: { type: array, items: { $ref: '#/components/schemas/Epoch' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  epochSeconds: { type: integer }
+                  generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+              example:
+                epochs:
+                  - { epochStart: 1759485600, epochEnd: 1759489200, feesUsd: 412.8, holderPoolUsd: 206.4, treasuryUsd: 206.4, eligibleHolders: 1284, status: complete, createdAt: 1759489201 }
+                  - { epochStart: 1759482000, epochEnd: 1759485600, feesUsd: 0, holderPoolUsd: 0, treasuryUsd: 0, eligibleHolders: 1281, status: complete, createdAt: 1759485601 }
+                total: 96
+                limit: 48
+                epochSeconds: 3600
+                generatedAt: 1759487020
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /report:
+    get:
+      tags: [Public]
+      summary: Treasury report
+      description: Everything is derived from the ledgers and reproducible from the database. `method` explains the attribution rules.
+      operationId: getReport
+      responses:
+        '200':
+          description: Totals, 7d / 30d windows, twelve ISO weeks and the treasury balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+              example:
+                token: { name: Mesh, ticker: MESH, chain: solana, holderShareBps: 5000, treasuryShareBps: 5000 }
+                totals:
+                  feesInUsd: 1842.3
+                  creditsOutUsd: 921.15
+                  starterCreditsUsd: 25
+                  creditsUsedUsd: 412.08
+                  nodeRewardsUsd: 1.09
+                  treasuryInUsd: 921.15
+                  requests: 61200
+                  servedByNetwork: 43500
+                  servedByOpenRouter: 17700
+                  servedByNetworkPercent: 71.08
+                  epochs: 96
+                  completeEpochs: 96
+                  creditsOutstandingUsd: 534.07
+                  walletsWithCredits: 1312
+                  treasury: { feeShareUsd: 921.15, nodeRewardAccrualUsd: 1.09, buybackUsd: 0, opsUsd: 0, otherUsd: 0, balanceUsd: 920.06 }
+                last7d: { feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                last30d: { feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                byWeek:
+                  - { isoWeek: 2026-W40, start: 1759104000, end: 1759708800, current: true, feesInUsd: 1842.3, creditsOutUsd: 921.15, starterCreditsUsd: 25, creditsUsedUsd: 412.08, nodeRewardsUsd: 1.09, treasuryInUsd: 921.15, requests: 61200, servedByNetwork: 43500, servedByOpenRouter: 17700, servedByNetworkPercent: 71.08, epochs: 96, completeEpochs: 96 }
+                feesIn: 1842.3
+                creditsOut: 921.15
+                nodeRewards: 1.09
+                treasuryBalanceUsd: 920.06
+                servedByNetworkPercent: 71.08
+                epochsRun: 96
+                holdingAge: { enabled: false, maxDays: 30, minMultiplier: 1, maxMultiplier: 2 }
+                method:
+                  credits: Credits are a share of trading fees already collected, converted 1:1 to USD-denominated inference credits. They are not a yield, a promise, or a claim on future fees.
+                  attribution: Fees and the treasury share are booked to the ISO week (UTC) of the epoch window that earned them; credits out follow their epoch; usage, starter credits and node rewards follow the time they happened.
+                  treasury: treasuryBalanceUsd = treasury share received − node rewards accrued − buybacks − ops, from the treasury ledger.
+                  network: servedByNetworkPercent = requests served by a Mesh node ÷ all requests in the period.
+                lastUpdated: 1759489201
+                generatedAt: 1759487020
+  /report/weekly/{isoWeek}:
+    get:
+      tags: [Public]
+      summary: One ISO week in detail
+      operationId: getWeeklyReport
+      parameters:
+        - name: isoWeek
+          in: path
+          required: true
+          description: ISO 8601 week, Monday-based, UTC.
+          schema: { type: string, pattern: '^\d{4}-W\d{2}$', example: 2026-W40 }
+      responses:
+        '200':
+          description: Week totals, seven daily buckets and every epoch in the week.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeeklyReport' }
+              example:
+                isoWeek: 2026-W40
+                start: 1759104000
+                end: 1759708800
+                current: true
+                feesInUsd: 1842.3
+                creditsOutUsd: 921.15
+                starterCreditsUsd: 25
+                creditsUsedUsd: 412.08
+                nodeRewardsUsd: 1.09
+                treasuryInUsd: 921.15
+                requests: 61200
+                servedByNetwork: 43500
+                servedByOpenRouter: 17700
+                servedByNetworkPercent: 71.08
+                epochs: 96
+                completeEpochs: 96
+                days:
+                  - { day: '2026-09-28', start: 1759104000, end: 1759190400, feesInUsd: 240.1, creditsOutUsd: 120.05, starterCreditsUsd: 0, creditsUsedUsd: 51.2, nodeRewardsUsd: 0.14, treasuryInUsd: 120.05, requests: 8100, servedByNetwork: 5900, servedByOpenRouter: 2200, servedByNetworkPercent: 72.84, epochs: 24, completeEpochs: 24 }
+                epochDetails:
+                  - { epochStart: 1759104000, epochEnd: 1759107600, feesUsd: 9.8, holderPoolUsd: 4.9, treasuryUsd: 4.9, eligibleHolders: 1201, status: complete, createdAt: 1759107601 }
+                previous: 2026-W39
+                next: null
+                method: { credits: '…', attribution: '…', treasury: '…', network: '…' }
+                generatedAt: 1759487020
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /nodes:
+    get:
+      tags: [Public, Nodes]
+      summary: Network summary
+      description: Counts and model coverage of the Macs online right now. No wallets, no tokens, no node ids. Cached for `STATS_CACHE_MS` (10 s) like `/stats`; `x-cache-age-ms` says how old the body is.
+      operationId: getNodesSummary
+      responses:
+        '200':
+          description: Summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodesSummary' }
+              example:
+                online: 37
+                total: 52
+                busy: 9
+                idle: 28
+                totalRamGb: 1184
+                chips: { M2 Pro: 12, M3 Max: 9, M1: 16 }
+                models: { 'llama3.1:8b': 37, 'qwen2.5:14b': 11 }
+                jobs24h: 3702
+                servedByNetwork24h: 3645
+                tokens24h: 18200000
+                servedByNetworkPercent: 71.2
+                offlineAfterSec: 60
+                heartbeatEverySec: 20
+  /openapi.json:
+    get:
+      tags: [Public]
+      summary: This document
+      operationId: getOpenApi
+      responses:
+        '200':
+          description: The OpenAPI 3.1 description of this gateway, as JSON.
+          content:
+            application/json:
+              schema: { type: object }
+
+  /auth/nonce:
+    post:
+      tags: [Auth]
+      summary: Issue a sign-in message
+      description: |
+        Returns a SIWE / SIWS-style message for the wallet to sign. The nonce is single-use and expires in 5 minutes.
+        Sign `message` exactly as returned, then call `POST /auth/verify`. Rate limited per IP (20/min by default).
+
+        An EVM address is one account in any letter case: send it lowercase, checksummed or upper-case and
+        the gateway uses the lowercase spelling everywhere (the returned `wallet`, the message, the session
+        and every ledger). A Solana key is case-sensitive and used as sent.
+      operationId: authNonce
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet]
+              properties:
+                wallet: { type: string, maxLength: 128, description: 'Base58 (Solana) or 0x address (EVM, any letter case).' }
+            example: { wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k }
+      responses:
+        '200':
+          description: Message to sign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallet, nonce, domain, issuedAt, expiresAt, expiresInSec, message]
+                properties:
+                  wallet: { type: string }
+                  nonce: { type: string }
+                  domain: { type: string }
+                  issuedAt: { type: string, format: date-time }
+                  expiresAt: { type: string, format: date-time }
+                  expiresInSec: { type: integer }
+                  message: { type: string, description: The exact text the wallet must sign. }
+              example:
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                nonce: 7f3a2c91e4b8d0f6
+                domain: app.example.com
+                issuedAt: '2026-10-03T09:00:00.000Z'
+                expiresAt: '2026-10-03T09:05:00.000Z'
+                expiresInSec: 300
+                message: "app.example.com wants you to sign in with your wallet:\n9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k\n\nSign in to Mesh.\n\nURI: https://app.example.com\nNonce: 7f3a2c91e4b8d0f6\nIssued At: 2026-10-03T09:00:00.000Z\nExpiration Time: 2026-10-03T09:05:00.000Z"
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/verify:
+    post:
+      tags: [Auth]
+      summary: Exchange a signature for a session
+      description: Verifies the ed25519 (Solana) or EIP-191 (EVM) signature over the issued message and returns a 7-day session JWT.
+      operationId: authVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet, signature]
+              properties:
+                wallet: { type: string }
+                signature: { type: string, description: Base58 (Solana) or 0x hex (EVM) signature over `message`. }
+                chain: { type: string, enum: [solana, evm], description: Defaults to the gateway's configured chain. }
+                nonce: { type: string, description: Optional; defaults to the newest live nonce for the wallet. }
+                message: { type: string, maxLength: 2000, description: Optional echo of the signed message for precise error messages. }
+                invite: { type: string, maxLength: 64, description: 'Beta: invite code for a wallet that has never been admitted (`403 invite_required` says when one is needed). Consumed once; the wallet stays admitted.' }
+            example:
+              wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+              signature: 3xT1…Qk9b
+              chain: solana
+              nonce: 7f3a2c91e4b8d0f6
+      responses:
+        '200':
+          description: Session token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+              example: { token: eyJhbGciOiJIUzI1NiJ9…, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, chain: solana, expiresIn: 7d, expiresInSec: 604800 }
+        '400':
+          description: '`nonce_missing` (expired, used or unknown), `domain_mismatch`, `wallet_mismatch`, `message_mismatch` or `bad_request`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: nonce_missing, message: 'nonce missing, expired (5 min) or already used; request a new one' }
+        '401':
+          description: '`bad_signature`: the signature does not match the issued message.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: 'Public beta: `invite_required` (the signature is fine but this wallet has not been admitted; retry with `invite`, or join `POST /waitlist`) or `invite_invalid` (`reason`: `invalid` | `exhausted`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: invite_required, message: 'Mesh is in beta: this wallet needs an invite code to sign in. Join the waitlist or enter your code.', statusCode: 403, beta: { enabled: true, label: Beta, inviteRequired: true } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /waitlist:
+    post:
+      tags: [Auth]
+      summary: Join the beta waitlist
+      description: Public, rate-limited (5/min per IP). Takes a wallet or an e-mail; idempotent per identifier. `position` is 1-based among entries not yet invited (0 once invited). `404` when the beta is not running.
+      operationId: waitlistJoin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wallet: { type: string, minLength: 8, maxLength: 128 }
+                email: { type: string, format: email }
+            example: { email: you@example.com }
+      responses:
+        '200':
+          description: Listed.
+          content:
+            application/json:
+              example: { ok: true, position: 184, alreadyListed: false, beta: { enabled: true, label: Beta, inviteRequired: true } }
+        '400':
+          description: Neither wallet nor e-mail, or an invalid e-mail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The beta waitlist is closed.
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate a session
+      description: Exchange a valid, unexpired session for a fresh 7-day one.
+      operationId: authRefresh
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Fresh session token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /me:
+    get:
+      tags: [Account]
+      summary: Balance, recent ledger, keys and savings
+      operationId: getMe
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: The signed-in wallet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+              example:
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                chain: solana
+                balance: { usd: 29.999, usdMicros: 29999000 }
+                ledger:
+                  - { id: 912, kind: usage, deltaUsd: -0.001, deltaUsdMicros: -1000, ref: 'req:4411', created_at: 1759486442 }
+                  - { id: 911, kind: distribution, deltaUsd: 30, deltaUsdMicros: 30000000, ref: 'epoch:1759485600', created_at: 1759485601 }
+                apiKeys:
+                  - { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+                savings: { usd24h: 0.0211, usdTotal: 0.184, networkSharePercent: 71.2, multiplier: 8.1, networkSpendUsdTotal: 0.026, networkRequests: 312, requests: 438 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/nodes:
+    get:
+      tags: [Account, Nodes]
+      summary: Nodes registered under this wallet
+      operationId: getMyNodes
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Nodes with the same stats as `GET /nodes/{id}`, plus the wallet's total node earnings and how they are paid.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallet, nodes, earnedUsdTotal, rewardUsdPerMTokens]
+                properties:
+                  wallet: { type: string }
+                  nodes: { type: array, items: { $ref: '#/components/schemas/NodeStats' } }
+                  earnedUsdTotal: { type: number }
+                  rewardUsdPerMTokens: { type: number, example: 0.06 }
+                  payout:
+                    type: object
+                    description: Node rewards are paid as AI credits into this wallet's balance, off chain, once they have been held `holdSeconds`. Sell them on the marketplace to turn them into the settlement stablecoin.
+                    properties:
+                      enabled: { type: boolean }
+                      paidAs: { type: string, enum: [credits] }
+                      holdSeconds: { type: integer, example: 3600 }
+                      minUsd: { type: number, example: 0.01 }
+                      paidUsd: { type: number, description: Paid into the credit balance so far, net of any clawback. }
+                      pendingUsd: { type: number, description: 'Earned and not paid yet: inside the hold, below the minimum, or a quarantined node.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /keys:
+    post:
+      tags: [Keys]
+      summary: Create an API key
+      description: The secret is returned once. Store it; the gateway keeps only a prefix and a hash.
+      operationId: createKey
+      security: [{ session: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 64, description: Shown in the dashboard. }
+                spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: Lifetime cap in USD; null for none. }
+                privacy: { $ref: '#/components/schemas/PrivacyTier', description: 'Default privacy tier for requests with this key (docs/PRIVACY.md); omitted = gateway default (trusted).' }
+            example: { name: laptop, spendLimitUsd: 5 }
+      responses:
+        '201':
+          description: The new key.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, key, prefix, name, spendLimitUsd, note]
+                properties:
+                  id: { type: integer }
+                  key: { type: string, description: 'The secret, shown once.' }
+                  prefix: { type: string }
+                  name: { type: [string, 'null'] }
+                  spendLimitUsd: { type: [number, 'null'] }
+                  privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }] }
+                  note: { type: string }
+              example: { id: 3, key: mesh_sk_7f3a2c91e4b8d0f6a5c3e9b1d7f2a8c4, prefix: mesh_sk_7f3a, name: laptop, spendLimitUsd: 5, privacy: null, note: 'Store this key now; it is not shown again.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      tags: [Keys]
+      summary: List keys
+      operationId: listKeys
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Masked keys, including revoked ones.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+              example:
+                keys:
+                  - { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /keys/{id}:
+    parameters:
+      - $ref: '#/components/parameters/KeyId'
+    patch:
+      tags: [Keys]
+      summary: Rename a key or change its spend limit
+      operationId: updateKey
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: [string, 'null'], maxLength: 64 }
+                spendLimitUsd: { type: [number, 'null'], exclusiveMinimum: 0, description: null clears the cap. }
+                privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }], description: 'Default privacy tier; null clears it (gateway default).' }
+            example: { spendLimitUsd: 10 }
+      responses:
+        '200':
+          description: The updated key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Keys]
+      summary: Revoke a key
+      description: Requests using the key fail immediately with `401 invalid_api_key`.
+      operationId: revokeKey
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  revoked: { type: boolean, const: true }
+              example: { id: 3, revoked: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /keys/{id}/usage:
+    get:
+      tags: [Keys]
+      summary: Usage for one key
+      operationId: getKeyUsage
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          description: Requests, spend and tokens over 24 h, 7 d and all time, plus the top models of the last 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyUsage' }
+              example:
+                key: { id: 3, masked: mesh_sk_7f3a…, name: laptop, label: laptop, spendLimitUsd: 5, spentUsd: 0.412, created_at: 1759400000, revoked: false }
+                last24h: { requests: 120, spendUsd: 0.094, promptTokens: 61000, completionTokens: 22000 }
+                last7d: { requests: 438, spendUsd: 0.412, promptTokens: 240000, completionTokens: 88000 }
+                allTime: { requests: 438, spendUsd: 0.412, promptTokens: 240000, completionTokens: 88000, requestCount: 438 }
+                requestCount: 438
+                topModels:
+                  - { model: meta-llama/llama-3.1-8b-instruct, requests: 390, spendUsd: 0.21 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/models:
+    get:
+      tags: [Inference]
+      summary: The model catalogue, with the Mesh price next to list
+      description: |
+        The curated catalogue (docs/PRICING.md §1), not only what Mesh nodes run: the open models Macs in the
+        network serve (`served: network | both`, also reachable by a short alias such as `llama-3.1-8b`) plus the
+        frontier, fast and open models reached through the upstream with zero-data-retention providers
+        (`served: upstream`). OpenAI shape (`object: list`, `data[].id / object / created / owned_by`) with
+        per-model `displayName`, `vendor`, `tier`, `served`, `listPrice`, `meshPrice`, `privacy`, `online` and
+        `guestAllowed`, and a top-level `pricing` block with the knobs from config. Works without a key (the web
+        picker and the guest chat read it); a bearer that is present must be a valid key. `mesh_network` is kept
+        for pre-catalogue clients.
+      operationId: listModels
+      security: [{ apiKey: [] }, {}]
+      parameters:
+        - in: query
+          name: guest
+          required: false
+          schema: { type: string, enum: ['1'] }
+          description: Narrow the list to what a homepage guest may pick (network models plus `config.guest.allowedTiers`).
+      responses:
+        '200':
+          description: OpenAI-shaped list, network models first, then frontier, fast and open.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data, pricing]
+                properties:
+                  object: { type: string, const: list }
+                  data: { type: array, items: { $ref: '#/components/schemas/Model' } }
+                  pricing:
+                    type: object
+                    required: [networkPricePerMTokens, upstreamDiscountBps, upstreamMarkupBps, guestTiers]
+                    properties:
+                      networkPricePerMTokens: { type: number, description: Flat USD per 1M total tokens when a Mesh node serves the request. }
+                      upstreamDiscountBps: { type: integer, description: Upstream models bill list × (1 − this / 10000). Exclusive with the markup. }
+                      upstreamMarkupBps: { type: integer, description: Upstream models bill list × (1 + this / 10000). Exclusive with the discount. }
+                      guestTiers: { type: array, items: { type: string, enum: [frontier, fast, open] }, description: Tiers a guest may use besides the network models. }
+              example:
+                object: list
+                data:
+                  - { id: meta-llama/llama-3.1-8b-instruct, object: model, created: 0, owned_by: mesh, name: Llama 3.1 8B, displayName: Llama 3.1 8B, vendor: Meta, tier: open, served: both, listPrice: { promptUsdPerM: 0.05, completionUsdPerM: 0.08 }, meshPrice: { promptUsdPerM: 0.08, completionUsdPerM: 0.08 }, privacy: network, online: 3, guestAllowed: true, mesh_network: true }
+                  - { id: anthropic/claude-sonnet-4.5, object: model, created: 0, owned_by: anthropic, name: Claude Sonnet 4.5, displayName: Claude Sonnet 4.5, vendor: Anthropic, tier: frontier, served: upstream, listPrice: { promptUsdPerM: 3, completionUsdPerM: 15 }, meshPrice: { promptUsdPerM: 3.18, completionUsdPerM: 15.9 }, privacy: upstream_zdr, online: 0, guestAllowed: false, mesh_network: false }
+                pricing: { networkPricePerMTokens: 0.08, upstreamDiscountBps: 0, upstreamMarkupBps: 600, guestTiers: [open, fast] }
+        '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
+        '429': { $ref: '#/components/responses/OpenAIRateLimited' }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
+  /v1/chat/completions:
+    post:
+      tags: [Inference]
+      summary: Chat completion
+      description: |
+        Same request and response shape as OpenAI. Set `stream: true` for server-sent events.
+
+        * Privacy tier (docs/PRIVACY.md): `X-Mesh-Privacy: trusted | network | upstream_zdr`, or `mesh.privacy` in the body,
+          else the key's default, else the gateway default (`trusted`). `trusted` = your own Macs, allowlisted operators, and
+          operators with the required stake who signed the pledge; if none is online the request goes to the upstream with
+          zero-data-retention providers only, never to another node. `network` = any eligible node. `upstream_zdr` = skip the network.
+          The machine that runs the model sees the prompt in plaintext whichever tier you pick. Unknown value → `400 invalid_privacy_tier`.
+        * When an idle Mesh node of the right tier advertises the model, it serves the request and you pay the flat network price
+          ($0.08 per million total tokens). The response header `x-mesh-route` is `node:<nodeId>`.
+        * When every such node is online but at capacity, the job is queued behind them for up to `routing.queueWaitMs`
+          (6 s by default) and served by the first node that frees up (`mesh.routeReason: queued_then_node`). If none does,
+          the request goes upstream with `x-mesh-fallback: queue_timeout`; when the queue is already `maxQueueDepthPerNode`
+          deep per node it goes upstream at once with `x-mesh-fallback: queue_full`.
+        * Otherwise the request goes to the upstream provider at list plus the configured markup (`GET /v1/models → pricing`;
+          6 % as shipped, which covers the 5.5 % the upstream charges Mesh) and `x-mesh-route` names the upstream.
+          If a node failed before any output reached you (or no trusted node was online), `x-mesh-fallback` carries the reason.
+        * Every reply says how it was served: `x-mesh-privacy`, `x-mesh-served-by` and `mesh.privacy` / `mesh.servedBy`
+          (`your node`, `trusted node`, `network node`, `upstream (ZDR)`, `upstream`) in the final chunk or the JSON body.
+        * Non-streamed replies set `x-mesh-cost-usd` and `x-mesh-balance-usd`. Streamed replies carry `usage.cost`
+          (USD) in the final chunk, plus `mesh: { route, routeReason, nodeId, privacy, servedBy, listCostUsd, savedUsd }` when a node served it
+          (`routeReason` is `node`, `queued_then_node`, or for upstream replies why: `not_network_model`, `no_online_node`,
+          `no_trusted_node`, `queue_timeout`, `queue_full`, `node_failed`, `upstream_requested`, `network_disabled`).
+        * Failed requests are never charged.
+        * Rate limit (`V1_RATE_LIMIT`, default 120 requests per minute) is counted **per API key** (per client IP for
+          unauthenticated calls), with a fixed one-minute window, across `/v1/models` and `/v1/chat/completions` together.
+          `x-ratelimit-limit` / `x-ratelimit-remaining` are on every reply and `retry-after` on the 429. A single key
+          driving a burst of more than 120 requests a minute gets `429 rate_limited` after the 120th regardless of how
+          many nodes are online: spread load over several keys (one per app or worker) or ask the operator to raise
+          `V1_RATE_LIMIT`. Streams count once, when they start.
+      operationId: createChatCompletion
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+            examples:
+              simple:
+                summary: One message, no stream
+                value:
+                  model: meta-llama/llama-3.1-8b-instruct
+                  messages: [{ role: user, content: Summarise this clause. }]
+              stream:
+                summary: Streaming with usage
+                value:
+                  model: meta-llama/llama-3.1-8b-instruct
+                  messages: [{ role: user, content: Summarise this clause. }]
+                  stream: true
+                  stream_options: { include_usage: true }
+      responses:
+        '200':
+          description: Completion (JSON) or `text/event-stream` when `stream` is true.
+          headers:
+            x-mesh-route: { description: '`node:<nodeId>` or the upstream name.', schema: { type: string } }
+            x-mesh-cost-usd: { description: 'Charged for this request (non-stream only).', schema: { type: string } }
+            x-mesh-balance-usd: { description: 'Balance after this request (non-stream only).', schema: { type: string } }
+            x-mesh-saved-usd: { description: 'List price minus what you paid when a node served it (non-stream only).', schema: { type: string } }
+            x-mesh-fallback: { description: 'Reason a node attempt was abandoned before output (`unclaimed`, `first_token_timeout`, `node_error: …`, `queue_timeout`), or why none was tried (`no_trusted_node`, `queue_full`).', schema: { type: string } }
+            x-mesh-privacy: { description: 'Tier the reply was served under.', schema: { $ref: '#/components/schemas/PrivacyTier' } }
+            x-mesh-served-by: { description: '`your node` (a trusted request served by your own Mac), `trusted node`, `network node`, `upstream (ZDR)` or `upstream`.', schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatCompletion' }
+              example:
+                id: chatcmpl-mesh-m1x2y3
+                object: chat.completion
+                created: 1759487020
+                model: meta-llama/llama-3.1-8b-instruct
+                choices:
+                  - index: 0
+                    message: { role: assistant, content: "Either side can end the agreement with 30 days' notice, but fees already invoiced stay payable." }
+                    finish_reason: stop
+                usage: { prompt_tokens: 212, completion_tokens: 31, total_tokens: 243, cost: 0.0000049 }
+                mesh: { route: node, nodeId: node_7kd2pq9f, chip: M2 Pro, privacy: trusted, servedBy: trusted node, listCostUsd: 0.000039, savedUsd: 0.000034 }
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                data: {"id":"chatcmpl-mesh-m1x2y3","object":"chat.completion.chunk","created":1759487020,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":"Either"},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-mesh-m1x2y3","object":"chat.completion.chunk","created":1759487020,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":212,"completion_tokens":31,"total_tokens":243,"cost":0.0000049},"mesh":{"route":"node","nodeId":"node_7kd2pq9f","listCostUsd":0.000039,"savedUsd":0.000034}}
+
+                data: [DONE]
+        '400':
+          description: '`messages` empty or `model` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '401': { $ref: '#/components/responses/OpenAIUnauthorized' }
+        '402':
+          description: '`insufficient_quota`: credit balance is zero (credit past its 90 days has lapsed and does not count). Hold $MESH through an hour to receive credits, or buy some with `POST /me/credits/buy`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+              example: { error: { message: 'Insufficient Mesh credits (balance $0.000000). Hold $MESH to receive hourly credits, or buy credits on the market page.', type: insufficient_quota, code: insufficient_quota, param: null } }
+        '403':
+          description: '`model_not_allowed`: not in the model policy. `GET /v1/models` lists what is.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '429':
+          description: Per-key rate limit, or `key_spend_limit_reached` when the key's lifetime cap is used up.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+              example: { error: { message: 'This API key reached its spend limit ($5). Raise it with PATCH /keys/3.', type: insufficient_quota, code: key_spend_limit_reached, param: null } }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
+
+  /v1/guest/quota:
+    get:
+      tags: [Inference]
+      summary: Guest chat quota
+      description: |
+        How many free guest messages the caller's IP has left today (`POST /v1/guest/chat`). No auth.
+        `404` when guest chat is disabled on this gateway (`config.guest.enabled`).
+      operationId: getGuestQuota
+      responses:
+        '200':
+          description: Quota for this client IP.
+          headers:
+            x-guest-remaining: { description: Messages left in the current 24h window., schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [remaining, limit, enabled]
+                properties:
+                  remaining: { type: integer }
+                  limit: { type: integer, description: '`config.guest.messagesPerDay`' }
+                  enabled: { type: boolean }
+                  resetAt: { type: integer, description: Unix seconds when the window resets. }
+                  maxTokens: { type: integer }
+                  maxInputChars: { type: integer }
+                  model: { type: string, description: Model used when the request names none. }
+              example: { remaining: 4, limit: 5, enabled: true, resetAt: 1759573420, maxTokens: 400, maxInputChars: 2000, model: llama-3.1-8b }
+        '404':
+          description: Guest chat is disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/guest/chat:
+    post:
+      tags: [Inference]
+      summary: Guest chat (free, no wallet)
+      description: |
+        A few free messages a day for visitors who have not connected a wallet. No auth; the quota is per client IP
+        (`config.guest.messagesPerDay`, default 5 per rolling 24h) and the reply is always `text/event-stream` in exactly
+        the shape `/v1/chat/completions` streams (OpenAI chunks, a final chunk with `usage` + `mesh`, then `data: [DONE]`).
+
+        * Served under the `network` privacy tier: an idle Mesh node first, else the upstream with zero-data-retention providers.
+        * `max_tokens` is capped at `config.guest.maxTokens` (default 400) and the total characters of all `messages[].content`
+          at `config.guest.maxInputChars` (default 2,000). Only `messages`, `model` and `max_tokens` are forwarded.
+        * `model` is optional and defaults to `config.guest.model`; it must pass the model policy.
+        * Nobody is billed: the treasury pays. Upstream-served messages appear as `guest_chat` rows in the treasury ledger and
+          `/report` shows `totals.guestChat`; node rewards accrue to the serving node as for any job.
+        * Every reply carries `x-guest-remaining`. When the quota is used up the response is `429 guest_quota_exhausted`
+          (plain `{ error, message }` shape, `retry-after` set). The per-IP rate limit (120/min) applies as well.
+        * A failed request (upstream error, model not found) does not consume a message.
+        * `404` when guest chat is disabled on this gateway.
+      operationId: createGuestChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 40
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: { type: string, enum: [system, user, assistant] }
+                      content: { type: string }
+                model: { type: string, description: Optional; defaults to the gateway's guest model. }
+                max_tokens: { type: integer, description: Capped at the guest limit. }
+            example:
+              messages: [{ role: user, content: What is Mesh? }]
+      responses:
+        '200':
+          description: '`text/event-stream`, same chunk shape as `/v1/chat/completions` with `stream: true`.'
+          headers:
+            x-guest-remaining: { description: Messages left after this one., schema: { type: string } }
+            x-mesh-route: { description: '`node:<nodeId>` or the upstream name.', schema: { type: string } }
+            x-mesh-privacy: { description: Tier the reply was served under (`network` or `upstream_zdr`)., schema: { $ref: '#/components/schemas/PrivacyTier' } }
+            x-mesh-served-by: { description: '`network node`, `upstream (ZDR)`.', schema: { type: string } }
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400':
+          description: Invalid or too-long input (`invalid_messages`, `input_too_long`, `invalid_model`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '403':
+          description: '`model_not_allowed`: not in the model policy.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIError' }
+        '404':
+          description: Guest chat is disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`guest_quota_exhausted` (daily free messages used up) or the per-IP rate limit.'
+          headers:
+            x-guest-remaining: { schema: { type: string } }
+            retry-after: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: guest_quota_exhausted }
+                  message: { type: string, example: Connect a wallet to keep chatting }
+                  remaining: { type: integer }
+                  limit: { type: integer }
+                  resetAt: { type: integer }
+        '502': { $ref: '#/components/responses/OpenAIUpstream' }
+  /nodes/register/challenge:
+    post:
+      tags: [Nodes]
+      summary: Challenge to sign before registering
+      description: Step 1 of signed registration. The reward wallet signs `message`; single-use, 5 minutes. Rate limited per IP (`NODE_REGISTER_RATE_LIMIT`, 10/hour, shared with unsigned registrations; the per-IP backstop applies too).
+      operationId: nodeChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet]
+              properties:
+                wallet: { type: string }
+                nodeId: { type: string, pattern: '^[A-Za-z0-9_.:-]+$', description: Optional stable id to bind into the message. }
+            example: { wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k }
+      responses:
+        '200':
+          description: Challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wallet: { type: string }
+                  nonce: { type: string }
+                  nodeId: { type: [string, 'null'] }
+                  domain: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  message: { type: string }
+                  requireSignature: { type: boolean }
+                  hint: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /nodes/link:
+    post:
+      tags: [Nodes, Account]
+      summary: Mint a one-time link code
+      description: |
+        The browser flow. The signed-in wallet signs the registration challenge (from `POST /nodes/register/challenge`)
+        and receives a short code valid for 15 minutes. The Mac then runs `mesh-node setup --link <code>` and registers
+        with `{ linkCode }`, so no key or wallet ever has to be typed on the Mac. At most 5 unused codes per wallet.
+      operationId: nodeLink
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nonce, signature]
+              properties:
+                nonce: { type: string }
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+            example: { nonce: 7f3a2c91e4b8d0f6, signature: 3xT1…Qk9b, chain: solana }
+      responses:
+        '200':
+          description: Link code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, wallet, chain, expiresAt, expiresInSec, hint]
+                properties:
+                  code: { type: string }
+                  wallet: { type: string }
+                  chain: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  expiresInSec: { type: integer }
+                  hint: { type: string }
+              example: { code: K7Q2M9XD, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, chain: solana, expiresAt: '2026-10-03T09:15:00.000Z', expiresInSec: 900, hint: 'On the Mac: mesh-node setup --link K7Q2M9XD --gateway <gateway-url>' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Rate limited, or `too_many_link_codes`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /install/latest.json:
+    get:
+      tags: [Nodes]
+      summary: Current mesh-node release (version, URLs, SHA-256 checksums)
+      description: |
+        Read by `mesh-node update`, the daily check in `mesh-node start`, and the menu-bar app's "Check for updates".
+        Proxied from `UPDATE_LATEST_URL` (the web host's `/downloads/latest.json`, published by the release workflow)
+        with a 60 s cache, or served from the static file written by `POST /admin/release`. See `docs/DISTRIBUTION.md`.
+      operationId: getLatestRelease
+      responses:
+        '200':
+          description: The latest published release.
+          content:
+            application/json:
+              example:
+                version: 0.2.0
+                bundleUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node.js
+                bundleSha256: 3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855e
+                tarballUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/mesh-node-0.2.0-darwin-arm64.tar.gz
+                tarballSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                dmgUrl: https://github.com/mesh-network/mesh/releases/download/v0.2.0/MeshNode-0.2.0-arm64.dmg
+                dmgSha256: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+                publishedAt: '2026-10-03T12:00:00.000Z'
+        '404':
+          description: 'No release published (`no_release`).'
+  /install/mesh-node.js:
+    get:
+      tags: [Nodes]
+      summary: The one-file node agent bundle
+      description: |
+        What `install-node.sh` downloads first. Served from `NODE_BUNDLE_PATH` (dev default `apps/node-agent/dist/mesh-node.js`);
+        when the file is absent the gateway redirects (302) to the `bundleUrl` of the current release.
+      operationId: getNodeBundle
+      responses:
+        '200':
+          description: JavaScript bundle (`text/javascript`).
+        '302':
+          description: Redirect to the released bundle.
+        '404':
+          description: 'Neither a local bundle nor a release exists (`bundle_unavailable`).'
+  /nodes/register:
+    post:
+      tags: [Nodes]
+      summary: Register a node
+      description: |
+        Called by `mesh-node`. Either `{ linkCode }` (browser flow) or `{ wallet, nonce, signature }` (signed challenge).
+        Returns the node token once; the gateway stores only its hash. Re-registering an existing `nodeId` requires its token.
+        `maxParallel` is how many jobs the node runs at once (Ollama `OLLAMA_NUM_PARALLEL`); capped by the gateway's
+        `routing.maxParallelPerNode` (4), default 1; the effective value is echoed back.
+        Rate limits: `NODE_REGISTER_RATE_LIMIT` (10/hour) is counted **per reward wallet** once the link code or signature
+        has proved ownership (so one operator can set up many Macs behind one NAT), per IP for unsigned registrations and
+        for `/challenge`; a per-IP backstop (`NODE_REGISTER_IP_RATE_LIMIT`, default max(60, 6 × that)) applies to every call.
+      operationId: nodeRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                linkCode: { type: string }
+                wallet: { type: string }
+                nonce: { type: string }
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+                nodeId: { type: string }
+                chip: { type: string, example: M2 Pro }
+                ramGb: { type: number, example: 32 }
+                models: { type: array, items: { type: string }, example: ['llama3.1:8b'] }
+                agentVersion: { type: string, example: 0.1.0 }
+                maxParallel: { type: integer, minimum: 1, maximum: 64, default: 1, description: Concurrent jobs the node can run; capped by routing.maxParallelPerNode. }
+            example: { linkCode: K7Q2M9XD, chip: M2 Pro, ramGb: 32, models: ['llama3.1:8b'], agentVersion: 0.1.0, maxParallel: 2 }
+      responses:
+        '200':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodeId: { type: string }
+                  nodeToken: { type: string, description: 'Shown once.' }
+                  wallet: { type: string }
+                  registered: { type: boolean }
+                  walletVerified: { type: boolean }
+                  linked: { type: boolean }
+                  heartbeatEverySec: { type: integer }
+                  offlineAfterSec: { type: integer }
+                  pollMaxWaitMs: { type: integer }
+              example: { nodeId: node_7kd2pq9f, nodeToken: mesh_node_Qm3…, wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, registered: true, walletVerified: true, linked: true, heartbeatEverySec: 20, offlineAfterSec: 60, pollMaxWaitMs: 25000 }
+        '400':
+          description: '`link_code_invalid`, `link_code_used`, `link_code_expired`, `nonce_missing` or `bad_request`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: '`signature_required` or `bad_signature`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`node_exists`: re-registering this `nodeId` needs its node token.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /nodes/{id}:
+    get:
+      tags: [Nodes]
+      summary: Stats for one node
+      description: Node token, or the session of the wallet that owns the node.
+      operationId: getNode
+      security: [{ nodeToken: [] }, { session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      responses:
+        '200':
+          description: Status, uptime, jobs, earnings and reputation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodeStats' }
+              example:
+                nodeId: node_7kd2pq9f
+                wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k
+                status: idle
+                online: true
+                busy: false
+                chip: M2 Pro
+                ramGb: 32
+                loadAvg: 1.2
+                agentVersion: 0.1.0
+                models: ['llama3.1:8b']
+                uptimePct24h: 97.4
+                jobs24h: 140
+                jobsDone24h: 138
+                jobsFailed24h: 2
+                tokens24h: 612000
+                earnedUsd24h: 0.0367
+                earnedUsdTotal: 0.412
+                reputation: { window: 100, jobs: 100, successRate: 0.98, avgFirstTokenMs: 640, eligible: true, minSuccessRate: 0.8 }
+                lastSeen: 1759487010
+                createdAt: 1759300000
+                offlineAfterSec: 60
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/pledge:
+    get:
+      tags: [Nodes]
+      summary: Operator pledge text and status
+      description: |
+        The exact pledge text the node's reward wallet signs to serve `trusted` requests (docs/PRIVACY.md §5), plus the
+        current status. Owning wallet session only; a node token is refused (the Mac never holds a key).
+      operationId: getNodePledge
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      responses:
+        '200':
+          description: Pledge text and status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PledgeText' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Nodes]
+      summary: Sign the operator pledge
+      description: Stores the owning wallet's signature over the pledge text. Trusted = allowlisted wallet, or gold stake + pledge.
+      operationId: signNodePledge
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature]
+              properties:
+                signature: { type: string }
+                chain: { type: string, enum: [solana, evm] }
+      responses:
+        '200':
+          description: Updated status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PledgeText' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/heartbeat:
+    post:
+      tags: [Nodes]
+      summary: Heartbeat
+      description: |
+        Every 20 seconds. A node with no heartbeat for 90 seconds is offline and stops receiving jobs. `busy: true` (paused,
+        or full by the node's own account) pins the node at no capacity until the next heartbeat; `busy: false` only releases
+        that pin — it never resets the gateway's count of jobs running on the node. `maxParallel` updates the advertised
+        concurrency (capped by `routing.maxParallelPerNode`). The reply carries `queuedJobs` (gateway-wide, cached ~2 s).
+      operationId: nodeHeartbeat
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                models: { type: array, items: { type: string } }
+                busy: { type: boolean }
+                loadAvg: { type: number }
+                ramGb: { type: number }
+                chip: { type: string }
+                maxParallel: { type: integer, minimum: 1, maximum: 64 }
+            example: { models: ['llama3.1:8b'], busy: false, loadAvg: 1.2, maxParallel: 2 }
+      responses:
+        '200':
+          description: Acknowledged.
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, queuedJobs: { type: integer }, maxParallel: { type: integer }, heartbeatEverySec: { type: integer }, offlineAfterSec: { type: integer } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nodes/{id}/jobs/next:
+    get:
+      tags: [Nodes]
+      summary: Long-poll for the next job
+      description: Holds the connection up to `wait` ms (max 25 000) and returns `204` when nothing was claimed. The claim is atomic across nodes.
+      operationId: nodeNextJob
+      security: [{ nodeToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - name: wait
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 25000, default: 25000 }
+      responses:
+        '200':
+          description: A claimed job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                jobId: job_01hx…
+                model: meta-llama/llama-3.1-8b-instruct
+                tag: 'llama3.1:8b'
+                messages: [{ role: user, content: Summarise this clause. }]
+                params: { temperature: 0.2 }
+                maxTokens: 1024
+                deadlineMs: 1759487140000
+                attempt: 1
+        '204': { description: No job within `wait`. Poll again. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /nodes/{id}/jobs/{jobId}/chunk:
+    post:
+      tags: [Nodes]
+      summary: Stream a chunk of the reply
+      operationId: nodeJobChunk
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seq, delta]
+              properties:
+                seq: { type: integer, minimum: 0, description: Sequence number, starting at 0; retry with the same seq. }
+                delta: { type: string }
+            example: { seq: 0, delta: 'Either side can end ' }
+      responses:
+        '200': { description: Accepted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`: the client left or the job timed out. Stop generating.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /nodes/{id}/jobs/{jobId}/done:
+    post:
+      tags: [Nodes]
+      summary: Finish a job
+      description: Credits the node wallet $0.06 per million total tokens and bills the user the network price.
+      operationId: nodeJobDone
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                promptTokens: { type: integer, default: 0 }
+                completionTokens: { type: integer, default: 0 }
+                finishReason: { type: string, default: stop }
+            example: { promptTokens: 212, completionTokens: 31, finishReason: stop }
+      responses:
+        '200':
+          description: Recorded. `usage` is what was booked — token counts are clamped to the job (completion ≤ maxTokens, prompt ≤ 4 × payload bytes + 1024).
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, usage: { type: object } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`, or `empty_output` when no chunk was delivered before `done` (the job is failed and the node blamed; nothing is paid).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /nodes/{id}/jobs/{jobId}/fail:
+    post:
+      tags: [Nodes]
+      summary: Fail a job
+      description: The job is retried once on another node if nothing reached the client yet; otherwise the error is surfaced in-stream and nobody is charged.
+      operationId: nodeJobFail
+      security: [{ nodeToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/NodeId' }, { $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: { type: string, maxLength: 500 }
+            example: { error: 'ollama: model not loaded' }
+      responses:
+        '200': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`job_not_running`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /market/config:
+    get:
+      tags: [Market]
+      summary: Fee schedule and limits
+      operationId: getMarketConfig
+      responses:
+        '200':
+          description: The `marketplace` block of `config/tokenomics.json`. Settlement is `prepaid` in this version.
+          content:
+            application/json:
+              example: { enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, minWithdrawalUsd: 1, settlement: prepaid, settlementSymbol: USDG, starterTransferable: false, creditExpiryDays: 90 }
+        '404': { description: 'The marketplace is disabled (`marketplace.enabled: false`).' }
+  /market/book:
+    get:
+      tags: [Market]
+      summary: Liquidity book
+      description: Open depth aggregated by discount tier, deepest discount first, plus the best discount and the total available. Public; expired listings are swept first.
+      operationId: getMarketBook
+      responses:
+        '200':
+          content:
+            application/json:
+              example:
+                tiers: [{ discountBps: 3000, pricePerUsd: 0.7, availableUsd: 240, listings: 2 }, { discountBps: 2000, pricePerUsd: 0.8, availableUsd: 390, listings: 1 }]
+                bestDiscountBps: 3000
+                totalAvailableUsd: 630
+                listings: 3
+                generatedAt: 1760000000
+  /market/listings:
+    get:
+      tags: [Market]
+      summary: Open listings, paginated
+      operationId: listMarketListings
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: discountBps, in: query, schema: { type: integer, minimum: 0, maximum: 10000 }, description: 'Only this tier.' }
+      responses:
+        '200':
+          description: Deepest discount first, then oldest first. Seller addresses are not exposed.
+          content:
+            application/json:
+              example: { listings: [{ id: lst_6f1c2b3a4d5e6f708192, amountUsd: 100, remainingUsd: 60, soldUsd: 40, discountBps: 3000, pricePerUsd: 0.7, status: open, created_at: 1760000000, expires_at: 1760604800, closed_at: null }], total: 1, limit: 50, offset: 0 }
+    post:
+      tags: [Market]
+      summary: List credits for sale
+      description: Escrows `amountUsd` of the caller's spendable credits (ledger kind `market_escrow`) into a new listing. Unused starter credit cannot be listed (`GET /me/market → listableUsd`). Listing does not stop the 90-day clock; a buyer's credits start a fresh one. 30 writes a minute per IP.
+      operationId: createMarketListing
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountUsd, discountBps]
+              properties:
+                amountUsd: { type: number, minimum: 1, description: 'Face value of credit to sell.' }
+                discountBps: { type: integer, minimum: 0, maximum: 7000 }
+      responses:
+        '201':
+          description: The listing plus what the seller receives if it all sells.
+          content:
+            application/json:
+              example: { id: lst_6f1c2b3a4d5e6f708192, seller: '9xQe…', amountUsd: 100, remainingUsd: 100, soldUsd: 0, discountBps: 3000, pricePerUsd: 0.7, status: open, created_at: 1760000000, expires_at: 1760604800, closed_at: null, ifFullySold: { buyerPaysUsd: 70, feeUsd: 1.75, youReceiveUsd: 68.25 } }
+        '400': { description: '`below_minimum`, `discount_too_deep`, or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_credits`: spendable balance is smaller than the amount. `non_transferable`: the balance covers it only by counting starter credit, which cannot be sold.' }
+  /market/listings/{id}:
+    delete:
+      tags: [Market]
+      summary: Cancel a listing
+      description: Owner only. What is left returns to the spendable balance (`market_refund`). Idempotent for a closed listing.
+      operationId: cancelMarketListing
+      security: [{ session: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The listing, now `cancelled`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'No such listing for this wallet.' }
+  /market/fills:
+    post:
+      tags: [Market]
+      summary: Buy (part of) a listing
+      description: Pays the discounted price from the caller's prepaid balance and credits the face value at once. Partial fills down to $0.01 (or the whole remainder). One transaction; the fee is split between the next holder pool and the treasury.
+      operationId: fillMarketListing
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listingId, amountUsd]
+              properties:
+                listingId: { type: string }
+                amountUsd: { type: number, description: 'Face value of credit to buy.' }
+      responses:
+        '201':
+          content:
+            application/json:
+              example: { id: fill_2b3a4d5e6f708192a3b4, listingId: lst_6f1c2b3a4d5e6f708192, buyer: '3pQ9…', seller: '9xQe…', creditsUsd: 40, paidUsd: 28, feeUsd: 0.7, feeToHoldersUsd: 0.35, feeToTreasuryUsd: 0.35, sellerReceivedUsd: 27.3, discountBps: 3000, settlement: prepaid, settlementRef: null, created_at: 1760000100, creditBalanceUsd: 40, prepaidBalanceUsd: 22 }
+        '400': { description: '`below_minimum` or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`.' }
+        '404': { description: 'No such listing.' }
+        '409': { description: '`own_listing`, `listing_closed` or `insufficient_depth`.' }
+  /market/stats:
+    get:
+      tags: [Market]
+      summary: Public totals
+      operationId: getMarketStats
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { openListings: 3, openDepthUsd: 630, bestDiscountBps: 3000, avgDiscountBps: 2650, allTime: { filledUsd: 1840, paidUsd: 1352.4, feesUsd: 33.81, feesToHoldersUsd: 16.9, fills: 61 }, last24h: { filledUsd: 95, paidUsd: 68.4, feesUsd: 1.71, fills: 4 }, feeBps: 250, generatedAt: 1760000000 }
+  /market/quote:
+    get:
+      tags: [Market]
+      summary: Exact fee math for a hypothetical trade
+      operationId: getMarketQuote
+      parameters:
+        - { name: amountUsd, in: query, required: true, schema: { type: number } }
+        - { name: discountBps, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { creditsUsd: 100, discountBps: 3000, pricePerUsd: 0.7, buyerPaysUsd: 70, feeUsd: 1.75, feeToHoldersUsd: 0.875, feeToTreasuryUsd: 0.875, sellerReceivesUsd: 68.25 }
+  /me/market:
+    get:
+      tags: [Market]
+      summary: My market activity
+      description: Listings, fills as buyer and as seller, prepaid balance with its recent ledger, and withdrawal requests.
+      operationId: getMyMarket
+      security: [{ session: [] }]
+      responses:
+        '200':
+          content:
+            application/json:
+              example: { wallet: '9xQe…', creditBalanceUsd: 10, nonTransferableUsd: 2, listableUsd: 8, prepaid: { usd: 68.25, usdMicros: 68250000, ledger: [{ id: 3, kind: market_sale, deltaUsd: 40.95, ref: 'fill:fill_…', created_at: 1760000200 }] }, listings: [], fills: { asBuyer: [], asSeller: [] }, withdrawals: [] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/market/withdraw:
+    post:
+      tags: [Market]
+      summary: Request a payout of prepaid USD
+      description: The amount leaves the prepaid balance at once (`withdrawal` row). The request is announced to the operator (alert channel, daily digest, Admin → Withdrawals), who sends the stablecoin by hand and marks it paid. Because each one is paid by hand, requests under `minWithdrawalUsd` (`GET /market/config`, $1 as shipped) are refused; a smaller balance still pays for buys.
+      operationId: requestMarketWithdrawal
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [amountUsd], properties: { amountUsd: { type: number } } }
+      responses:
+        '201': { description: '`{ id, wallet, amountUsd, status: pending, created_at, prepaidBalanceUsd }`.' }
+        '400': { description: '`bad_amount`, or `below_minimum` when the amount is under `minWithdrawalUsd`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`.' }
+  /credits/config:
+    get:
+      tags: [Credits]
+      summary: Direct sales — price and limits
+      operationId: getCreditsConfig
+      responses:
+        '200':
+          description: The `directSales` block of `config/tokenomics.json`, how the prepaid balance is funded, and what has been sold so far.
+          content:
+            application/json:
+              example: { enabled: true, pricePerUsd: 1, minUsd: 1, maxUsd: 10000, settlement: prepaid, deposits: { enabled: false, chainId: 4663, chainName: Robinhood Chain, explorer: 'https://robinhoodchain.blockscout.com', receiver: null, tokens: [], minUsd: 5, confirmations: 3 }, creditExpiryDays: 90, soldUsd: 1250, purchases: 37 }
+        '404': { description: 'Direct sales are disabled (`directSales.enabled: false`).' }
+  /me/credits/buy:
+    post:
+      tags: [Credits]
+      summary: Buy credits from Mesh at face value
+      description: Pays `amountUsd` from the caller's prepaid USD balance (`credit_purchase` row) and credits the same amount (`purchase` ledger row). $1 paid is $1 of credit; the payment backs the credit in the reserve. Bought credit lapses after `creditExpiryDays` like any other. 30 writes a minute per IP.
+      operationId: buyCredits
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountUsd]
+              properties:
+                amountUsd: { type: number, minimum: 1, maximum: 10000, description: 'USD of credit to buy.' }
+      responses:
+        '201':
+          description: The purchase and both balances afterwards.
+          content:
+            application/json:
+              example: { id: buy_6f1c2b3a4d5e6f708192, creditsUsd: 25, paidUsd: 25, created_at: 1760000000, expires_at: 1767776000, creditBalanceUsd: 31.4, prepaidBalanceUsd: 75 }
+        '400': { description: '`below_minimum`, `above_maximum`, or a malformed body.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: '`insufficient_prepaid`: top the prepaid balance up first.' }
+        '404': { description: 'Direct sales are disabled.' }
+  /admin/prepaid:
+    post:
+      tags: [Market]
+      summary: Credit a wallet's prepaid balance
+      description: 'Admin (`x-admin-token`). Records an off-chain (or hand-sent USDG) payment as prepaid balance. `ref` makes a re-post of the same payment a no-op (200, `duplicate: true`). Audited with the note.'
+      operationId: adminPrepaidTopUp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet, amountUsd, note]
+              properties:
+                wallet: { type: string }
+                amountUsd: { type: number }
+                note: { type: string, description: 'Where the money came from (bank ref, tx).' }
+                ref: { type: string, description: "Idempotency key, e.g. the payment's own id." }
+      responses:
+        '201': { description: '`{ wallet, amountUsd, ref, ledgerId, duplicate: false, prepaidBalanceUsd }`.' }
+        '200': { description: 'Same shape with `duplicate: true`; nothing was written.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/market/withdrawals/{id}/paid:
+    post:
+      tags: [Market]
+      summary: Mark a withdrawal paid
+      description: Admin (`x-admin-token`). Idempotent. Audited with the payout reference.
+      operationId: adminMarketWithdrawalPaid
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { txRef: { type: string }, note: { type: string } } }
+      responses:
+        '200': { description: 'The request, now `paid`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'No such request.' }
+  /admin/market:
+    get:
+      tags: [Market]
+      summary: Operator overview
+      description: 'Admin (`x-admin-token`). Totals, last 24h, the open book, prepaid outstanding, the pending holder pool and the withdrawal queue: every pending request oldest first (with `notified_at`, when the alert channel was told), the last ten paid, and `announcedVia` (`telegram`, `log`, or null when alerts are off).'
+      operationId: adminMarketOverview
+      responses:
+        '200': { description: '`{ totals, last24h, book, prepaid, poolExtra, withdrawals: { pendingUsd, paidUsd, pending: [...], recentPaid: [...], announcedVia }, config }`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/market/reap:
+    post:
+      tags: [Market]
+      summary: Expire old listings now
+      description: Admin (`x-admin-token`). Runs anyway once a minute and on every read of the book.
+      operationId: adminMarketReap
+      responses:
+        '200': { description: '`{ listingsExpired }`.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/starter:
+    get:
+      tags: [Admin]
+      summary: Starter credits on first connect — status and recent grants
+      description: 'Admin (`x-admin-token` or admin cookie). Effective state (`enabled`), what config says (`configEnabled`), the runtime `override`, amount, caps, how many wallets were granted and how many remain, plus the 200 most recent grants (wallet, amount, time, first 8 chars of the IP hash). See docs/SWITCHING.md.'
+      operationId: adminStarterStatus
+      responses:
+        '200':
+          description: Status and grants.
+          content:
+            application/json:
+              example: { enabled: true, configEnabled: true, override: null, amountUsd: 2, maxWallets: 500, requireMinHold: false, maxPerIpPerDay: 3, granted: 212, remaining: 288, grantedUsd: 424, grants: [{ wallet: 9xQeKf2sVbT7mRw3Lp8nHJq4cYzA6dEuGk1oXiSNHn4k, amountUsd: 2, grantedAt: 1759487020, ipHash: 3f9a1c2e }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/starter/toggle:
+    post:
+      tags: [Admin]
+      summary: Pause or resume starter credits at runtime
+      description: 'Admin. `{ enabled: false }` pauses the programme without a redeploy, `{ enabled: true }` forces it on, `{ enabled: null }` clears the override so config wins again, and an empty body flips the current state. Audited as `starter-toggle`.'
+      operationId: adminStarterToggle
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: [boolean, 'null'] } } }
+            example: { enabled: false }
+      responses:
+        '200':
+          description: The new status (same shape as `GET /admin/starter` without `grants`).
+          content:
+            application/json:
+              example: { enabled: false, configEnabled: true, override: false, amountUsd: 2, maxWallets: 500, requireMinHold: false, maxPerIpPerDay: 3, granted: 212, remaining: 288, grantedUsd: 424 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 7-day session from `POST /auth/verify`.
+    apiKey:
+      type: http
+      scheme: bearer
+      description: '`mesh_sk_…` from `POST /keys`. Works wherever an OpenAI key works.'
+    nodeToken:
+      type: http
+      scheme: bearer
+      description: '`mesh_node_…` from `POST /nodes/register`.'
+  parameters:
+    KeyId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    NodeId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: node_7kd2pq9f }
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Validation failed. `issues` lists the fields.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: bad_request, issues: [{ path: [wallet], message: Required }] }
+    Unauthorized:
+      description: Missing or invalid bearer.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized, message: valid session token required }
+    NotFound:
+      description: No such resource for this wallet.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: not_found }
+    RateLimited:
+      description: Too many requests. `retry-after` says when to try again.
+      headers:
+        retry-after: { schema: { type: integer } }
+        x-ratelimit-limit: { schema: { type: integer } }
+        x-ratelimit-remaining: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: rate_limited, message: 'Too many auth requests; retry in a minute.', statusCode: 429 }
+    OpenAIUnauthorized:
+      description: '`invalid_api_key`. Create one with `POST /keys`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+          example: { error: { message: 'Invalid API key. Create one with POST /keys.', type: invalid_request_error, code: invalid_api_key, param: null } }
+    OpenAIRateLimited:
+      description: Per-key rate limit (120/min).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+    OpenAIUpstream:
+      description: The upstream provider failed or timed out. You were not charged.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OpenAIError' }
+          example: { error: { message: 'Upstream (openrouter) timed out after 60000ms. You were not charged.', type: upstream_error, code: upstream_timeout, param: null } }
+  schemas:
+    UnixSeconds:
+      type: integer
+      description: Unix time in seconds (UTC).
+    Error:
+      type: object
+      description: Error shape outside `/v1`.
+      required: [error]
+      properties:
+        error: { type: string, description: Machine-readable code. }
+        message: { type: string }
+        statusCode: { type: integer }
+        requestId: { type: string }
+        issues: { type: array, items: { type: object } }
+    OpenAIError:
+      type: object
+      description: Error shape under `/v1`, parseable by OpenAI SDKs.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message: { type: string }
+            type: { type: string }
+            code: { type: [string, 'null'] }
+            param: { type: [string, 'null'] }
+    Health:
+      type: object
+      properties:
+        ok: { type: boolean }
+        db: { type: string, enum: [ok, error] }
+        adapter: { type: string, enum: [mock, chain] }
+        chain: { type: string }
+        upstream: { type: string }
+        upstreamMode: { type: string }
+        epochCron: { type: string }
+        lastEpoch:
+          type: [object, 'null']
+          properties:
+            epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+            status: { type: string }
+            ageSec: { type: integer }
+        geoBlock:
+          oneOf:
+            - { type: array, items: { type: string } }
+            - { type: string, const: 'off' }
+        time: { $ref: '#/components/schemas/UnixSeconds' }
+    TokenMeta:
+      type: object
+      properties:
+        name: { type: string }
+        ticker: { type: string }
+        chain: { type: string }
+        tradeFeeBps: { type: integer }
+        holderShareBps: { type: integer }
+        treasuryShareBps: { type: integer }
+        minHoldTokens: { type: number }
+        epochSeconds: { type: integer }
+        description: { type: string }
+        website: { type: string }
+    HourPoint:
+      type: object
+      properties:
+        hour: { $ref: '#/components/schemas/UnixSeconds' }
+        feesUsd: { type: number }
+        creditsDistributedUsd: { type: number }
+        requests: { type: integer }
+        spendUsd: { type: number }
+    Stats:
+      type: object
+      properties:
+        token: { $ref: '#/components/schemas/TokenMeta' }
+        totalFeesUsd: { type: number }
+        creditsDistributedUsd: { type: number }
+        creditsUsedUsd: { type: number }
+        epochsRun: { type: integer }
+        lastEpoch:
+          type: [object, 'null']
+          properties:
+            epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+            epochEnd: { $ref: '#/components/schemas/UnixSeconds' }
+            eligibleHolders: { type: integer }
+            feesUsd: { type: number }
+            status: { type: string }
+        holdersEligibleLastEpoch: { type: integer }
+        feesThisEpochUsd: { type: [number, 'null'], description: null when the chain adapter cannot read pending fees cheaply. }
+        requestsLast24h: { type: integer }
+        spendLast24hUsd: { type: number }
+        nodesOnline: { type: integer }
+        servedByNetworkPercent: { type: number }
+        servedByNetwork24h: { type: integer }
+        jobs24h: { type: integer }
+        networkTokens24h: { type: integer }
+        networkPricePerMTokens: { type: number }
+        networkSavingsUsd24h: { type: number }
+        showSavings: { type: boolean }
+        pointsEnabled: { type: boolean, description: 'Points / leaderboard / referral programme is live. Built but disabled by default; the related routes answer 404 when false.' }
+        nodeRewardUsdPerMTokens: { type: number }
+        nodeRewardsPaidAs: { type: [string, 'null'], enum: [credits, null], description: 'How node rewards are paid: `credits` (hourly, into the operator''s credit balance, off chain) or null while payouts are off.' }
+        marketSettlementSymbol: { type: string, description: 'The stablecoin the credit marketplace settles in (deposits and withdrawals). Credits stay off chain.' }
+        nodeRewardMaxShareBps: { type: integer, description: 'Most a job may pay its node, as a share of what the user was billed (9000 = 90 %). A stake multiplier lifts a reward up to here and no further.' }
+        usageShareEnabled: { type: boolean }
+        usageShareToHolders24hUsd: { type: number }
+        upstreamMarkupBps: { type: integer, description: 'Upstream models bill list × (1 + this / 10000).' }
+        upstreamDiscountBps: { type: integer }
+        upstreamFeeBps: { type: integer, description: 'What the upstream charges Mesh on top of list; the markup covers this before any margin is shared.' }
+        creditExpiryDays: { type: [integer, 'null'], description: 'Days after which a credit lapses; null when credits do not expire.' }
+        directSalesEnabled: { type: boolean }
+        starterTransferable: { type: boolean, description: 'False: unused starter credit can be spent but not listed on the marketplace.' }
+        starterRequiresHold: { type: boolean, description: 'True: only wallets holding the minimum receive starter credit.' }
+        reserve: { $ref: '#/components/schemas/Reserve' }
+        starterGrants:
+          type: object
+          description: Starter credits on first connect (docs/SWITCHING.md). `remaining` is null when the wallet cap is 0 (unlimited).
+          properties:
+            enabled: { type: boolean }
+            amountUsd: { type: number }
+            granted: { type: integer }
+            remaining: { type: [integer, 'null'] }
+        series24h: { type: array, items: { $ref: '#/components/schemas/HourPoint' } }
+        epochSeconds: { type: integer }
+        upstream: { type: string }
+        generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    Epoch:
+      type: object
+      properties:
+        epochStart: { $ref: '#/components/schemas/UnixSeconds' }
+        epochEnd: { $ref: '#/components/schemas/UnixSeconds' }
+        feesUsd: { type: number }
+        holderPoolUsd: { type: number }
+        treasuryUsd: { type: number }
+        eligibleHolders: { type: integer }
+        status: { type: string, enum: [complete, partial, failed] }
+        createdAt: { $ref: '#/components/schemas/UnixSeconds' }
+    PeriodTotals:
+      type: object
+      properties:
+        feesInUsd: { type: number }
+        creditsOutUsd: { type: number }
+        starterCreditsUsd: { type: number }
+        creditsUsedUsd: { type: number }
+        nodeRewardsUsd: { type: number }
+        treasuryInUsd: { type: number }
+        requests: { type: integer }
+        servedByNetwork: { type: integer }
+        servedByOpenRouter: { type: integer }
+        servedByNetworkPercent: { type: number }
+        epochs: { type: integer }
+        completeEpochs: { type: integer }
+    WeekReport:
+      allOf:
+        - $ref: '#/components/schemas/PeriodTotals'
+        - type: object
+          properties:
+            isoWeek: { type: string }
+            start: { $ref: '#/components/schemas/UnixSeconds' }
+            end: { $ref: '#/components/schemas/UnixSeconds' }
+            current: { type: boolean }
+    Report:
+      type: object
+      properties:
+        token: { $ref: '#/components/schemas/TokenMeta' }
+        totals:
+          allOf:
+            - $ref: '#/components/schemas/PeriodTotals'
+            - type: object
+              properties:
+                creditsOutstandingUsd: { type: number }
+                walletsWithCredits: { type: integer }
+                treasury:
+                  type: object
+                  properties:
+                    feeShareUsd: { type: number }
+                    nodeRewardAccrualUsd: { type: number }
+                    buybackUsd: { type: number }
+                    opsUsd: { type: number }
+                    otherUsd: { type: number }
+                    balanceUsd: { type: number }
+                reserve: { $ref: '#/components/schemas/Reserve' }
+                creditExpiry:
+                  type: object
+                  description: Credit that lapsed because it outlived `days` (expiry ledger rows).
+                  properties:
+                    enabled: { type: boolean }
+                    days: { type: integer }
+                    expiredUsd: { type: number }
+                    wallets: { type: integer }
+                    last30dUsd: { type: number }
+                directSales:
+                  type: object
+                  description: Credits bought from Mesh at face value (purchase ledger rows).
+                  properties:
+                    enabled: { type: boolean }
+                    soldUsd: { type: number }
+                    purchases: { type: integer }
+                    wallets: { type: integer }
+                    last30dUsd: { type: number }
+        last7d: { $ref: '#/components/schemas/PeriodTotals' }
+        last30d: { $ref: '#/components/schemas/PeriodTotals' }
+        byWeek: { type: array, items: { $ref: '#/components/schemas/WeekReport' } }
+        feesIn: { type: number }
+        creditsOut: { type: number }
+        nodeRewards: { type: number }
+        treasuryBalanceUsd: { type: number }
+        servedByNetworkPercent: { type: number }
+        epochsRun: { type: integer }
+        holdingAge:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            maxDays: { type: integer }
+            minMultiplier: { type: number }
+            maxMultiplier: { type: number }
+        method:
+          type: object
+          additionalProperties: { type: string }
+        lastUpdated: { type: [integer, 'null'] }
+        generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    WeeklyReport:
+      allOf:
+        - $ref: '#/components/schemas/WeekReport'
+        - type: object
+          properties:
+            days:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/PeriodTotals'
+                  - type: object
+                    properties:
+                      day: { type: string, format: date }
+                      start: { $ref: '#/components/schemas/UnixSeconds' }
+                      end: { $ref: '#/components/schemas/UnixSeconds' }
+            epochDetails: { type: array, items: { $ref: '#/components/schemas/Epoch' } }
+            previous: { type: string }
+            next: { type: [string, 'null'] }
+            method: { type: object, additionalProperties: { type: string } }
+            generatedAt: { $ref: '#/components/schemas/UnixSeconds' }
+    NodesSummary:
+      type: object
+      properties:
+        online: { type: integer }
+        total: { type: integer }
+        busy: { type: integer, description: Online nodes with every slot in use. }
+        idle: { type: integer }
+        slots: { type: integer, description: Job slots across online nodes (sum of maxParallel). }
+        runningJobs: { type: integer }
+        queuedJobs: { type: integer }
+        totalRamGb: { type: number }
+        chips: { type: object, additionalProperties: { type: integer } }
+        models: { type: object, additionalProperties: { type: integer } }
+        jobs24h: { type: integer }
+        servedByNetwork24h: { type: integer }
+        tokens24h: { type: integer }
+        servedByNetworkPercent: { type: number }
+        offlineAfterSec: { type: integer }
+        heartbeatEverySec: { type: integer }
+    Session:
+      type: object
+      required: [token, wallet, chain, expiresIn, expiresInSec]
+      properties:
+        token: { type: string, description: 'JWT. Send as `Authorization: Bearer <token>`.' }
+        wallet: { type: string }
+        chain: { type: string, enum: [solana, evm] }
+        expiresIn: { type: string, example: 7d }
+        expiresInSec: { type: integer, example: 604800 }
+        starter:
+          type: [object, 'null']
+          description: 'Set on the first-ever sign-in of a wallet when starter credits are on (config `starterCredits`, docs/SWITCHING.md): the USD just credited and the resulting balance. `null` on every later sign-in, when the wallet does not hold the minimum, when the programme is paused or its wallet cap is reached. Starter credit can be spent on requests but not sold.'
+          properties:
+            amountUsd: { type: number, example: 2 }
+            balanceUsd: { type: number, example: 2 }
+    Reserve:
+      type: object
+      description: |
+        What the credit-pool wallet held at the last hourly reading against the credits owed. The holder share
+        of every sweep is swapped to the stablecoin and sent there; only that stablecoin counts as held.
+      properties:
+        source: { type: string, enum: [chain, mock, unavailable], description: '`mock`: the token is not live, fees are a test feed and nothing is held. `unavailable`: the last read failed.' }
+        asset: { type: [string, 'null'], description: Address of the settlement stablecoin. }
+        heldUsd: { type: [number, 'null'] }
+        otherUsd: { type: [number, 'null'], description: 'ETH (or anything else) in the pool wallet, valued at the reading. Not counted in `heldUsd`.' }
+        creditsSpendableUsd: { type: number }
+        creditsInEscrowUsd: { type: number, description: Credit escrowed in open marketplace listings. }
+        requiredUsd: { type: number, description: '`creditsSpendableUsd + creditsInEscrowUsd`.' }
+        coverage: { type: [number, 'null'], description: '`heldUsd ÷ requiredUsd`; null when nothing is owed or nothing could be read.' }
+        surplusUsd: { type: [number, 'null'] }
+        short: { type: [boolean, 'null'], description: 'True when coverage is below `minCoverageBps`.' }
+        minCoverageBps: { type: integer }
+        note: { type: [string, 'null'] }
+        asOf: { type: [integer, 'null'], description: Unix seconds of the reading. }
+    ExpiryOutlook:
+      type: object
+      description: Credit expiry for one wallet. Every credit lapses `days` after it landed; requests and listings spend the oldest first.
+      properties:
+        enabled: { type: boolean }
+        days: { type: integer }
+        next:
+          type: [object, 'null']
+          description: The next credit to lapse.
+          properties:
+            usd: { type: number }
+            at: { $ref: '#/components/schemas/UnixSeconds' }
+        within7dUsd: { type: number }
+        within30dUsd: { type: number }
+    LedgerEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [distribution, usage, starter, adjustment, market_escrow, market_refund, market_buy, purchase, expiry, node_payout], description: '`node_payout`: node rewards paid into the balance as credits (negative when a paid reward is clawed back).' }
+        deltaUsd: { type: number }
+        deltaUsdMicros: { type: integer }
+        ref: { type: [string, 'null'], description: '`epoch:<start>`, `req:<id>`, `listing:<id>`, `fill:<id>`, `purchase:<id>` or `expiry:<cutoff>`.' }
+        created_at: { $ref: '#/components/schemas/UnixSeconds' }
+    Savings:
+      type: object
+      description: What this wallet saved because Mesh nodes served its requests at the network price.
+      properties:
+        usd24h: { type: number }
+        usdTotal: { type: number }
+        networkSharePercent: { type: number }
+        multiplier: { type: number, description: list ÷ paid across node-served requests. }
+        networkSpendUsdTotal: { type: number }
+        networkRequests: { type: integer }
+        requests: { type: integer }
+    Me:
+      type: object
+      properties:
+        wallet: { type: string }
+        chain: { type: string }
+        balance:
+          type: object
+          properties:
+            usd: { type: number }
+            usdMicros: { type: integer }
+        expiry: { $ref: '#/components/schemas/ExpiryOutlook' }
+        nonTransferableUsd: { type: number, description: 'Unused starter credit in the balance: spendable on requests, not sellable on the marketplace.' }
+        ledger: { type: array, items: { $ref: '#/components/schemas/LedgerEntry' }, description: Newest 20 rows. }
+        apiKeys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+        savings: { $ref: '#/components/schemas/Savings' }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: integer }
+        masked: { type: string, example: mesh_sk_7f3a… }
+        name: { type: [string, 'null'] }
+        label: { type: [string, 'null'], description: Legacy alias of `name`. }
+        spendLimitUsd: { type: [number, 'null'] }
+        spentUsd: { type: number }
+        created_at: { $ref: '#/components/schemas/UnixSeconds' }
+        revoked: { type: boolean }
+        privacy: { oneOf: [{ $ref: '#/components/schemas/PrivacyTier' }, { type: 'null' }], description: 'Default tier for requests with this key; null = gateway default.' }
+    PrivacyTier:
+      type: string
+      enum: [trusted, network, upstream_zdr]
+      description: Request privacy tier (docs/PRIVACY.md).
+    UsageWindow:
+      type: object
+      properties:
+        requests: { type: integer }
+        spendUsd: { type: number }
+        promptTokens: { type: integer }
+        completionTokens: { type: integer }
+    KeyUsage:
+      type: object
+      properties:
+        key: { $ref: '#/components/schemas/ApiKey' }
+        last24h: { $ref: '#/components/schemas/UsageWindow' }
+        last7d: { $ref: '#/components/schemas/UsageWindow' }
+        allTime:
+          allOf:
+            - $ref: '#/components/schemas/UsageWindow'
+            - type: object
+              properties:
+                requestCount: { type: integer }
+        requestCount: { type: integer }
+        topModels:
+          type: array
+          items:
+            type: object
+            properties:
+              model: { type: string }
+              requests: { type: integer }
+              spendUsd: { type: number }
+    PricePerM:
+      type: object
+      required: [promptUsdPerM, completionUsdPerM]
+      properties:
+        promptUsdPerM: { type: number, description: USD per 1M prompt tokens. }
+        completionUsdPerM: { type: number, description: USD per 1M completion tokens. }
+    Model:
+      type: object
+      required: [id, object, served, listPrice, meshPrice, privacy, mesh_network]
+      properties:
+        id: { type: string, description: OpenRouter-style id (`vendor/model`) or a short network alias. }
+        object: { type: string, const: model }
+        created: { type: integer }
+        owned_by: { type: string, description: '`mesh` for network models, else the vendor.' }
+        name: { type: string, description: Human name; the same string as `displayName`. }
+        displayName: { type: string }
+        vendor: { type: string }
+        tier: { type: [string, 'null'], enum: [frontier, fast, open, null], description: '`frontier` strongest closed models, `fast` cheaper closed models, `open` open weights.' }
+        served: { type: string, enum: [network, upstream, both], description: Where the request can land; `both` is Mesh nodes first with upstream fallback. }
+        listPrice: { $ref: '#/components/schemas/PricePerM', description: OpenRouter list price. }
+        meshPrice: { $ref: '#/components/schemas/PricePerM', description: 'What Mesh bills; the flat network price on a node, else list plus the configured markup (6 % as shipped) or minus a discount.' }
+        privacy: { type: string, enum: [network, upstream_zdr], description: Where the prompt is processed. }
+        online: { type: integer, description: Nodes advertising this model right now (0 for upstream-only models). }
+        guestAllowed: { type: boolean, description: A homepage guest may pick it. }
+        mesh_network: { type: boolean, description: Back-compat; true when Macs in the Mesh network can serve it at the network price. }
+      additionalProperties: true
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, user, assistant, tool] }
+        content: { type: string }
+    ChatRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        messages: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ChatMessage' } }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: object
+          properties:
+            include_usage: { type: boolean }
+        max_tokens: { type: integer, description: Defaults to 1024 on network-served requests. }
+        temperature: { type: number }
+        top_p: { type: number }
+        top_k: { type: integer }
+        stop: { oneOf: [{ type: string }, { type: array, items: { type: string } }] }
+        seed: { type: integer }
+        presence_penalty: { type: number }
+        frequency_penalty: { type: number }
+        response_format: { type: object }
+      additionalProperties: true
+    Usage:
+      type: object
+      properties:
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+        cost: { type: number, description: 'USD charged to your wallet for this request: the flat network price on a node, list plus the markup (or minus the discount) upstream. On streams it is in the usage chunk and repeated in the final `mesh` chunk.' }
+    MeshRoute:
+      type: object
+      description: How the reply was served. Node fields are present when a Mesh node served it.
+      properties:
+        route: { type: string, description: '`node`, or the upstream name (`openrouter`).' }
+        privacy: { $ref: '#/components/schemas/PrivacyTier' }
+        servedBy: { type: string, enum: [your node, trusted node, network node, upstream (ZDR), upstream] }
+        nodeId: { type: string }
+        chip: { type: string }
+        listCostUsd: { type: number, description: 'What the upstream would have charged at list (node-served replies), or did charge Mesh at list (upstream-served replies billed with a markup or discount).' }
+        savedUsd: { type: number, description: listCostUsd minus what you paid, never negative. }
+    ChatCompletion:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, const: chat.completion }
+        created: { $ref: '#/components/schemas/UnixSeconds' }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message: { $ref: '#/components/schemas/ChatMessage' }
+              finish_reason: { type: [string, 'null'] }
+        usage: { $ref: '#/components/schemas/Usage' }
+        mesh: { $ref: '#/components/schemas/MeshRoute' }
+      additionalProperties: true
+    NodeStats:
+      type: object
+      properties:
+        nodeId: { type: string }
+        wallet: { type: string }
+        status: { type: string, enum: [offline, busy, idle] }
+        online: { type: boolean }
+        busy: { type: boolean }
+        chip: { type: [string, 'null'] }
+        ramGb: { type: [number, 'null'] }
+        loadAvg: { type: [number, 'null'] }
+        agentVersion: { type: [string, 'null'] }
+        models: { type: array, items: { type: string } }
+        uptimePct24h: { type: number }
+        jobs24h: { type: integer }
+        jobsDone24h: { type: integer }
+        jobsFailed24h: { type: integer }
+        tokens24h: { type: integer }
+        earnedUsd24h: { type: number }
+        earnedUsdTotal: { type: number }
+        reputation:
+          type: object
+          properties:
+            window: { type: integer }
+            jobs: { type: integer }
+            successRate: { type: number }
+            avgFirstTokenMs: { type: [number, 'null'] }
+            eligible: { type: boolean }
+            minSuccessRate: { type: number }
+        lastSeen: { $ref: '#/components/schemas/UnixSeconds' }
+        createdAt: { $ref: '#/components/schemas/UnixSeconds' }
+        offlineAfterSec: { type: integer }
+        pledge: { $ref: '#/components/schemas/NodePledge' }
+    NodePledge:
+      type: object
+      description: Operator pledge status and whether the node may serve `trusted` jobs (docs/PRIVACY.md §5).
+      properties:
+        signed: { type: boolean }
+        signedAt: { oneOf: [{ $ref: '#/components/schemas/UnixSeconds' }, { type: 'null' }] }
+        chain: { type: [string, 'null'] }
+        trusted: { type: boolean }
+        trustedVia: { type: [string, 'null'], enum: [allowlist, stake+pledge, null] }
+        allowlisted: { type: boolean }
+        requiredStakeTier: { type: [string, 'null'], description: Stake tier name needed together with the pledge. }
+        stakeTier: { type: [string, 'null'] }
+        stakeOk: { type: boolean }
+    PledgeText:
+      allOf:
+        - { $ref: '#/components/schemas/NodePledge' }
+        - type: object
+          properties:
+            nodeId: { type: string }
+            wallet: { type: string }
+            message: { type: string, description: The exact text the owning wallet signs. }
+    Job:
+      type: object
+      description: |
+        Exactly what a node receives (docs/PRIVACY.md §1): no wallet, API key, request id, IP, user agent or client-facing
+        model name. `messages` are role + content only.
+      additionalProperties: false
+      required: [jobId, model, messages, params, maxTokens, deadlineMs, attempt]
+      properties:
+        jobId: { type: string }
+        model: { type: string, description: Ollama tag to run. }
+        messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } }
+        params: { type: object, additionalProperties: true, description: Whitelisted sampling params only. }
+        maxTokens: { type: integer }
+        deadlineMs: { type: integer, description: Unix ms after which the job is failed. }
+        attempt: { type: integer }
