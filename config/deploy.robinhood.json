@@ -38,7 +38,7 @@
   "_comment_quoteTokens": "Assets Pons pays creator fees in. 0x000…0 = native ETH (the launch's quote asset). Add USDG here only if the token is paired with USDG.",
   "stable": null,
   "stableDecimals": 6,
-  "_comment_stable": "USDG / USDC on Robinhood Chain the vault settles in. Required before the first live sweep: with sweepMode swap and no stable the vault's sweep() reverts, the epoch is recorded as failed and the fees wait in the vault (nothing is lost, nothing is minted).",
+  "_comment_stable": "USDG on Robinhood Chain the vault settles in. Required before the first live sweep: with sweepMode swap and no stable the vault's sweep() reverts, the epoch is recorded as failed and the fees wait in the vault (nothing is lost, nothing is minted).",
   "swapRouter": null,
   "_comment_swapRouter": "Uniswap v3 SwapRouter02 (or null and configure a RouteKind.Adapter on the vault for the v4 universal router). The route itself is set on the vault with setRoute(); this field is informative for the admin Check.",
   "sweepMode": "swap",

@@ -312,7 +312,7 @@ export async function marketRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------- admin ----------
 
   /**
-   * Credit a wallet's prepaid balance for a payment received off-chain (bank, USDC sent by hand). Pass
+   * Credit a wallet's prepaid balance for a payment received off-chain (bank, USDG sent by hand). Pass
    * the payment's own reference as `ref` so a re-post of the same payment is a no-op; without one a
    * fresh ref is minted. Audited with the note.
    */

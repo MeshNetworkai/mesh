@@ -63,7 +63,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { title: 'First live epoch', detail: 'Real trading fees become credits for real holders.', status: 'next' },
       { title: 'Fees settled in a stablecoin, reserve published', detail: 'Each sweep swaps the fees on chain. The holder half is held apart from the treasury and its balance is published every epoch next to the credits it backs.', status: 'next' },
       { title: 'Staking live', detail: 'Lock tokens for a bigger node multiplier, a place at the front of the queue and, with the operator pledge, trusted status.', status: 'next' },
-      { title: 'USDC checkout for the market', detail: 'Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta.', status: 'next' },
+      { title: 'USDG checkout for the market', detail: 'Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta.', status: 'next' },
       { title: 'Node rewards paid out', detail: 'Accrued node earnings leave the counter and reach the operator wallet on a published cadence.', status: 'next' },
     ],
   },

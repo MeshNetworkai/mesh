@@ -256,7 +256,7 @@ Credits are US dollars, so what stands behind them is held in dollars and publis
 
 `config/deploy.robinhood.json` ships `sweepMode: "swap"`. Each epoch the gateway's sweeper calls
 `PonsFeeVault.pull()` and then `sweep(asset, minOut)` per fee asset: the vault swaps the asset to
-the configured stablecoin (`stable`, USDG / USDC on Robinhood Chain) through its route and splits
+the configured stablecoin (`stable`, USDG on Robinhood Chain) through its route and splits
 the proceeds on chain, `holderShareBps` (50 %) to the credit-pool wallet (`creditPool`) and the rest
 to the treasury wallet. The epoch's fees are the stablecoin the swap returned, and the holder half
 mints credits at `creditUsdPerFeeUsd` (1.0), so a credit minted from fees has a dollar of stablecoin

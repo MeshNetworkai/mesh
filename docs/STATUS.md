@@ -28,7 +28,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 **Built and switched off** (one config flag each): holding-age weighting, points / leaderboard / referrals, invite gating, an upstream discount (`requestPricing.upstreamDiscountBps`; it replaces the markup and is a treasury-funded loss on top of the 5.5 % upstream fee).
 
-**Waiting for the token**: chain decision and deployment by the team, first live sweep (`sweepMode` ships as `swap`, so the stablecoin, the swap route on the vault and the Chainlink feed must be set first: `docs/RUNBOOK.md` §6), the reserve actually holding stablecoin, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDC checkout for the marketplace, buyback floor + NAV chart.
+**Waiting for the token**: chain decision and deployment by the team, first live sweep (`sweepMode` ships as `swap`, so the stablecoin, the swap route on the vault and the Chainlink feed must be set first: `docs/RUNBOOK.md` §6), the reserve actually holding stablecoin, staking contract address (`/app/stake` shows the empty state until then), on-chain node payouts, USDG checkout for the marketplace, buyback floor + NAV chart.
 
 **Open before public launch** (the internal docs repo → Production readiness): web app bug hunt, Cloudflare in front, status page + node explorer, Telegram alert bot token, backup restore drill, legal review, Oliver's Mac linked to the live gateway, DMG opened once on a Mac, onboarding pack, starter-credit plan.
 

@@ -22,8 +22,8 @@ import { bpsOf, MICROS } from './money.js';
  *
  *   e.g. $100 face at 30% off: paid $70, fee $1.75, seller receives $68.25, holders $0.875, treasury $0.875.
  *
- * Settlement today is `prepaid` (an admin tops the balance up after an off-chain / USDC payment); a
- * chain adapter that credits `prepaid_ledger` from on-chain USDC transfers plugs in without a schema
+ * Settlement today is `prepaid` (an admin tops the balance up after an off-chain / USDG payment); a
+ * chain adapter that credits `prepaid_ledger` from on-chain USDG transfers plugs in without a schema
  * change, and fills it settles directly would carry `settlement = 'external'` plus the tx in
  * `settlement_ref`.
  */
@@ -172,7 +172,7 @@ export function prepaidOutstandingMicros(db: Db): number {
 }
 
 /**
- * Admin top-up: a payment received off-chain (or, later, a USDC transfer the chain adapter saw) becomes
+ * Admin top-up: a payment received off-chain (or, later, a USDG transfer the chain adapter saw) becomes
  * spendable prepaid balance. `ref` is unique per (kind, ref), so re-posting the same payment reference
  * is a no-op (returns null).
  */

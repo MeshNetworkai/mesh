@@ -604,7 +604,7 @@ const CHAIN_FIELD_HELP: Record<ChainField, { label: string; hint: string; placeh
   feeVault: { label: 'Fee vault (PonsFeeVault)', hint: 'Our PonsFeeVault — the Pons creatorFeeRecipient.', placeholder: '0x…' },
   creditPool: { label: 'Credit pool wallet', hint: 'The credit reserve: the holder share of every sweep lands here in the stable, apart from the treasury. Read each epoch and published on /stats.', placeholder: '0x…' },
   treasury: { label: 'Treasury', hint: 'Treasury multisig; the treasury share of every sweep.', placeholder: '0x…' },
-  stable: { label: 'Stable (USDG / USDC)', hint: 'What the sweep settles in. Needed before the first live sweep: with sweepMode swap and no stable the sweep reverts and the fees wait in the vault.', placeholder: '0x…' },
+  stable: { label: 'Stable (USDG)', hint: 'What the sweep settles in. Needed before the first live sweep: with sweepMode swap and no stable the sweep reverts and the fees wait in the vault.', placeholder: '0x…' },
   swapRouter: { label: 'Swap router', hint: 'Uniswap v3 SwapRouter02, informative (the route is set on the vault).', placeholder: '0x… (optional)' },
   priceFeed: { label: 'ETH/USD price feed', hint: 'Chainlink aggregator; sets the slippage floor of each swap. Stale or unreadable → ETH fees stay unswept until it is fresh. Blank → fixedEthUsd from the JSON / env.', placeholder: '0x…' },
   deployBlock: { label: 'Deploy block', hint: 'Block of the launch tx; holder scans start here.', placeholder: 'e.g. 1842930' },

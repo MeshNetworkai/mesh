@@ -37,7 +37,7 @@ The token launches on Robinhood Chain via Pons on launch day. Everything below w
 | next | First live epoch | Real trading fees become credits for real holders. |
 | next | Fees settled in a stablecoin, reserve published | Each sweep swaps the fees on chain. The holder half is held apart from the treasury and its balance is published every epoch next to the credits it backs. |
 | next | Staking live | Lock tokens for a bigger node multiplier, a place at the front of the queue and, with the operator pledge, trusted status. |
-| next | USDC checkout for the market | Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta. |
+| next | USDG checkout for the market | Buyers top up and sellers withdraw on-chain. Replaces the team-credited prepaid balance used during the beta. |
 | next | Node rewards paid out | Accrued node earnings leave the counter and reach the operator wallet on a published cadence. |
 
 ## After launch

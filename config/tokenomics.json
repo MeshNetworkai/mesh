@@ -108,7 +108,7 @@
     "maxDiscountBps": 7000,
     "listingTtlHours": 168,
     "deposits": {
-      "_comment": "Self-serve prepaid top-ups: send USDC/USDG on Robinhood Chain to `receiver`, paste the tx hash on the Market page, the gateway verifies the transfer and credits the balance. Off until receiver + tokens are filled (the dev supplies the stablecoin addresses; receiver = the treasury multisig).",
+      "_comment": "Self-serve prepaid top-ups: send USDG on Robinhood Chain to `receiver`, paste the tx hash on the Market page, the gateway verifies the transfer and credits the balance. Off until receiver + tokens are filled (the dev supplies the stablecoin addresses; receiver = the treasury multisig).",
       "enabled": true,
       "chainId": 4663,
       "receiver": null,

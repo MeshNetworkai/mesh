@@ -693,14 +693,14 @@ export function Docs() {
               ) : null}
               <li>Buyers take any part of the listing. Each fill pays you the discounted price minus the fee, into your prepaid US-dollar balance.</li>
               <li>Cancel any time, or let it expire after {listingDays} days; the remainder returns to your credits.</li>
-              <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in USDC and marks it done.</li>
+              <li>Withdraw the prepaid balance from the market page. The amount leaves your balance when you ask; during the beta the team pays it out in USDG and marks it done.</li>
             </ul>
             <h3>How to buy</h3>
             <ul>
               <li>Choose a discount tier on the book, or quote an amount. You pay from your prepaid balance and the credits land in your ledger at face value, immediately.</li>
               <li>
-                <b>Prepaid balance during the beta.</b> There is no on-chain checkout yet. The team tops up a buyer's prepaid balance after a hand-sent USDC payment, audited
-                with a reference. USDC checkout replaces this after the token launch (see <a href="#roadmap">Roadmap</a>).
+                <b>Prepaid balance during the beta.</b> There is no on-chain checkout yet. The team tops up a buyer's prepaid balance after a hand-sent USDG payment, audited
+                with a reference. USDG checkout replaces this after the token launch (see <a href="#roadmap">Roadmap</a>).
               </li>
               <li>
                 Bought credits spend like any other credit, on any model, under any privacy tier{EXPIRY.enabled ? `, and start a fresh ${expiryDays} when they land` : ''}.

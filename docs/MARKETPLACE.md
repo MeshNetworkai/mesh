@@ -9,7 +9,7 @@ Code: `apps/gateway/src/market.ts` (mechanics), `apps/gateway/src/routes/market.
 1. **List.** A seller offers `amount` of credit at `discount` (0–70%). Credit past its 90 days is lapsed first, and unused starter credit is held back (below). The credit then leaves their spendable balance at once: a `market_escrow` row in `credits_ledger` (negative), so the gateway will not serve requests against it. The listing stays open for 7 days (`listingTtlHours`).
 2. **Fill.** A buyer takes any part of a listing (down to $0.01, or the whole remainder). They pay the discounted price from their **prepaid balance**; the credits land in their `credits_ledger` at face value (`market_buy`) and start a fresh 90 days there. The seller is paid into their own prepaid balance, net of the fee. Partial fills leave the listing open; the last fill marks it `filled`.
 3. **Cancel or expire.** Whatever is left goes back to the seller's spendable balance (`market_refund`) with its original date: the listing did not stop the clock. A sweep of expired listings runs once a minute and on every read of the book.
-4. **Withdraw.** Prepaid USD can be withdrawn. The amount leaves the balance when the request is made; an operator pays it out (USDC to the wallet) and marks the request paid.
+4. **Withdraw.** Prepaid USD can be withdrawn. The amount leaves the balance when the request is made; an operator pays it out (USDG to the wallet) and marks the request paid.
 
 ## What can be listed, and the 90-day clock
 
@@ -44,17 +44,17 @@ Where the fee goes:
 
 ## Prepaid balance (settlement)
 
-Buyers pay from a prepaid USD balance (`prepaid_ledger`), which during the beta is topped up by the team after an off-chain or hand-sent USDC payment: `POST /admin/prepaid { wallet, amountUsd, note, ref? }`, audited in `admin_actions` with the note; re-posting the same `ref` is a no-op. Sellers' proceeds land in the same balance and leave through `withdrawal_requests`.
+Buyers pay from a prepaid USD balance (`prepaid_ledger`), which during the beta is topped up by the team after an off-chain or hand-sent USDG payment: `POST /admin/prepaid { wallet, amountUsd, note, ref? }`, audited in `admin_actions` with the note; re-posting the same `ref` is a no-op. Sellers' proceeds land in the same balance and leave through `withdrawal_requests`.
 
 The same balance pays for credits bought directly from Mesh at face value (`POST /me/credits/buy`, `prepaid_ledger` kind `credit_purchase`; `docs/PRICING.md` §7). A direct purchase has no seller, no discount and no fee: $1 of prepaid buys $1 of credit.
 
-Every fill records `settlement = 'prepaid'`. A USDC settlement adapter can be added without a schema change: it credits `prepaid_ledger` (`kind = 'topup'`, `ref = <tx>`) when a transfer lands, or fills directly with `settlement = 'external'` and the tx in `settlement_ref`. Withdrawals would be paid by the same adapter and marked with the payout `tx_ref`.
+Every fill records `settlement = 'prepaid'`. A USDG settlement adapter can be added without a schema change: it credits `prepaid_ledger` (`kind = 'topup'`, `ref = <tx>`) when a transfer lands, or fills directly with `settlement = 'external'` and the tx in `settlement_ref`. Withdrawals would be paid by the same adapter and marked with the payout `tx_ref`.
 
 ### Paying in (self-serve deposits)
 
 When `marketplace.deposits` has a `receiver` and at least one token, the Market page shows **Top up** next to the prepaid balance:
 
-1. The buyer sends USDC or USDG on Robinhood Chain **from the wallet they are signed in with** to the receiver address (shown with a Copy button; the minimum is `minUsd`).
+1. The buyer sends USDG on Robinhood Chain **from the wallet they are signed in with** to the receiver address (shown with a Copy button; the minimum is `minUsd`).
 2. They paste the transaction hash. `POST /me/market/deposits { txHash }` fetches the receipt over JSON-RPC (`MESH_EVM_RPC_URL`, else the chain's public RPC), decodes the ERC-20 `Transfer` logs and credits the prepaid balance when all of these hold: the transaction succeeded, it is `confirmations` blocks behind the head, a transfer went to the receiver in an accepted token, and its sender is the signed-in wallet. Amounts are converted to micro-USD from the token's decimals.
 3. One credit per transaction hash, ever (`market_deposits` is keyed on the hash; the prepaid row carries `ref = deposit:<hash>`). A second paste answers `409 already_credited`; a pending or under-confirmed transfer answers `409 pending` / `409 unconfirmed` with the current count, so the page can simply be retried.
 

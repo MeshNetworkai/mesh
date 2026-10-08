@@ -39,7 +39,7 @@ feed is a mock and nothing is held.
 from a prepaid USD balance and receive the credits at face value, 2.5 % fee split half to the next
 hour's holder pool and half to the treasury. Unused starter credit cannot be listed, and a listing
 does not stop the 90-day clock. During the beta the team tops up prepaid balances and pays
-withdrawals by hand; USDC checkout follows the token launch.
+withdrawals by hand; USDG checkout follows the token launch.
 
 ## Pages
 
@@ -375,7 +375,7 @@ at the proxy in production, as before; the page is only as protected as the toke
 - **Waiting for the token launch:** chain decision and `config/deploy.<network>.json` (the team deploys;
   the internal docs repo), including the stablecoin, swap route and price feed the first live sweep
   needs; the credit reserve itself (`totals.reserve.source` is `mock` until then), live chain
-  adapters, staking contract address, on-chain node payouts, USDC checkout for the marketplace,
+  adapters, staking contract address, on-chain node payouts, USDG checkout for the marketplace,
   buyback floor. Roadmap: `docs/ROADMAP.md`.
 - **Single instance:** rate limits, relays, stats cache and alert state are per process (`docs/ARCHITECTURE.md` §8–9).
 

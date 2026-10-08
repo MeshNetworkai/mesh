@@ -386,7 +386,7 @@ const MIGRATIONS: Array<{ id: number; sql: string }> = [
     // Credit marketplace (market.ts, routes/market.ts, docs/MARKETPLACE.md). A listing escrows credits out
     // of the seller's spendable balance (credits_ledger kind market_escrow; market_refund on cancel/expiry;
     // the buyer receives a market_buy row). Buyers pay from a prepaid USD balance (prepaid_ledger: topped
-    // up by an admin today, by a USDC settlement adapter later); sellers are paid into the same balance
+    // up by an admin today, by a USDG settlement adapter later); sellers are paid into the same balance
     // and withdraw through withdrawal_requests. The holders' share of each fee waits in pool_extra_micros
     // until the next epoch; the treasury share is a `market_fee` treasury row. SQLite cannot alter a
     // CHECK, so both ledgers are rebuilt in place (migration 12 pattern).

@@ -1503,7 +1503,7 @@ paths:
     post:
       tags: [Market]
       summary: Credit a wallet's prepaid balance
-      description: 'Admin (`x-admin-token`). Records an off-chain (or hand-sent USDC) payment as prepaid balance. `ref` makes a re-post of the same payment a no-op (200, `duplicate: true`). Audited with the note.'
+      description: 'Admin (`x-admin-token`). Records an off-chain (or hand-sent USDG) payment as prepaid balance. `ref` makes a re-post of the same payment a no-op (200, `duplicate: true`). Audited with the note.'
       operationId: adminPrepaidTopUp
       requestBody:
         required: true

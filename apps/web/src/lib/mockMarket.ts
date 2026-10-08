@@ -10,7 +10,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const HOUR = 3_600;
 const DAY = 86_400;
 const EXPIRY_DAYS = TOKENOMICS.creditExpiry.enabled ? TOKENOMICS.creditExpiry.days : null;
-const CFG: MarketConfig = { starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDC', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
+const CFG: MarketConfig = { starterTransferable: TOKENOMICS.starterCredits.transferable, creditExpiryDays: EXPIRY_DAYS, enabled: true, feeBps: 250, feePercent: 2.5, feeToHoldersBps: 5000, minListingUsd: 1, minFillUsd: 0.01, maxDiscountBps: 7000, listingTtlHours: 168, settlement: 'prepaid', deposits: { enabled: true, chainId: 4663, chainName: 'Robinhood Chain', explorer: 'https://robinhoodchain.blockscout.com', receiver: '0x00000000000000000000000000000000000000Fe', tokens: [{ symbol: 'USDG', address: '0x1111111111111111111111111111111111111111', decimals: 6 }], minUsd: 5, confirmations: 3 } };
 const ME = mockAccount.wallet;
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -258,7 +258,7 @@ export const mockWithdraw = async (amountUsd: number): Promise<Withdrawal & { pr
   return { ...w, prepaidBalanceUsd: prepaidBalance() };
 };
 
-export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: 'USDC', blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });
+export const mockDeposit = async (txHash: string) => ({ ok: true as const, creditedUsd: 25, token: 'USDG', blockNumber: 1_234_567, prepaid: { usd: 25 }, txHash });
 
 // ---------- direct sales (POST /me/credits/buy) ----------
 

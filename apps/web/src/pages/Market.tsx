@@ -38,7 +38,7 @@ interface HistoryRow {
 }
 
 const statusWord: Record<string, string> = { open: 'Open', filled: 'Sold out', cancelled: 'Cancelled', expired: 'Expired', pending: 'Pending', paid: 'Paid' };
-const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDC payment and pays withdrawals out by hand.';
+const BETA_TOPUP = 'During the beta the team tops up prepaid balances after a hand-sent USDG payment and pays withdrawals out by hand.';
 const BASE_URL = `${PUBLIC_API_URL}/v1`;
 const floor2 = (n: number) => Math.floor(n * 100) / 100;
 
@@ -326,7 +326,7 @@ function BalanceCard({ mine, loading, onBuy, onChanged }: { mine: MyMarket | nul
               {busy ? <Spinner /> : 'Request'}
             </button>
           </div>
-          <p className="hint">The amount leaves your balance now; the team sends USDC to this wallet and marks it paid.</p>
+          <p className="hint">The amount leaves your balance now; the team sends USDG to this wallet and marks it paid.</p>
         </form>
       ) : (
         <p className="hint">Buys are paid from here, sales are paid into here. {deposits?.enabled ? `Top up with ${deposits.tokens.map((t) => t.symbol).join(' or ')} on ${deposits.chainName}; withdrawals are paid out by the team.` : BETA_TOPUP}</p>
@@ -671,7 +671,7 @@ function ProceedsCard({ mine, loading, onChanged }: { mine: MyMarket | null; loa
     setBusy(true);
     try {
       const w = await market.withdraw(token, floor2(prepaid));
-      toast.ok(`Claim of ${fmtUsd(w.amountUsd)} requested. The team sends USDC to this wallet and marks it paid.`);
+      toast.ok(`Claim of ${fmtUsd(w.amountUsd)} requested. The team sends USDG to this wallet and marks it paid.`);
       onChanged();
     } catch (err) {
       toast.error(errorMessage(err));
