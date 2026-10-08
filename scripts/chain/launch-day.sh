@@ -132,12 +132,20 @@ if [[ -n "$ROUTER" ]]; then
   [[ -n "$pool" && "$pool" != "0x0000000000000000000000000000000000000000" ]] || die "no WETH/USDG v3 pool found through $ROUTER at fee 500/3000/10000/100 — skip the route (Enter) and set it later"
   ok "route: SwapRouter02 $ROUTER, WETH/USDG pool $pool (fee $POOL_FEE)"
   if [[ -n "$QUOTE_TOKENS" ]]; then
-    qf=""
-    for f in 3000 500 10000 100; do
+    # Several NVDA/USDG pools exist at different fee tiers; NVDA swaps have no slippage floor, so pick
+    # the one with the most in-range liquidity (pool.liquidity()), not the first one found.
+    qf=""; qpool=""; qliq=0
+    for f in 100 500 3000 10000; do
       p="$(cast call "$fac" 'getPool(address,address,uint24)(address)' "$NVDA" "$USDG" "$f" --rpc-url "$RPC" 2>/dev/null || true)"
-      if [[ -n "$p" && "$p" != "0x0000000000000000000000000000000000000000" ]]; then qf="$f"; ok "route: NVDA/USDG pool $p (fee $f)"; break; fi
+      [[ -n "$p" && "$p" != "0x0000000000000000000000000000000000000000" ]] || continue
+      liq="$(cast call "$p" 'liquidity()(uint128)' --rpc-url "$RPC" 2>/dev/null | awk '{print $1}' || true)"
+      liq="${liq:-0}"
+      echo "  NVDA/USDG pool $p (fee $f): liquidity $liq"
+      if (( $(echo "$liq > $qliq" | bc) )); then qf="$f"; qpool="$p"; qliq="$liq"; fi
     done
     [[ -n "$qf" ]] || die "no NVDA/USDG v3 pool found through $ROUTER — the launch cannot sweep NVDA fees; stop and tell Claude"
+    (( $(echo "$qliq > 0" | bc) )) || die "every NVDA/USDG pool reports zero liquidity — stop and tell Claude"
+    ok "route: NVDA/USDG pool $qpool (fee $qf, deepest)"
     QUOTE_FEES="$qf"
   fi
 else
