@@ -96,7 +96,16 @@ detect_public_ip() {
 # ----------------------------------------------------------------------------------------------------
 render_caddyfile() { # domain|"" cloudflare(true|false) web_root gateway_port
   local domain="$1" cloudflare="$2" web_root="$3" port="$4"
-  local geo_block
+  local geo_block proxies
+  if [[ "$cloudflare" == "true" ]]; then
+    # Cloudflare's published edge ranges (cloudflare.com/ips). Caddy believes X-Forwarded-For and
+    # CF-Connecting-IP only from these, so the gateway's per-IP limits and the admin allowlist see the
+    # real visitor, not the edge. Without this every visitor behind Cloudflare shares one IP bucket.
+    proxies='trusted_proxies static private_ranges 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP X-Forwarded-For'
+  else
+    proxies='trusted_proxies static private_ranges'
+  fi
   if [[ "$cloudflare" == "true" ]]; then
     geo_block='	# Behind Cloudflare (orange cloud): Cloudflare sets CF-IPCountry itself, so it passes through.
 	# Only strip X-Country (clients could spoof it).
@@ -117,7 +126,7 @@ render_caddyfile() { # domain|"" cloudflare(true|false) web_root gateway_port
 {
 	admin off
 	servers {
-		trusted_proxies static private_ranges
+		${proxies}
 	}
 }
 
@@ -146,6 +155,7 @@ ${geo_block}
 	# upstream (a new TCP connection per request costs nothing here), and dial failures during the swap
 	# itself are retried for up to 15 s instead of failing the request.
 	reverse_proxy 127.0.0.1:${port} {
+		header_up X-Forwarded-For {client_ip} # the real visitor (trusted_proxies above), one hop
 		lb_try_duration 15s
 		lb_try_interval 250ms
 		flush_interval -1 # stream SSE chunks immediately
