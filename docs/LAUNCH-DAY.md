@@ -56,10 +56,18 @@ or with cast: `cast send <vault> "setRoute(address,uint8,address,uint24,bytes)" 
    (Set after the fact with `transferCreatorFeeRecipient(token, vault)` from the launch wallet if Pons
    only allows it post-launch.)
 2. From the launch: the **token address**, the **bonding-curve address** and the **launch block**.
-3. mesh-network.ai → Admin → Token: paste those three (the vault, pool, treasury, USDG and route are
-   pre-filled from the config), add the curve to **excluded wallets**, press **Check** — it reads the
-   chain and reports what is wired — then **Flip**. The gateway leaves the test feed; the next hourly
-   epoch sweeps real fees. Check the stats page an hour later.
+3. On the Mac (the admin API is only reachable on the server itself — Caddy answers 404 for `/admin/*`
+   from the internet — so this replaces the Admin → Token page):
+
+   ```sh
+   bash ~/Documents/mesh/scripts/chain/go-live.sh <token> <bonding-curve> <launch block>
+   ```
+
+   It saves the token, launch block and curve exclusion in the gateway, runs the on-chain **Check** and
+   prints every item (the NVDA price-source warning is expected), then asks before switching
+   `MESH_ADAPTER=evm` and recreating the gateway container. When `/health` reports `evm (pons)` the gateway
+   is on the real token; the next top-of-the-hour epoch sweeps real fees. Check Admin → overview or
+   `/stats` an hour later.
 
 ## If something goes wrong
 
