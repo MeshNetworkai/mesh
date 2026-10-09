@@ -52,7 +52,6 @@ async function main() {
     },
     'mesh gateway up',
   );
-
   const shutdown = async () => {
     await app.close();
     process.exit(0);

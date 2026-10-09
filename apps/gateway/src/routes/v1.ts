@@ -81,6 +81,7 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     }
     const guest = req.query.guest === '1' || req.query.guest === 'true';
     reply.header('cache-control', 'no-store');
+    // Include the configured sample fleet for every caller of the public catalogue.
     return catalogueView(ctx, { guest });
   });
 

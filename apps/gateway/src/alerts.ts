@@ -415,11 +415,6 @@ export class AlertMonitor {
     };
   }
 
-  /** POST /health/alerts/test: one message through the real sender, so the wiring can be proven from the admin side. */
-  async sendTest(): Promise<boolean> {
-    return this.deliver('Mesh alerts: test message sent through the gateway. Delivery works.');
-  }
-
   private async deliver(text: string): Promise<boolean> {
     let ok = true;
     try {
@@ -441,10 +436,5 @@ export async function alertRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/health/alerts', { preHandler: requireAdmin(ctx) }, async (_req, reply) => {
     if (!ctx.alerts) return reply.code(503).send({ error: 'alerts_disabled', message: 'ALERTS_ENABLED=false' });
     return ctx.alerts.status();
-  });
-  app.post('/health/alerts/test', { preHandler: requireAdmin(ctx) }, async (_req, reply) => {
-    if (!ctx.alerts) return reply.code(503).send({ error: 'alerts_disabled', message: 'ALERTS_ENABLED=false' });
-    const ok = await ctx.alerts.sendTest();
-    return reply.code(ok ? 200 : 502).send({ ok, sent: ok ? 'telegram' : 'failed — see gateway logs' });
   });
 }

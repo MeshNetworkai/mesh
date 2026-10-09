@@ -8,7 +8,8 @@ import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
 import { nodePayoutTotals } from '../node-payouts.js';
 import { reserveView } from '../reserve-report.js';
-import { usageShareTotals } from '../usage-share.js';
+import { sampleActivity, sampleInfo, sampleUsageShare } from '../sample-data.js';
+import { usageShareTotals, type UsageShareTotals } from '../usage-share.js';
 import { publicEpochView, type EpochRow } from './stats.js';
 
 /**
@@ -146,6 +147,12 @@ export function periodTotals(ctx: AppContext, from: number, to: number): PeriodT
     .get(from, to) as { n: number; node: number | null };
   s.req = rq.n;
   s.node = rq.node ?? 0;
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): what the simulated Macs did in this period. Zero when off.
+  const sim = sampleActivity(ctx, from, to);
+  s.req += sim.requests;
+  s.node += sim.networkRequests;
+  s.used += sim.spendMicros;
+  s.rewards += sim.rewardMicros;
   return toTotals(s);
 }
 
@@ -212,17 +219,27 @@ export function usageShareReport(ctx: AppContext) {
   const network = usageShareTotals(ctx.db, { source: 'network' });
   const upstream = usageShareTotals(ctx.db, { source: 'upstream' });
   const marketFee = cfg.sources.marketplaceFee ? microsToUsd(marketTotals(ctx.db).feesToHoldersMicros) : 0;
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): the share the simulated requests would have produced. Zero when off.
+  const sim = sampleUsageShare(ctx, 0, nowSec());
+  const plus = (real: UsageShareTotals, s: (typeof sim)['network']) => ({
+    marginUsd: real.marginUsd + microsToUsd(s.marginMicros),
+    toHoldersUsd: real.toHoldersUsd + microsToUsd(s.holderMicros),
+    toTreasuryUsd: real.toTreasuryUsd + microsToUsd(s.treasuryMicros),
+    requests: real.requests + s.requests,
+  });
+  const net = plus(network, sim.network);
+  const up = plus(upstream, sim.upstream);
   return {
     enabled: cfg.enabled,
     holderBps: cfg.holderBps,
     treasuryBps: cfg.treasuryBps,
-    marginUsd: all.marginUsd,
-    toHoldersUsd: all.toHoldersUsd,
-    toTreasuryUsd: all.toTreasuryUsd,
-    requests: all.requests,
+    marginUsd: all.marginUsd + microsToUsd(sim.network.marginMicros + sim.upstream.marginMicros),
+    toHoldersUsd: all.toHoldersUsd + microsToUsd(sim.network.holderMicros + sim.upstream.holderMicros),
+    toTreasuryUsd: all.toTreasuryUsd + microsToUsd(sim.network.treasuryMicros + sim.upstream.treasuryMicros),
+    requests: all.requests + sim.network.requests + sim.upstream.requests,
     bySource: {
-      network: { marginUsd: network.marginUsd, toHoldersUsd: network.toHoldersUsd, toTreasuryUsd: network.toTreasuryUsd, requests: network.requests },
-      upstream: { marginUsd: upstream.marginUsd, toHoldersUsd: upstream.toHoldersUsd, toTreasuryUsd: upstream.toTreasuryUsd, requests: upstream.requests },
+      network: net,
+      upstream: up,
       /** Always paid to the pool by the marketplace (feeToHoldersBps); counted here when sources.marketplaceFee is on. */
       marketplaceFee: { toHoldersUsd: marketFee, counted: cfg.sources.marketplaceFee },
     },
@@ -264,6 +281,13 @@ export function nodePayoutsReport(ctx: AppContext, now = nowSec()) {
   const cfg = ctx.config.nodeRewards.payout;
   const all = nodePayoutTotals(ctx.db);
   const last30 = nodePayoutTotals(ctx.db, now - 30 * DAY);
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): simulated rewards count as paid once they are older than
+  // the hold, like real ones, so the figure sits right next to the simulated rewards. Nothing was paid to anyone.
+  const simPaid = cfg.enabled ? sampleActivity(ctx, 0, now - cfg.holdSeconds, now).rewardMicros : 0;
+  const simPending = sampleActivity(ctx, 0, now, now).rewardMicros - simPaid;
+  all.paidMicros += simPaid;
+  all.pendingMicros += simPending;
+  last30.paidMicros += cfg.enabled ? sampleActivity(ctx, now - 30 * DAY, now - cfg.holdSeconds, now).rewardMicros : 0;
   return { enabled: cfg.enabled, paidAs: 'credits' as const, holdSeconds: cfg.holdSeconds, minUsd: cfg.minUsd, paidUsd: microsToUsd(all.paidMicros), wallets: all.wallets, pendingUsd: microsToUsd(all.pendingMicros), last30dUsd: microsToUsd(last30.paidMicros) };
 }
 
@@ -315,6 +339,8 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
     last7d,
     last30d,
     byWeek: byWeek(ctx, REPORT_WEEKS, now),
+    /** Set while requests, usage and node rewards include simulated Macs (test mode, operator view); null otherwise. */
+    sample: sampleInfo(ctx),
     feesIn: all.feesInUsd,
     creditsOut: all.creditsOutUsd,
     nodeRewards: all.nodeRewardsUsd,
@@ -332,7 +358,7 @@ export type Report = ReturnType<typeof computeReport>;
 
 export async function reportRoutes(app: FastifyInstance, ctx: AppContext) {
   let cache: { at: number; body: Report } | null = null;
-  app.get('/report', async (_req, reply) => {
+  app.get('/report', async (req, reply) => {
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeReport(ctx) };
@@ -365,6 +391,7 @@ export async function reportRoutes(app: FastifyInstance, ctx: AppContext) {
       epochDetails,
       previous: prev.isoWeek,
       next: next.start <= now ? next.isoWeek : null,
+      sample: sampleInfo(ctx),
       method: REPORT_METHOD,
       generatedAt: now,
     };

@@ -3,6 +3,7 @@ import type { AppContext } from '../context.js';
 import { dbOk, nowSec } from '../db.js';
 import { isOnline, jobStats24h, uptimePct24h } from '../network.js';
 import { isQuarantined, nodeModels, type NodeRow } from '../routing.js';
+import { sampleActivity, sampleInfo, sampleMachines, type SampleActivity, type SampleMachine } from '../sample-data.js';
 
 /**
  * GET /status — the public "is it up" page's data: one verdict, the components behind it, the last 24 h of
@@ -38,6 +39,23 @@ export interface StatusNode {
 
 const PROCESS_STARTED = nowSec();
 
+/** The simulated Macs as explorer rows: each gets its share of the simulated 24 hours by size and uptime. */
+function simulatedFleet(sims: SampleMachine[], activity: SampleActivity): StatusNode[] {
+  const weights = sims.reduce((a, m) => a + m.weight, 0) || 1;
+  return sims.map((m) => ({
+    id: m.id,
+    chip: m.chip,
+    ramGb: m.ramGb,
+    models: m.models,
+    state: m.running >= m.maxParallel ? 'busy' : 'online',
+    uptimePct24h: m.uptimePct24h,
+    jobs24h: Math.round((activity.networkRequests * m.weight) / weights),
+    tokens24h: Math.round((activity.networkTokens * m.weight) / weights),
+    since: m.since,
+    agentVersion: m.agentVersion,
+  }));
+}
+
 export function computeStatus(ctx: AppContext) {
   const now = nowSec();
   const db = dbOk(ctx.db);
@@ -57,11 +75,16 @@ export function computeStatus(ctx: AppContext) {
   let rows: NodeRow[] = [];
   if (db) rows = ctx.db.prepare(`SELECT * FROM nodes ORDER BY last_seen DESC LIMIT 500`).all() as NodeRow[];
   const live = rows.filter((r) => isOnline(r, now) && !isQuarantined(r));
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): simulated Macs count as online and registered.
+  const sample = sampleInfo(ctx);
+  const sims = sampleMachines(ctx, now);
+  const liveCount = live.length + sims.length;
+  const registered = rows.length + sims.length;
   components.push({
     key: 'network',
     label: 'Mac network',
-    state: live.length > 0 ? 'ok' : rows.length > 0 ? 'degraded' : 'off',
-    detail: live.length > 0 ? `${live.length} of ${rows.length} registered Mac${rows.length === 1 ? '' : 's'} online` : rows.length > 0 ? 'no Macs online — open models go upstream' : 'no Macs registered yet',
+    state: liveCount > 0 ? 'ok' : registered > 0 ? 'degraded' : 'off',
+    detail: liveCount > 0 ? `${liveCount} of ${registered} registered Mac${registered === 1 ? '' : 's'} online${sample ? ` (${sims.length} simulated)` : ''}` : registered > 0 ? 'no Macs online — open models go upstream' : 'no Macs registered yet',
   });
 
   const last = db
@@ -99,7 +122,8 @@ export function computeStatus(ctx: AppContext) {
     ? (ctx.db.prepare(`SELECT code, COUNT(*) AS n FROM errors_log WHERE created_at >= ? GROUP BY code ORDER BY n DESC LIMIT 5`).all(since) as Array<{ code: string; n: number }>)
     : [];
 
-  const requests24h = db ? (ctx.db.prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE created_at >= ?`).get(since) as { n: number }).n : 0;
+  const sim24h = sampleActivity(ctx, since, now, now);
+  const requests24h = (db ? (ctx.db.prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE created_at >= ?`).get(since) as { n: number }).n : 0) + sim24h.requests;
 
   const fleet: StatusNode[] = rows
     .filter((r) => !isQuarantined(r))
@@ -121,7 +145,9 @@ export function computeStatus(ctx: AppContext) {
         agentVersion: r.agent_version,
       };
     })
-    .sort((a, b) => (a.state === 'offline' ? 1 : 0) - (b.state === 'offline' ? 1 : 0) || b.jobs24h - a.jobs24h);
+    .concat(simulatedFleet(sims, sim24h))
+    .sort((a, b) => (a.state === 'offline' ? 1 : 0) - (b.state === 'offline' ? 1 : 0) || b.jobs24h - a.jobs24h)
+    .slice(0, 200);
 
   const worst = components.reduce<ComponentState>((acc, c) => (rank(c.state) > rank(acc) ? c.state : acc), 'ok');
   const overall: 'operational' | 'degraded' | 'down' = worst === 'down' ? 'down' : worst === 'degraded' ? 'degraded' : 'operational';
@@ -133,8 +159,10 @@ export function computeStatus(ctx: AppContext) {
     errors24h,
     errorTotal24h: errorTotal,
     topErrorCodes: topCodes,
+    /** Set while the fleet includes simulated Macs (test mode, operator view; their ids start `sim_`); null otherwise. */
+    sample,
     fleet,
-    fleetOnline: live.length,
+    fleetOnline: liveCount,
     generatedAt: now,
   };
 }
@@ -153,7 +181,7 @@ function fmtDuration(sec: number): string {
 
 export async function statusRoutes(app: FastifyInstance, ctx: AppContext) {
   let cache: { at: number; body: ReturnType<typeof computeStatus> } | null = null;
-  app.get('/status', async (_req, reply) => {
+  app.get('/status', async (req, reply) => {
     const ttl = Math.min(ctx.env.STATS_CACHE_MS, 15_000);
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeStatus(ctx) };

@@ -92,6 +92,12 @@ const EnvSchema = z.object({
   AUTH_URI: z.string().url().optional(),
   /** /stats cache TTL; 0 disables (tests). */
   STATS_CACHE_MS: z.coerce.number().int().nonnegative().default(10_000),
+  /**
+   * Add this many simulated Macs and their activity to public read endpoints for every visitor
+   * (sample-data.ts), including signed-out browsers. Nothing is written to the database. The admin
+   * console keeps real figures. Stays in effect on mock and live chains until removed. 0 = off.
+   */
+  MESH_SAMPLE_NODES: z.coerce.number().int().min(0).max(5000).default(0),
   /** Enforce config.geoBlock on /v1 and /auth. Defaults to on in production, off otherwise. */
   GEO_BLOCK_ENFORCE: bool.optional(),
   LOG_LEVEL: z.string().default('info'),

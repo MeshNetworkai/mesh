@@ -50,11 +50,11 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 | Gate | Command | Count |
 | --- | --- | --- |
-| Gateway unit + HTTP | `pnpm test` | 38 files, **399** tests (incl. `node-payouts.test.ts`: rewards paid as credits once, after the hold, clawed back when withheld late, sellable on the marketplace; `market.test.ts`: every withdrawal request announced once, retried when the send fails, counted in the digest; `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts` and `migration20.test.ts`: the ledger rebuild and the withdrawal-announcement column on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
+| Gateway unit + HTTP | `pnpm test` | 39 files, **405** tests (incl. `node-payouts.test.ts`: rewards paid as credits once, after the hold, clawed back when withheld late, sellable on the marketplace; `market.test.ts`: every withdrawal request announced once, retried when the send fails, counted in the digest; `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts` and `migration20.test.ts`: the ledger rebuild and the withdrawal-announcement column on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
 | Chain adapter | `pnpm --filter @mesh/chain-adapter test` | 8 files, **77** tests offline (Solana, EVM, Pons incl. the stale-feed, reserve-read, partly-failed-sweep and unpriced-quote-token cases); 11 more are skipped unless a local anvil is available |
 | Node agent | `pnpm --filter @mesh/node-agent test` | 6 files, **73** tests (incl. `update.test.ts` against a fake release server: good hash, bad hash, HTML body, same version, 5xx, daily loop, auto-install) |
 | EVM contracts | `cd contracts/evm && forge test` | 34 Foundry tests (17 token, 17 staking) |
-| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **30** Playwright tests, all passing (incl. the admin withdrawal queue and "Mark paid"; desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll) |
+| Browser e2e (real gateway, mock adapter) | `pnpm e2e` | **31** Playwright tests, all passing (incl. the admin withdrawal queue and "Mark paid"; desktop flows incl. cookie session + admin cookie, `/download`; 390 px no-horizontal-scroll) |
 | Types / build | `pnpm -r typecheck`, `pnpm --filter web build` | green for web, config, chain-adapter, node-agent; gateway typecheck and the node-protocol / savings / network tests go red only while the privacy-tier edits to `routes/v1.ts`, `network.ts`, `routing.ts` are mid-flight |
 | Screenshots | `pnpm screenshots` → `docs/screens/` | 15 pages × 2 widths (landing, landing-beta, invite, app, keys, chat, node, market, stats, download, docs, admin, api, terms, 404), regenerated 8 Oct from the mock UI, which now prices upstream models as shipped (list + 6 %) instead of the old 20 % mock discount. `docs-1440.png` / `docs-390.png` are new; `report-*.png` is an older pair the script no longer writes |
 | Release tooling | `sh -n scripts/release/*.sh apps/menubar/scripts/*.sh`, `ruby -c homebrew-tap/Formula/mesh-node.rb`, YAML parse of `.github/workflows/*.yml` | green; `make-tarball.sh` exercised end to end (tarball → wrapper → `install.sh` → `mesh-node --version`) |
@@ -95,9 +95,9 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 ```sh
 pnpm install && pnpm build          # packages + gateway + web
-pnpm test                           # gateway (399)
+pnpm test                           # gateway (405)
 pnpm test:all                       # + chain-adapter (77, 11 skipped without anvil) + node-agent (73)
-pnpm e2e                            # Playwright (30) against the real gateway
+pnpm e2e                            # Playwright (31) against the real gateway
 VERSION=0.2.0 sh scripts/release/make-tarball.sh   # release tarball + sha256 (CI does this on tag v*)
 pnpm dev                            # gateway :8787 (mock adapter, mock upstream) + web :5173
 pnpm demo                           # scripted end-to-end run incl. a curl-simulated node

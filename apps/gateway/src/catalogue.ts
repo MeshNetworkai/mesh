@@ -18,6 +18,7 @@ import {
 import type { AppContext } from './context.js';
 import { nowSec } from './db.js';
 import { nodeModels, onlineNodes } from './routing.js';
+import { sampleFleet } from './sample-data.js';
 
 export interface PricePerM {
   promptUsdPerM: number;
@@ -60,7 +61,10 @@ export function guestModelAllowed(ctx: Pick<AppContext, 'config' | 'prices' | 'p
   return tier !== undefined && ctx.config.guest.allowedTiers.includes(tier);
 }
 
-export function catalogueModels(ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'> & { env?: { NODE_ENV?: string } }, now = nowSec()): CatalogueModel[] {
+export function catalogueModels(
+  ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'> & { env?: { NODE_ENV?: string; MESH_SAMPLE_NODES?: number } },
+  now = nowSec(),
+): CatalogueModel[] {
   const { policy, prices, config } = ctx;
   // The offline mock model is a dev/test convenience; it never belongs in a production picker.
   const hideMock = ctx.env?.NODE_ENV === 'production';
@@ -70,7 +74,9 @@ export function catalogueModels(ctx: Pick<AppContext, 'config' | 'prices' | 'pol
   const listedTags = new Set<string>();
   const pricing = config.requestPricing;
   const online = ctx.broker ? ctx.broker.onlineNodes(now) : onlineNodes(ctx.db, now);
-  const onlineFor = (tag: string | null) => (tag ? online.filter((n) => nodeModels(n).includes(tag)).length : 0);
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): simulated Macs count towards the models they advertise.
+  const simulated = sampleFleet(ctx, now).models;
+  const onlineFor = (tag: string | null) => (tag ? online.filter((n) => nodeModels(n).includes(tag)).length + (simulated[tag] ?? 0) : 0);
   const flat: PricePerM = { promptUsdPerM: pricing.networkPricePerMTokens, completionUsdPerM: pricing.networkPricePerMTokens };
   const upstreamPrice = (p: ModelPrice): PricePerM => ({ promptUsdPerM: meshPricePerM(p.promptUsdPerM, pricing), completionUsdPerM: meshPricePerM(p.completionUsdPerM, pricing) });
 

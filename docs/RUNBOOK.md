@@ -687,6 +687,28 @@ money list the credits on the marketplace and withdraw USDG, which arrives as an
 | Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |
 
+### 11l. Looking at the site with a bigger network (sample network)
+
+Set `MESH_SAMPLE_NODES=254` in `/opt/mesh/.env`, then restart the gateway. Every visitor, including
+signed-out browsers, sees 254 simulated Macs **added to the real count** on the landing page,
+`/stats`, `/status`, the node page and the model picker, with the requests, tokens, spend, savings,
+usage share and node rewards that many machines would produce. Public reports include them too.
+
+- **The public view is the same for everyone.** Admin credentials do not change the sample figures;
+  the public summary endpoints use their normal shared caches. Responses with simulated figures carry
+  `sample: { nodes, note }` metadata. Simulated machines have ids starting `sim_`.
+- **Nothing is stored.** No node, request, ledger row or reward is written for a simulated Mac. They
+  cannot serve a job, and the admin console's own pages (overview, withdrawals) stay real. The figures
+  are a function of the number and the clock, so every page agrees and a restart changes nothing.
+- **It stays on until you remove it.** Both mock and live chain adapters include the sample network.
+  Remove the setting (or set it to `0`) and restart to return public pages to real figures only.
+- **Fees and credits are not simulated.** Before launch they come from the fee test feed (push test
+  fees with `POST /admin/fake-fees`); after launch they are the real ones.
+
+Check: `curl -s $G/health | jq .sampleNodes` returns the configured number (0 when off).
+`curl -s $G/stats | jq '.sample, .nodesOnline'` shows the public sample view without credentials;
+adding `-H "$A"` returns the same sample count.
+
 ## 12. Backups: verify monthly, restore when needed
 
 Nightly at 03:15 UTC `deploy.sh backup` writes a WAL-safe copy to `/opt/mesh/backups/mesh-YYYYMMDD-HHMMSS.db.gz` and keeps the newest 14. A backup nobody has ever restored is a hope, not a backup, so:

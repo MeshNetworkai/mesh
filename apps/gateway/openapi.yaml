@@ -100,7 +100,13 @@ paths:
     get:
       tags: [Public]
       summary: Network totals, last epoch and 24 hourly buckets
-      description: Cached for `STATS_CACHE_MS` (10 s by default); `cache-control` and `x-cache-age-ms` say how old the body is.
+      description: |
+        Cached for `STATS_CACHE_MS` (10 s by default); `cache-control` and `x-cache-age-ms` say how old the body is.
+
+        `sample` is null by default. When `MESH_SAMPLE_NODES` is positive, all visitors receive
+        simulated Macs and their activity added to the figures, with `sample: { nodes, note }`
+        metadata. No sign-in is required. `GET /nodes`, `/status`, `/report` and weekly reports
+        behave the same way; `/v1/models` includes the sample fleet in its online counts.
       operationId: getStats
       responses:
         '200':

@@ -4,10 +4,11 @@ import { z } from 'zod';
 import { betaView } from '../beta.js';
 import type { AppContext } from '../context.js';
 import { dbOk, nowSec } from '../db.js';
-import { microsToUsd } from '../money.js';
+import { microsToUsd, usdToMicros } from '../money.js';
 import { jobStats24h } from '../network.js';
 import { reserveView } from '../reserve-report.js';
 import { NODE_ONLINE_SEC } from '../routing.js';
+import { sampleActivity, sampleInfo, sampleNodeCount, sampleUsageShare } from '../sample-data.js';
 import { networkSavingsUsd24h } from '../savings.js';
 import { starterStatsView } from '../starter.js';
 import { usageShareToHolders24hUsd } from '../usage-share.js';
@@ -53,6 +54,13 @@ export function hourlySeries(ctx: AppContext, now = nowSec()): HourPoint[] {
     if (b) {
       b.requests = r.n;
       b.spendUsd = microsToUsd(r.cost);
+    }
+  }
+  if (sampleNodeCount(ctx) > 0) {
+    for (const b of buckets.values()) {
+      const s = sampleActivity(ctx, b.hour, b.hour + 3600, now);
+      b.requests += s.requests;
+      b.spendUsd = microsToUsd(usdToMicros(b.spendUsd) + s.spendMicros);
     }
   }
   return [...buckets.values()];
@@ -125,8 +133,18 @@ export function computeStats(ctx: AppContext) {
     .prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE upstream LIKE 'node:%' AND created_at >= ?`)
     .get(now - 86_400) as { n: number };
   const jobs = jobStats24h(db, undefined, now);
+  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): simulated Macs and their last 24 hours, added to the
+  // real figures below for an operator's view. All zero for everyone else and when it is off.
+  const sample = sampleInfo(ctx);
+  const s24 = sampleActivity(ctx, now - 86_400, now, now);
+  const sAll = sampleActivity(ctx, 0, now, now);
+  const sShare = sampleUsageShare(ctx, now - 86_400, now, now);
+  const requests24h = req24.n + s24.requests;
+  const network24h = servedByNode.n + s24.networkRequests;
 
   return {
+    /** Set while the figures include simulated Macs (test mode, operator view); null otherwise. */
+    sample,
     token: {
       name: ctx.config.name,
       ticker: ctx.config.ticker,
@@ -140,7 +158,7 @@ export function computeStats(ctx: AppContext) {
     },
     totalFeesUsd: microsToUsd(fees.v),
     creditsDistributedUsd: microsToUsd(dist.v),
-    creditsUsedUsd: microsToUsd(used.v),
+    creditsUsedUsd: microsToUsd(used.v + sAll.spendMicros),
     epochsRun: epochs.n,
     lastEpoch: last
       ? {
@@ -153,19 +171,19 @@ export function computeStats(ctx: AppContext) {
       : null,
     holdersEligibleLastEpoch: last?.eligible_holders ?? 0,
     feesThisEpochUsd: feesThisEpochUsd(ctx),
-    requestsLast24h: req24.n,
-    spendLast24hUsd: microsToUsd(req24.cost),
-    nodesOnline: nodes.n,
-    servedByNetworkPercent: req24.n === 0 ? 0 : Math.round((servedByNode.n / req24.n) * 10_000) / 100,
-    servedByNetwork24h: servedByNode.n,
-    jobs24h: jobs.jobs,
-    networkTokens24h: jobs.tokens,
+    requestsLast24h: requests24h,
+    spendLast24hUsd: microsToUsd(req24.cost + s24.spendMicros),
+    nodesOnline: nodes.n + (sample?.nodes ?? 0),
+    servedByNetworkPercent: requests24h === 0 ? 0 : Math.round((network24h / requests24h) * 10_000) / 100,
+    servedByNetwork24h: network24h,
+    jobs24h: jobs.jobs + s24.networkRequests,
+    networkTokens24h: jobs.tokens + s24.networkTokens,
     networkPricePerMTokens: ctx.config.requestPricing.networkPricePerMTokens,
     /** Network credits: USD saved across all wallets in the last 24h by Mesh nodes serving requests at the network price. */
-    networkSavingsUsd24h: networkSavingsUsd24h(db, now),
+    networkSavingsUsd24h: microsToUsd(usdToMicros(networkSavingsUsd24h(db, now)) + s24.savedMicros),
     showSavings: ctx.config.requestPricing.showSavings,
     /** Usage-revenue share (docs/PRICING.md engine 2): USD booked to the holder pool from paid-request margins in the last 24h; 0 while disabled. */
-    usageShareToHolders24hUsd: usageShareToHolders24hUsd(db, now),
+    usageShareToHolders24hUsd: microsToUsd(usdToMicros(usageShareToHolders24hUsd(db, now)) + sShare.network.holderMicros + sShare.upstream.holderMicros),
     usageShareEnabled: ctx.config.usageShare.enabled,
     /** Upstream pricing: a discount on OpenRouter list (or a markup), bps. */
     upstreamDiscountBps: ctx.config.requestPricing.upstreamDiscountBps,
@@ -221,6 +239,8 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
       /** `mock`, `mock (waiting for token)` (MESH_ADAPTER asks for the chain but token/feeVault are not set yet), `evm (pons)`, `evm`, `solana`. */
       adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       adapterRequested: ctx.env.MESH_ADAPTER,
+      /** Sample network (MESH_SAMPLE_NODES): simulated Macs included in public stats for every visitor; 0 when off. */
+      sampleNodes: sampleNodeCount(ctx),
       chain: ctx.adapter.chain,
       upstream: ctx.upstream.name,
       upstreamMode: ctx.upstream.name === 'mock' ? 'mock (offline)' : 'live',
@@ -245,7 +265,7 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   let cache: { at: number; body: ReturnType<typeof computeStats> } | null = null;
-  app.get('/stats', async (_req, reply) => {
+  app.get('/stats', async (req, reply) => {
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeStats(ctx) };

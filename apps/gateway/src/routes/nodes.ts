@@ -13,6 +13,7 @@ import { nodeRewardsTotal } from '../ledger.js';
 import { microsToUsd } from '../money.js';
 import { JOB_VIEW_FIELDS, isOnline, jobStats24h, recordHeartbeat, uptimePct24h, type JobPayload, type JobRow } from '../network.js';
 import { HEARTBEAT_EVERY_SEC, NODE_ONLINE_SEC, REPUTATION_WINDOW, nodeModels, reputationConfig, trustedTierIndex, trustedVia, type NodeRow } from '../routing.js';
+import { sampleActivity, sampleFleet, sampleInfo } from '../sample-data.js';
 
 export const NODE_TOKEN_PREFIX = 'mesh_nt_';
 /** Longest a node may long-poll GET /nodes/:id/jobs/next. */
@@ -242,24 +243,34 @@ export function nodesSummary(ctx: AppContext) {
     if (n.busy >= max) busy += 1;
   }
   const s24 = jobStats24h(ctx.db, undefined, now);
-  const requests24h = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE created_at >= ?`).get(now - 86_400) as { n: number }).n;
+  const real24h = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE created_at >= ?`).get(now - 86_400) as { n: number }).n;
   const queued = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued'`).get() as { n: number }).n;
+  const sample = sampleInfo(ctx);
+  const sim = sampleFleet(ctx, now);
+  const simActivity = sampleActivity(ctx, now - 86_400, now, now);
+  for (const [chip, n] of Object.entries(sim.chips)) chips[chip] = (chips[chip] ?? 0) + n;
+  for (const [model, n] of Object.entries(sim.models)) models[model] = (models[model] ?? 0) + n;
+  const onlineCount = online.length + sim.nodes;
+  const busyCount = busy + sim.busy;
+  const served24h = s24.done + simActivity.networkRequests;
+  const requests24h = real24h + simActivity.requests;
   return {
-    online: online.length,
-    total: rows.length,
-    busy,
-    idle: online.length - busy,
+    sample,
+    online: onlineCount,
+    total: rows.length + sim.nodes,
+    busy: busyCount,
+    idle: onlineCount - busyCount,
     /** Job slots across online nodes (Σ maxParallel) and how many are in use. */
-    slots,
-    runningJobs: running,
+    slots: slots + sim.slots,
+    runningJobs: running + sim.running,
     queuedJobs: queued,
-    totalRamGb: ramGb,
+    totalRamGb: ramGb + sim.ramGb,
     chips,
     models,
-    jobs24h: s24.jobs,
-    servedByNetwork24h: s24.done,
-    tokens24h: s24.tokens,
-    servedByNetworkPercent: requests24h === 0 ? 0 : Math.round((s24.done / requests24h) * 10_000) / 100,
+    jobs24h: s24.jobs + simActivity.networkRequests,
+    servedByNetwork24h: served24h,
+    tokens24h: s24.tokens + simActivity.networkTokens,
+    servedByNetworkPercent: requests24h === 0 ? 0 : Math.round((served24h / requests24h) * 10_000) / 100,
     offlineAfterSec: NODE_ONLINE_SEC,
     heartbeatEverySec: HEARTBEAT_EVERY_SEC,
     generatedAt: now,
@@ -642,7 +653,7 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
 
   /** Public summary: no wallets or tokens. Cached like /stats (STATS_CACHE_MS; 0 disables). */
   let nodesCache: { at: number; body: ReturnType<typeof nodesSummary> } | null = null;
-  app.get('/nodes', async (_req, reply) => {
+  app.get('/nodes', async (req, reply) => {
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!nodesCache || ttl === 0 || t - nodesCache.at >= ttl) nodesCache = { at: t, body: nodesSummary(ctx) };
