@@ -34,8 +34,8 @@
   "treasury": "0x69928635801A4ee6405Db918e8Bc7656c4A9af28",
   "_comment_treasury": "Treasury multisig: the treasury share of every sweep.",
 
-  ,
-  "_comment_quoteTokens": "Assets Pons pays creator fees in. 0x000…0 = native ETH (the launch's quote asset). Add USDG here only if the token is paired with USDG.",
+  "quoteTokens": ["0x0000000000000000000000000000000000000000", "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC"],
+  "_comment_quoteTokens": "Assets Pons pays creator fees in. 0x000…0 = native ETH; 0xd060…9EEC = NVDA (the launch pairs against NVDA, so creator fees arrive in NVDA and the vault swaps them to USDG).",
   "stable": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
   "stableDecimals": 6,
   "_comment_stable": "USDG on Robinhood Chain the vault settles in. Required before the first live sweep: with sweepMode swap and no stable the vault's sweep() reverts, the epoch is recorded as failed and the fees wait in the vault (nothing is lost, nothing is minted).",
