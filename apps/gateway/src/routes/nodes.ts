@@ -245,7 +245,6 @@ export function nodesSummary(ctx: AppContext) {
   const s24 = jobStats24h(ctx.db, undefined, now);
   const real24h = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM requests_log WHERE created_at >= ?`).get(now - 86_400) as { n: number }).n;
   const queued = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued'`).get() as { n: number }).n;
-  // Test mode (MESH_SAMPLE_NODES, sample-data.ts): the simulated Macs join the counts. Empty when off.
   const sample = sampleInfo(ctx);
   const sim = sampleFleet(ctx, now);
   const simActivity = sampleActivity(ctx, now - 86_400, now, now);
@@ -256,7 +255,6 @@ export function nodesSummary(ctx: AppContext) {
   const served24h = s24.done + simActivity.networkRequests;
   const requests24h = real24h + simActivity.requests;
   return {
-    /** Set while the counts include simulated Macs (test mode, operator view); null otherwise. */
     sample,
     online: onlineCount,
     total: rows.length + sim.nodes,
