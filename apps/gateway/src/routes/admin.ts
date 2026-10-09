@@ -10,6 +10,7 @@ import { runHousekeeping, type HousekeepingResult } from '../jobs/housekeeping.j
 import { addLedgerEntry, balanceMicros, ensureWallet, treasuryBalanceMicros } from '../ledger.js';
 import { microsToUsd, usdToMicros } from '../money.js';
 import { NODE_ONLINE_SEC, nodeModels, type NodeRow } from '../routing.js';
+import { sampleConfigured } from '../sample-data.js';
 import { clearQuarantine, nodeVerificationStats, quarantineNode, verificationOverview } from '../verification.js';
 import { starterAdminRoutes } from '../starter.js';
 import { chainRoutes } from './chain.js';
@@ -212,6 +213,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       upstream: ctx.upstream.name,
       adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       chain: ctx.adapter.chain,
+      /** Test mode (MESH_SAMPLE_NODES): simulated Macs a signed-in operator sees added to the stats pages. Every number in this overview is real. */
+      sampleNodes: sampleConfigured(ctx),
       epochs: epochs.map((e) => ({
         epochStart: e.epoch_start,
         epochEnd: e.epoch_end,

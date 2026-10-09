@@ -50,7 +50,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 | Gate | Command | Count |
 | --- | --- | --- |
-| Gateway unit + HTTP | `pnpm test` | 38 files, **399** tests (incl. `node-payouts.test.ts`: rewards paid as credits once, after the hold, clawed back when withheld late, sellable on the marketplace; `market.test.ts`: every withdrawal request announced once, retried when the send fails, counted in the digest; `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts` and `migration20.test.ts`: the ledger rebuild and the withdrawal-announcement column on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
+| Gateway unit + HTTP | `pnpm test` | 39 files, **405** tests (incl. `node-payouts.test.ts`: rewards paid as credits once, after the hold, clawed back when withheld late, sellable on the marketplace; `market.test.ts`: every withdrawal request announced once, retried when the send fails, counted in the digest; `economics.test.ts`: credit expiry, non-transferable starter credit, direct sales, the reserve and `reserve_short`, a skipped sweep raising `failed_sweep`; `migration19.test.ts` and `migration20.test.ts`: the ledger rebuild and the withdrawal-announcement column on a populated database; `usage-share.test.ts`: the upstream fee and the reward ceiling; plus install, points, security, session-hardening, node protocol, savings, staking, holding-age, report, alerts, verification, market, deposits) |
 | Chain adapter | `pnpm --filter @mesh/chain-adapter test` | 8 files, **77** tests offline (Solana, EVM, Pons incl. the stale-feed, reserve-read, partly-failed-sweep and unpriced-quote-token cases); 11 more are skipped unless a local anvil is available |
 | Node agent | `pnpm --filter @mesh/node-agent test` | 6 files, **73** tests (incl. `update.test.ts` against a fake release server: good hash, bad hash, HTML body, same version, 5xx, daily loop, auto-install) |
 | EVM contracts | `cd contracts/evm && forge test` | 34 Foundry tests (17 token, 17 staking) |
@@ -95,7 +95,7 @@ Deployed at https://mesh-network.ai (web) and https://api.mesh-network.ai (gatew
 
 ```sh
 pnpm install && pnpm build          # packages + gateway + web
-pnpm test                           # gateway (399)
+pnpm test                           # gateway (405)
 pnpm test:all                       # + chain-adapter (77, 11 skipped without anvil) + node-agent (73)
 pnpm e2e                            # Playwright (30) against the real gateway
 VERSION=0.2.0 sh scripts/release/make-tarball.sh   # release tarball + sha256 (CI does this on tag v*)

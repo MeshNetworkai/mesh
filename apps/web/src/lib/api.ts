@@ -219,7 +219,8 @@ export const getStatus = async (): Promise<StatusResponse> => {
   if (MOCK) return mock.mockStatus();
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/status`, { credentials: 'omit' });
+    // Cookies go along like on every other request, so an operator's test-mode view covers this page too.
+    res = await fetch(`${API_URL}/status`, { credentials: 'include' });
   } catch {
     throw new ApiError(0, `Could not reach the gateway at ${API_URL}`, 'network');
   }

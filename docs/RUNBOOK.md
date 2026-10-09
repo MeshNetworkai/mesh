@@ -687,6 +687,30 @@ money list the credits on the marketplace and withdraw USDG, which arrives as an
 | Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |
 
+### 11l. Looking at the site with a bigger network (test mode, before launch)
+
+`MESH_SAMPLE_NODES=254` in `/opt/mesh/.env`, then restart the gateway. From then on a browser that is
+signed in to the admin console (`/admin`, the `mesh_admin` cookie) sees 254 simulated Macs **added to
+the real count** on the landing page, `/stats`, `/status`, the node page and the model picker, with the
+requests, tokens, spend, savings, usage share and node rewards that many machines would produce.
+Sign out of the admin console, or open a private window, and the same pages show the real figures.
+
+What it is and is not (`apps/gateway/src/sample-data.ts`):
+
+- **Only an operator sees it.** A request without admin credentials gets the real figures on the same
+  URLs; an operator's answers are sent `cache-control: private, no-store` and never reach the shared cache.
+- **Nothing is stored.** No node, request, ledger row or reward is written for a simulated Mac. They
+  cannot serve a job, and the admin console's own pages (overview, withdrawals) stay real. The figures are
+  a function of the number and the clock, so every page agrees and a restart changes nothing.
+- **It ends with the launch.** On the live chain adapter the setting is ignored (the startup log says
+  so); remove the line then.
+- **Fees and credits are not simulated.** They come from the fee test feed: push test fees from the admin
+  console (`POST /admin/fake-fees`) and the hourly epoch distributes them as usual.
+
+Check: `curl -s $G/health | jq .sampleNodes` (the configured number, 0 when off or live);
+`curl -s $G/stats -H "$A" | jq '.sample, .nodesOnline'` (operator view) against `curl -s $G/stats | jq .nodesOnline`
+(what a visitor gets). Simulated machines are listed with ids starting `sim_`.
+
 ## 12. Backups: verify monthly, restore when needed
 
 Nightly at 03:15 UTC `deploy.sh backup` writes a WAL-safe copy to `/opt/mesh/backups/mesh-YYYYMMDD-HHMMSS.db.gz` and keeps the newest 14. A backup nobody has ever restored is a hope, not a backup, so:

@@ -34,6 +34,12 @@ export interface AppContext {
    * `evm`, `solana`. Reported by /health and the admin overview.
    */
   adapterStatus?: string;
+  /**
+   * True on the view of the context a signed-in operator's request is answered with while test mode is on
+   * (sample-data.ts `sampleViewFor`): the read endpoints then add the simulated Macs. Never set on the
+   * gateway's own context, so everybody else gets the real figures.
+   */
+  sampleViewer?: boolean;
   /** Test hook: replaces the on-chain Check behind POST /admin/chain/check. */
   chainCheck?: typeof checkPonsConfig;
   config: TokenomicsConfig;
@@ -150,6 +156,17 @@ export function requireAdmin(ctx: AppContext) {
     reply.code(401).send({ error: 'unauthorized', message: 'admin token required' });
     return reply;
   };
+}
+
+/**
+ * Whether the request comes from a signed-in operator: ADMIN_TOKEN in a header, or a valid `mesh_admin`
+ * cookie. Never rejects; for public routes that answer an operator differently (sample-data.ts).
+ */
+export async function isAdminRequest(ctx: Pick<AppContext, 'env'>, req: FastifyRequest): Promise<boolean> {
+  const token = adminHeaderToken(req);
+  if (token && safeEqual(token, ctx.env.ADMIN_TOKEN)) return true;
+  const cookie = cookiesOf(req)[ADMIN_COOKIE];
+  return Boolean(cookie && (await verifyAdminSession(jwtSecrets(ctx.env), cookie)));
 }
 
 // ---------- cookie writers (shared by /auth and /admin) ----------
