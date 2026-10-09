@@ -383,13 +383,13 @@ export function Landing() {
               <span>
                 <b className="num">{fmtCompact(stats?.requestsLast24h ?? null)}</b> requests in 24h
               </span>
-              {/* Fees and credits appear once the first real sweep has happened; "$0" before launch says nothing. */}
+              {/* Fees and credits appear once the first real sweep has happened; "$0" before launch says nothing (test credits round to $0 too, so credits follow the fees). */}
               {(stats?.totalFeesUsd ?? 0) > 0 ? (
                 <span>
                   <b className="num">{fmtUsd(stats?.totalFeesUsd ?? null, 0)}</b> fees collected
                 </span>
               ) : null}
-              {(stats?.creditsDistributedUsd ?? 0) > 0 ? (
+              {(stats?.totalFeesUsd ?? 0) > 0 && (stats?.creditsDistributedUsd ?? 0) > 0 ? (
                 <span>
                   <b className="num">{fmtUsd(stats?.creditsDistributedUsd ?? null, 0)}</b> credits issued
                 </span>
