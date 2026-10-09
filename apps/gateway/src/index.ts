@@ -53,11 +53,9 @@ async function main() {
     },
     'mesh gateway up',
   );
-  // Test mode: say at startup whether it is in effect.
-  if (env.MESH_SAMPLE_NODES > 0) {
-    const active = sampleConfigured(app.ctx);
-    if (active > 0) app.log.warn({ sampleNodes: active }, 'test mode: a signed-in operator sees simulated Macs added to the stats (MESH_SAMPLE_NODES); visitors get the real figures');
-    else app.log.warn({ requested: env.MESH_SAMPLE_NODES }, 'MESH_SAMPLE_NODES is set but ignored: the gateway is on the live chain adapter');
+  // Test mode: say at startup that it is on (it stays on, live chain included, until the setting is removed).
+  if (sampleConfigured(app.ctx) > 0) {
+    app.log.warn({ sampleNodes: sampleConfigured(app.ctx), adapter: app.ctx.adapterStatus ?? env.MESH_ADAPTER }, 'test mode: a signed-in operator sees simulated Macs added to the stats (MESH_SAMPLE_NODES); visitors get the real figures');
   }
 
   const shutdown = async () => {

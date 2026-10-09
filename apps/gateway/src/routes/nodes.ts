@@ -256,7 +256,7 @@ export function nodesSummary(ctx: AppContext) {
   const served24h = s24.done + simActivity.networkRequests;
   const requests24h = real24h + simActivity.requests;
   return {
-    /** Set while the counts include simulated Macs (test mode before the token launch); null otherwise. */
+    /** Set while the counts include simulated Macs (test mode, operator view); null otherwise. */
     sample,
     online: onlineCount,
     total: rows.length + sim.nodes,

@@ -159,7 +159,7 @@ export function computeStatus(ctx: AppContext) {
     errors24h,
     errorTotal24h: errorTotal,
     topErrorCodes: topCodes,
-    /** Set while the fleet includes simulated Macs (test mode before the token launch; their ids start `sim_`); null otherwise. */
+    /** Set while the fleet includes simulated Macs (test mode, operator view; their ids start `sim_`); null otherwise. */
     sample,
     fleet,
     fleetOnline: liveCount,

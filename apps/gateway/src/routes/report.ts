@@ -339,7 +339,7 @@ export function computeReport(ctx: AppContext, now = nowSec()) {
     last7d,
     last30d,
     byWeek: byWeek(ctx, REPORT_WEEKS, now),
-    /** Set while requests, usage and node rewards include simulated Macs (test mode before the token launch); null otherwise. */
+    /** Set while requests, usage and node rewards include simulated Macs (test mode, operator view); null otherwise. */
     sample: sampleInfo(ctx),
     feesIn: all.feesInUsd,
     creditsOut: all.creditsOutUsd,

@@ -135,7 +135,7 @@ export function computeStats(ctx: AppContext) {
     .get(now - 86_400) as { n: number };
   const jobs = jobStats24h(db, undefined, now);
   // Test mode (MESH_SAMPLE_NODES, sample-data.ts): simulated Macs and their last 24 hours, added to the
-  // real figures below. All zero when it is off or the token is live.
+  // real figures below for an operator's view. All zero for everyone else and when it is off.
   const sample = sampleInfo(ctx);
   const s24 = sampleActivity(ctx, now - 86_400, now, now);
   const sAll = sampleActivity(ctx, 0, now, now);
@@ -144,7 +144,7 @@ export function computeStats(ctx: AppContext) {
   const network24h = servedByNode.n + s24.networkRequests;
 
   return {
-    /** Set while the figures include simulated Macs (test mode before the token launch); null otherwise. */
+    /** Set while the figures include simulated Macs (test mode, operator view); null otherwise. */
     sample,
     token: {
       name: ctx.config.name,
@@ -240,7 +240,7 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
       /** `mock`, `mock (waiting for token)` (MESH_ADAPTER asks for the chain but token/feeVault are not set yet), `evm (pons)`, `evm`, `solana`. */
       adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       adapterRequested: ctx.env.MESH_ADAPTER,
-      /** Test mode (MESH_SAMPLE_NODES): simulated Macs a signed-in operator sees added to the stats; 0 when off or the token is live. Visitors always get the real figures. */
+      /** Test mode (MESH_SAMPLE_NODES): simulated Macs a signed-in operator sees added to the stats; 0 when off. Visitors always get the real figures. */
       sampleNodes: sampleConfigured(ctx),
       chain: ctx.adapter.chain,
       upstream: ctx.upstream.name,

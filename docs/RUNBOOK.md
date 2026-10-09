@@ -687,7 +687,7 @@ money list the credits on the marketplace and withdraw USDG, which arrives as an
 | Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |
 
-### 11l. Looking at the site with a bigger network (test mode, before launch)
+### 11l. Looking at the site with a bigger network (test mode)
 
 `MESH_SAMPLE_NODES=254` in `/opt/mesh/.env`, then restart the gateway. From then on a browser that is
 signed in to the admin console (`/admin`, the `mesh_admin` cookie) sees 254 simulated Macs **added to
@@ -702,12 +702,15 @@ What it is and is not (`apps/gateway/src/sample-data.ts`):
 - **Nothing is stored.** No node, request, ledger row or reward is written for a simulated Mac. They
   cannot serve a job, and the admin console's own pages (overview, withdrawals) stay real. The figures are
   a function of the number and the clock, so every page agrees and a restart changes nothing.
-- **It ends with the launch.** On the live chain adapter the setting is ignored (the startup log says
-  so); remove the line then.
-- **Fees and credits are not simulated.** They come from the fee test feed: push test fees from the admin
-  console (`POST /admin/fake-fees`) and the hourly epoch distributes them as usual.
+- **It stays on until you remove it.** The launch does not switch it off: on the live chain an
+  operator's view still adds the simulated Macs to the real ones, and a visitor still gets the real
+  figures. While it is on, your own signed-in view of the public pages is not what visitors see: use a
+  private window (or sign out of `/admin`) to see the real numbers. Remove the line and restart to end it.
+- **Fees and credits are not simulated.** Before the launch they come from the fee test feed (push test
+  fees with `POST /admin/fake-fees`; the hourly epoch distributes them as usual); after it they are the
+  real ones.
 
-Check: `curl -s $G/health | jq .sampleNodes` (the configured number, 0 when off or live);
+Check: `curl -s $G/health | jq .sampleNodes` (the configured number, 0 when off);
 `curl -s $G/stats -H "$A" | jq '.sample, .nodesOnline'` (operator view) against `curl -s $G/stats | jq .nodesOnline`
 (what a visitor gets). Simulated machines are listed with ids starting `sim_`.
 

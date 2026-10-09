@@ -12,7 +12,7 @@ async function registerNode(app: App) {
   expect(r.statusCode).toBe(200);
 }
 
-describe('sample data (MESH_SAMPLE_NODES): test mode before the token launch', () => {
+describe('sample data (MESH_SAMPLE_NODES): test mode, operator view only', () => {
   const apps: App[] = [];
   afterEach(async () => {
     while (apps.length) await apps.pop()!.close();
@@ -130,16 +130,20 @@ describe('sample data (MESH_SAMPLE_NODES): test mode before the token launch', (
     expect((await get(app, '/stats')).json()).toMatchObject({ sample: null, nodesOnline: 0 });
   });
 
-  it('is ignored once the gateway is on the live chain adapter, for an operator too', async () => {
+  it('keeps working on the live chain adapter, and is still only the operator view there', async () => {
     const app = await server({ MESH_SAMPLE_NODES: N });
     app.ctx.adapterStatus = 'evm (pons)';
-    expect(sampleConfigured(app.ctx)).toBe(0);
-    expect(sampleNodeCount(operatorView(app))).toBe(0);
-    expect(sampleInfo(operatorView(app))).toBeNull();
-    const stats = (await get(app, '/stats', ADMIN)).json();
-    expect(stats).toMatchObject({ sample: null, tokenLive: true, nodesOnline: 0, requestsLast24h: 0 });
-    expect((await get(app, '/nodes', ADMIN)).json()).toMatchObject({ sample: null, online: 0 });
-    expect((await get(app, '/health')).json().sampleNodes).toBe(0);
+    expect(sampleConfigured(app.ctx)).toBe(N);
+    expect(sampleNodeCount(operatorView(app))).toBe(N);
+    const mine = (await get(app, '/stats', ADMIN)).json();
+    expect(mine).toMatchObject({ sample: { nodes: N }, tokenLive: true, nodesOnline: N });
+    expect(mine.requestsLast24h).toBeGreaterThan(50_000);
+    expect((await get(app, '/nodes', ADMIN)).json()).toMatchObject({ sample: { nodes: N }, online: N });
+    // a visitor on the live site gets the real figures
+    expect((await get(app, '/stats')).json()).toMatchObject({ sample: null, tokenLive: true, nodesOnline: 0, requestsLast24h: 0 });
+    expect((await get(app, '/nodes')).json()).toMatchObject({ sample: null, online: 0 });
+    expect((await get(app, '/status')).json()).toMatchObject({ sample: null, fleetOnline: 0 });
+    expect((await get(app, '/health')).json().sampleNodes).toBe(N);
   });
 
   it('is deterministic: the same clock gives the same machines and the same activity, and windows add up', async () => {

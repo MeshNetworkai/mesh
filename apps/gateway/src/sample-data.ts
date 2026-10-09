@@ -1,14 +1,14 @@
-// Sample network activity for testing the site before the token is live (env `MESH_SAMPLE_NODES`).
+// Sample network activity for looking at the site with a bigger network (env `MESH_SAMPLE_NODES`).
 //
 // With MESH_SAMPLE_NODES=N an operator signed in to the admin console sees N simulated Macs on top of the
 // real ones on the read endpoints (GET /stats, /nodes, /status, /report, /v1/models), together with the
 // requests, tokens, spend, savings and node rewards that many machines would produce. It is there to see
-// what the site looks like at that scale.
+// what the site looks like at that scale, before the launch and after it.
 //
 // Who sees it: only a request that carries admin credentials (`sampleViewFor`). Everybody else, on the
 // same URLs, gets the real figures, so nothing simulated is ever shown to a visitor as the state of the
-// network. It also runs on the mock adapter only: once the gateway is on the live chain adapter the
-// setting is ignored.
+// network. That holds on the mock adapter and on the live chain alike; the setting stays in effect until
+// it is removed.
 //
 // Nothing is written to the database: no node, ledger row or reward exists for a simulated Mac, it
 // cannot serve a job, and the admin console's own pages keep the real numbers. Every figure is a pure
@@ -24,7 +24,7 @@ import { bpsOf, usdToMicros } from './money.js';
 import { networkCostMicros } from './relay.js';
 import { listCostMicros, savedMicros } from './savings.js';
 
-type SampleCtx = Pick<AppContext, 'config' | 'prices' | 'policy'> & { env?: { MESH_SAMPLE_NODES?: number }; adapterStatus?: string; sampleViewer?: boolean };
+type SampleCtx = Pick<AppContext, 'config' | 'prices' | 'policy'> & { env?: { MESH_SAMPLE_NODES?: number }; sampleViewer?: boolean };
 
 const HOUR = 3600;
 const DAY = 86_400;
@@ -35,16 +35,13 @@ const PEAK_REQUESTS_PER_NODE_HOUR = 21;
 /** Share of the simulated traffic the Macs serve; the rest goes to frontier models upstream. */
 const NETWORK_SHARE = 0.62;
 
-/** Test mode as configured: `MESH_SAMPLE_NODES` while the gateway runs the mock adapter, else 0. */
-export function sampleConfigured(ctx: Pick<SampleCtx, 'env' | 'adapterStatus'>): number {
-  const n = ctx.env?.MESH_SAMPLE_NODES ?? 0;
-  if (n <= 0) return 0;
-  // Same test as GET /stats `tokenLive`: sample figures never mix with a live token.
-  return (ctx.adapterStatus ?? 'mock').startsWith('mock') ? n : 0;
+/** Test mode as configured: `MESH_SAMPLE_NODES`, on the mock adapter and on the live chain alike. 0 = off. */
+export function sampleConfigured(ctx: Pick<SampleCtx, 'env'>): number {
+  return Math.max(0, ctx.env?.MESH_SAMPLE_NODES ?? 0);
 }
 
 /** How many simulated Macs this view of the gateway includes: the configured number for an operator's view, 0 for everyone else. */
-export function sampleNodeCount(ctx: Pick<SampleCtx, 'env' | 'adapterStatus' | 'sampleViewer'>): number {
+export function sampleNodeCount(ctx: Pick<SampleCtx, 'env' | 'sampleViewer'>): number {
   return ctx.sampleViewer ? sampleConfigured(ctx) : 0;
 }
 
@@ -64,7 +61,7 @@ export interface SampleInfo {
 }
 
 /** The `sample` field of a response that includes simulated figures, or null when there are none. */
-export function sampleInfo(ctx: Pick<SampleCtx, 'env' | 'adapterStatus' | 'sampleViewer'>): SampleInfo | null {
+export function sampleInfo(ctx: Pick<SampleCtx, 'env' | 'sampleViewer'>): SampleInfo | null {
   const nodes = sampleNodeCount(ctx);
   return nodes > 0 ? { nodes, note: `Test mode (operator view): figures include ${nodes} simulated Macs and the activity they would produce. Visitors get the real figures.` } : null;
 }
