@@ -213,7 +213,6 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       upstream: ctx.upstream.name,
       adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       chain: ctx.adapter.chain,
-      /** Test mode (MESH_SAMPLE_NODES): simulated Macs a signed-in operator sees added to the stats pages. Every number in this overview is real. */
       sampleNodes: sampleConfigured(ctx),
       epochs: epochs.map((e) => ({
         epochStart: e.epoch_start,
