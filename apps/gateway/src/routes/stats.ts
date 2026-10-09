@@ -56,7 +56,6 @@ export function hourlySeries(ctx: AppContext, now = nowSec()): HourPoint[] {
       b.spendUsd = microsToUsd(r.cost);
     }
   }
-  // Test mode (MESH_SAMPLE_NODES): the simulated Macs' requests, hour by hour.
   if (sampleNodeCount(ctx) > 0) {
     for (const b of buckets.values()) {
       const s = sampleActivity(ctx, b.hour, b.hour + 3600, now);
