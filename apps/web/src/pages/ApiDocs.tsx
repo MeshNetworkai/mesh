@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { FLEET_PUBLIC } from '../content/flags';
 import { Link, useLocation } from 'react-router-dom';
 import { parse } from 'yaml';
 import { Terminal } from '../components/ui';
@@ -654,7 +655,7 @@ function SwitchInAMinute() {
                         ))}
                         {r.model ? (
                           <span className="ex">
-                            {r.network ? `Mesh nodes first (${r.model.online} online), upstream fallback` : 'upstream, ZDR providers only'} · {priceCell(r.model.meshPrice)} per 1M tokens
+                            {r.network ? (FLEET_PUBLIC ? `Mesh nodes first (${r.model.online} online), upstream fallback` : 'Mesh nodes first, upstream fallback') : 'upstream, ZDR providers only'} · {priceCell(r.model.meshPrice)} per 1M tokens
                             {r.network ? ' on a node' : ''}
                           </span>
                         ) : null}

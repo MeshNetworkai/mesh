@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { FLEET_PUBLIC } from '../content/flags';
 import { MODEL_TIER_INFO, type CatalogueModel, type ModelTier } from '../lib/types';
 
 /**
@@ -248,7 +249,7 @@ export function ModelPicker({
                         <span style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.displayName}</span>
                         <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                           {m.vendor}
-                          {m.served !== 'upstream' ? ` · ${m.online} ${m.online === 1 ? 'Mac' : 'Macs'} online` : ''}
+                          {FLEET_PUBLIC && m.served !== 'upstream' ? ` · ${m.online} ${m.online === 1 ? 'Mac' : 'Macs'} online` : ''}
                         </span>
                       </span>
                       <span style={{ display: 'block', fontSize: 12, marginTop: 2, color: 'var(--fg-2)' }}>
