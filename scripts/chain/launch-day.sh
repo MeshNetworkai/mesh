@@ -19,6 +19,7 @@
 # Afterwards (part 2, on the website): launch on Pons with the vault as creator-fee recipient, then
 # Admin → Token: paste the token address, curve and launch block, Check, Flip.
 set -euo pipefail
+TMP="$(mktemp -d)"
 
 CHAIN_ID=4663
 RPC="${MESH_EVM_RPC_URL:-https://rpc.mainnet.chain.robinhood.com}"
@@ -180,8 +181,13 @@ echo "  It only pays gas. Any wallet with ~\$2 of ETH on Robinhood Chain works, 
 echo "  fund for this. (Hardware wallet: re-run with MESH_SIGNER='--ledger'.)"
 [[ "$(ask 'Deploy now? (yes/no):')" == "yes" ]] || die "stopped before deploying"
 SIGNER="${MESH_SIGNER:---interactive}"
-forge script script/DeployPonsFeeVault.s.sol --rpc-url "$RPC" --broadcast $SIGNER -vv 2>&1 | grep -E "PonsFeeVault|owner|sweeper|escrow|Error|error|revert" | head -20 || true
 OUT="deployments/pons-$CHAIN_ID.json"
+rm -f "$OUT"   # never read a stale file (e.g. from a dry run) as this deploy's result
+set +e
+forge script script/DeployPonsFeeVault.s.sol --rpc-url "$RPC" --broadcast $SIGNER -vv 2>&1 | tee "$TMP/forge.log" | grep -E "PonsFeeVault|owner|sweeper|escrow|Error|error|revert" | head -20
+FORGE_RC=${PIPESTATUS[0]}
+set -e
+[[ "$FORGE_RC" -eq 0 ]] || die "forge failed (exit $FORGE_RC) — nothing was deployed if the error came from the simulation; full log: $TMP/forge.log"
 [[ -f "$OUT" ]] || die "deploy did not write $OUT — read the forge output above"
 VAULT="$(perl -0ne 'print $1 if /"feeVault"\s*:\s*"(0x[0-9a-fA-F]{40})"/' "$OUT")"
 BLOCK="$(perl -0ne 'print $1 if /"deployBlock"\s*:\s*"?(\d+)"?/' "$OUT")"

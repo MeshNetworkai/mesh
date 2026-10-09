@@ -21,7 +21,11 @@ import {PonsFeeVault} from "../src/PonsFeeVault.sol";
 ///   MESH_QUOTE_POOL_FEES comma list parallel to MESH_QUOTE_TOKENS: v3 pool fee of each quote→stable route (0 = none)
 contract DeployPonsFeeVault is Script {
     function run() external {
-        address deployer = msg.sender;
+        // The broadcaster is only known once broadcasting starts (with --interactive, msg.sender before
+        // that is Foundry's placeholder sender, which would end up owning the vault and the deployer's
+        // setRoute calls would revert with OwnableUnauthorizedAccount).
+        vm.startBroadcast();
+        (, address deployer,) = vm.readCallers();
         address owner = vm.envOr("MESH_OWNER", deployer);
         address sweeper = vm.envAddress("MESH_SWEEPER");
         address escrow = vm.envOr("MESH_PONS_ESCROW", address(0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e));
@@ -34,7 +38,6 @@ contract DeployPonsFeeVault is Script {
         address router = vm.envOr("MESH_SWAP_ROUTER", address(0));
         uint256 poolFee = vm.envOr("MESH_POOL_FEE", uint256(500));
 
-        vm.startBroadcast();
         PonsFeeVault vault = new PonsFeeVault(
             PonsFeeVault.InitParams({
                 owner: deployer, // configure routes first, then hand over below
