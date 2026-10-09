@@ -8,7 +8,7 @@ import { marketTotals } from '../market.js';
 import { microsToUsd } from '../money.js';
 import { nodePayoutTotals } from '../node-payouts.js';
 import { reserveView } from '../reserve-report.js';
-import { sampleActivity, sampleConfigured, sampleInfo, sampleUsageShare, sampleViewFor } from '../sample-data.js';
+import { sampleActivity, sampleInfo, sampleUsageShare } from '../sample-data.js';
 import { usageShareTotals, type UsageShareTotals } from '../usage-share.js';
 import { publicEpochView, type EpochRow } from './stats.js';
 
@@ -359,10 +359,6 @@ export type Report = ReturnType<typeof computeReport>;
 export async function reportRoutes(app: FastifyInstance, ctx: AppContext) {
   let cache: { at: number; body: Report } | null = null;
   app.get('/report', async (req, reply) => {
-    // Test mode: a signed-in operator gets the view with the simulated Macs, uncached and never shared.
-    const view = await sampleViewFor(ctx, req);
-    if (view !== ctx) return reply.header('cache-control', 'private, no-store').send(computeReport(view));
-    if (sampleConfigured(ctx) > 0) reply.header('vary', 'cookie');
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeReport(ctx) };
@@ -375,11 +371,9 @@ export async function reportRoutes(app: FastifyInstance, ctx: AppContext) {
     const w = parseIsoWeek(req.params.isoWeek);
     if (!w) return reply.code(400).send({ error: 'bad_request', message: 'isoWeek must look like 2026-W40' });
     const now = nowSec();
-    const view = await sampleViewFor(ctx, req);
-    if (view !== ctx) reply.header('cache-control', 'private, no-store');
     const days = [];
     for (let d = w.start; d < w.end; d += DAY) {
-      days.push({ day: new Date(d * 1000).toISOString().slice(0, 10), start: d, end: d + DAY, ...periodTotals(view, d, d + DAY) });
+      days.push({ day: new Date(d * 1000).toISOString().slice(0, 10), start: d, end: d + DAY, ...periodTotals(ctx, d, d + DAY) });
     }
     const epochDetails = (
       ctx.db
@@ -392,12 +386,12 @@ export async function reportRoutes(app: FastifyInstance, ctx: AppContext) {
     const prev = isoWeekOf(w.start - WEEK);
     const next = isoWeekOf(w.end);
     return {
-      ...weekReport(view, w, now),
+      ...weekReport(ctx, w, now),
       days,
       epochDetails,
       previous: prev.isoWeek,
       next: next.start <= now ? next.isoWeek : null,
-      sample: sampleInfo(view),
+      sample: sampleInfo(ctx),
       method: REPORT_METHOD,
       generatedAt: now,
     };

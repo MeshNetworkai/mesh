@@ -687,32 +687,27 @@ money list the credits on the marketplace and withdraw USDG, which arrives as an
 | Spot checks: clear / set a quarantine | `POST /admin/nodes/:id/quarantine/clear`, `POST /admin/nodes/:id/quarantine {reason}` (admin) |
 | Public telemetry | `GET /stats`, `GET /epochs?limit=48`, `GET /nodes` |
 
-### 11l. Looking at the site with a bigger network (test mode)
+### 11l. Looking at the site with a bigger network (sample network)
 
-`MESH_SAMPLE_NODES=254` in `/opt/mesh/.env`, then restart the gateway. From then on a browser that is
-signed in to the admin console (`/admin`, the `mesh_admin` cookie) sees 254 simulated Macs **added to
-the real count** on the landing page, `/stats`, `/status`, the node page and the model picker, with the
-requests, tokens, spend, savings, usage share and node rewards that many machines would produce.
-Sign out of the admin console, or open a private window, and the same pages show the real figures.
+Set `MESH_SAMPLE_NODES=254` in `/opt/mesh/.env`, then restart the gateway. Every visitor, including
+signed-out browsers, sees 254 simulated Macs **added to the real count** on the landing page,
+`/stats`, `/status`, the node page and the model picker, with the requests, tokens, spend, savings,
+usage share and node rewards that many machines would produce. Public reports include them too.
 
-What it is and is not (`apps/gateway/src/sample-data.ts`):
-
-- **Only an operator sees it.** A request without admin credentials gets the real figures on the same
-  URLs; an operator's answers are sent `cache-control: private, no-store` and never reach the shared cache.
+- **The public view is the same for everyone.** Admin credentials do not change the sample figures;
+  the public summary endpoints use their normal shared caches. Responses with simulated figures carry
+  `sample: { nodes, note }` metadata. Simulated machines have ids starting `sim_`.
 - **Nothing is stored.** No node, request, ledger row or reward is written for a simulated Mac. They
-  cannot serve a job, and the admin console's own pages (overview, withdrawals) stay real. The figures are
-  a function of the number and the clock, so every page agrees and a restart changes nothing.
-- **It stays on until you remove it.** The launch does not switch it off: on the live chain an
-  operator's view still adds the simulated Macs to the real ones, and a visitor still gets the real
-  figures. While it is on, your own signed-in view of the public pages is not what visitors see: use a
-  private window (or sign out of `/admin`) to see the real numbers. Remove the line and restart to end it.
-- **Fees and credits are not simulated.** Before the launch they come from the fee test feed (push test
-  fees with `POST /admin/fake-fees`; the hourly epoch distributes them as usual); after it they are the
-  real ones.
+  cannot serve a job, and the admin console's own pages (overview, withdrawals) stay real. The figures
+  are a function of the number and the clock, so every page agrees and a restart changes nothing.
+- **It stays on until you remove it.** Both mock and live chain adapters include the sample network.
+  Remove the setting (or set it to `0`) and restart to return public pages to real figures only.
+- **Fees and credits are not simulated.** Before launch they come from the fee test feed (push test
+  fees with `POST /admin/fake-fees`); after launch they are the real ones.
 
-Check: `curl -s $G/health | jq .sampleNodes` (the configured number, 0 when off);
-`curl -s $G/stats -H "$A" | jq '.sample, .nodesOnline'` (operator view) against `curl -s $G/stats | jq .nodesOnline`
-(what a visitor gets). Simulated machines are listed with ids starting `sim_`.
+Check: `curl -s $G/health | jq .sampleNodes` returns the configured number (0 when off).
+`curl -s $G/stats | jq '.sample, .nodesOnline'` shows the public sample view without credentials;
+adding `-H "$A"` returns the same sample count.
 
 ## 12. Backups: verify monthly, restore when needed
 

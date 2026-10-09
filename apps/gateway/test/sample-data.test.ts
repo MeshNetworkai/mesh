@@ -12,7 +12,7 @@ async function registerNode(app: App) {
   expect(r.statusCode).toBe(200);
 }
 
-describe('sample data (MESH_SAMPLE_NODES): test mode, labelled', () => {
+describe('sample network (MESH_SAMPLE_NODES): public read-only figures', () => {
   const apps: App[] = [];
   afterEach(async () => {
     while (apps.length) await apps.pop()!.close();
@@ -77,9 +77,9 @@ describe('sample data (MESH_SAMPLE_NODES): test mode, labelled', () => {
     const models = (await get(app, '/v1/models')).json();
     expect(models.data.find((m: { id: string }) => m.id === 'llama-3.1-8b').online).toBe(N + 1);
 
-    // every response that carries simulated figures says so: this is what the web app's "test data" label hangs on
+    // Responses describe the sample figures in metadata.
     for (const body of [stats, nodes, status, report, week]) {
-      expect(body.sample).toEqual({ nodes: N, note: `Test data: these figures include ${N} simulated Macs and the activity they would produce. They are not real machines.` });
+      expect(body.sample).toEqual({ nodes: N, note: `Sample data: these figures include ${N} simulated Macs and the activity they would produce. They are not real machines.` });
     }
 
     // the admin console's own numbers stay real, and it says the mode is on
@@ -91,6 +91,40 @@ describe('sample data (MESH_SAMPLE_NODES): test mode, labelled', () => {
     // nothing was written: the database holds the one real node and no simulated activity
     expect(app.ctx.db.prepare(counts).get()).toEqual(rowsBefore);
     expect(rowsBefore).toEqual({ nodes: 1, requests: 0, ledger: 0, rewards: 0 });
+  });
+
+  it.each([0, N])('serves the same public figures across anonymous and admin requests with %i sample Macs', async (count) => {
+    const app = await server({ MESH_SAMPLE_NODES: count, STATS_CACHE_MS: 10_000 });
+    const login = await app.inject({ method: 'POST', url: '/admin/login', headers: ADMIN });
+    expect(login.statusCode).toBe(200);
+    const cookie = ([] as string[]).concat(login.headers['set-cookie'] as string | string[])
+      .map((value) => value.split(';')[0]).join('; ');
+    expect(cookie).toContain('mesh_admin=');
+    const identities = [{}, ADMIN, { cookie }, { cookie: 'mesh_admin=invalid' }];
+    const report = (await get(app, '/report')).json();
+    const weekUrl = '/report/weekly/' + report.byWeek.at(-1).isoWeek;
+
+    for (const url of ['/stats', '/nodes', '/status', '/report', weekUrl]) {
+      const baseline = (await get(app, url)).json();
+      expect(baseline.sample?.nodes ?? 0).toBe(count);
+      for (const headers of identities) {
+        const response = await get(app, url, headers);
+        expect(response.statusCode).toBe(200);
+        expect(response.json().sample).toEqual(baseline.sample);
+        if (url !== weekUrl) {
+          // Every identity uses the same cached body, even after an admin has read it.
+          expect(response.headers['cache-control']).toBe('public, max-age=10');
+          expect(response.json()).toEqual(baseline);
+        }
+      }
+    }
+    for (const headers of identities) {
+      const response = await get(app, '/v1/models', headers);
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.find((m: { id: string }) => m.id === 'llama-3.1-8b').online).toBe(count);
+    }
+    expect((await get(app, '/admin/overview')).statusCode).toBe(401);
+    expect((await get(app, '/admin/overview', ADMIN)).json().totals.requests).toBe(0);
   });
 
   it('stays on, and stays labelled, on the live chain adapter', async () => {

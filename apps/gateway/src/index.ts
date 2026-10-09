@@ -3,7 +3,6 @@ import { recordError } from './db.js';
 import { runEpoch } from './jobs/distribute.js';
 import { runHousekeeping } from './jobs/housekeeping.js';
 import { microsToUsd } from './money.js';
-import { sampleConfigured } from './sample-data.js';
 import { buildServer } from './server.js';
 
 async function main() {

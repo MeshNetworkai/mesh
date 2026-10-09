@@ -3,7 +3,7 @@ import type { AppContext } from '../context.js';
 import { dbOk, nowSec } from '../db.js';
 import { isOnline, jobStats24h, uptimePct24h } from '../network.js';
 import { isQuarantined, nodeModels, type NodeRow } from '../routing.js';
-import { sampleActivity, sampleConfigured, sampleInfo, sampleMachines, sampleViewFor, type SampleActivity, type SampleMachine } from '../sample-data.js';
+import { sampleActivity, sampleInfo, sampleMachines, type SampleActivity, type SampleMachine } from '../sample-data.js';
 
 /**
  * GET /status — the public "is it up" page's data: one verdict, the components behind it, the last 24 h of
@@ -182,13 +182,6 @@ function fmtDuration(sec: number): string {
 export async function statusRoutes(app: FastifyInstance, ctx: AppContext) {
   let cache: { at: number; body: ReturnType<typeof computeStatus> } | null = null;
   app.get('/status', async (req, reply) => {
-    // Test mode: a signed-in operator gets the view with the simulated Macs, uncached and never shared.
-    const view = await sampleViewFor(ctx, req);
-    if (view !== ctx) {
-      const body = computeStatus(view);
-      return reply.header('cache-control', 'private, no-store').code(body.overall === 'down' ? 503 : 200).send(body);
-    }
-    if (sampleConfigured(ctx) > 0) reply.header('vary', 'cookie');
     const ttl = Math.min(ctx.env.STATS_CACHE_MS, 15_000);
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeStatus(ctx) };

@@ -9,7 +9,6 @@ import { microsToUsd } from '../money.js';
 import { syncPoints } from '../points.js';
 import { openaiError, relayChat, upstreamFailure, upstreamThrow, type ChatAccount, type RecordInput } from '../relay.js';
 import { keyHold, planSpend, walletHold } from '../reserve.js';
-import { sampleViewFor } from '../sample-data.js';
 import { resolvePrivacy } from '../routing.js';
 import { catalogueView } from '../catalogue.js';
 import { savedMicros } from '../savings.js';
@@ -82,8 +81,8 @@ export async function v1Routes(app: FastifyInstance, ctx: AppContext) {
     }
     const guest = req.query.guest === '1' || req.query.guest === 'true';
     reply.header('cache-control', 'no-store');
-    // Test mode: a signed-in operator's list counts the simulated Macs (sample-data.ts).
-    return catalogueView(await sampleViewFor(ctx, req), { guest });
+    // Include the configured sample fleet for every caller of the public catalogue.
+    return catalogueView(ctx, { guest });
   });
 
   app.post('/v1/chat/completions', { config: { rateLimit } }, async (req, reply) => {

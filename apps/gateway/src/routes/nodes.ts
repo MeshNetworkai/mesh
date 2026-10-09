@@ -13,7 +13,7 @@ import { nodeRewardsTotal } from '../ledger.js';
 import { microsToUsd } from '../money.js';
 import { JOB_VIEW_FIELDS, isOnline, jobStats24h, recordHeartbeat, uptimePct24h, type JobPayload, type JobRow } from '../network.js';
 import { HEARTBEAT_EVERY_SEC, NODE_ONLINE_SEC, REPUTATION_WINDOW, nodeModels, reputationConfig, trustedTierIndex, trustedVia, type NodeRow } from '../routing.js';
-import { sampleActivity, sampleConfigured, sampleFleet, sampleInfo, sampleViewFor } from '../sample-data.js';
+import { sampleActivity, sampleFleet, sampleInfo } from '../sample-data.js';
 
 export const NODE_TOKEN_PREFIX = 'mesh_nt_';
 /** Longest a node may long-poll GET /nodes/:id/jobs/next. */
@@ -654,10 +654,6 @@ export async function nodeRoutes(app: FastifyInstance, ctx: AppContext) {
   /** Public summary: no wallets or tokens. Cached like /stats (STATS_CACHE_MS; 0 disables). */
   let nodesCache: { at: number; body: ReturnType<typeof nodesSummary> } | null = null;
   app.get('/nodes', async (req, reply) => {
-    // Test mode: a signed-in operator gets the view with the simulated Macs, uncached and never shared.
-    const view = await sampleViewFor(ctx, req);
-    if (view !== ctx) return reply.header('cache-control', 'private, no-store').send(nodesSummary(view));
-    if (sampleConfigured(ctx) > 0) reply.header('vary', 'cookie');
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!nodesCache || ttl === 0 || t - nodesCache.at >= ttl) nodesCache = { at: t, body: nodesSummary(ctx) };

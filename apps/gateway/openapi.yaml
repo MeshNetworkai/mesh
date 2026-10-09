@@ -103,10 +103,10 @@ paths:
       description: |
         Cached for `STATS_CACHE_MS` (10 s by default); `cache-control` and `x-cache-age-ms` say how old the body is.
 
-        `sample` is null. An operator can switch on a test mode (`MESH_SAMPLE_NODES`) in which requests
-        carrying admin credentials are answered with simulated Macs added to the figures and
-        `sample: { nodes, note }` set; every other caller always gets the real figures. `GET /nodes`,
-        `/status` and `/report` behave the same way.
+        `sample` is null by default. When `MESH_SAMPLE_NODES` is positive, all visitors receive
+        simulated Macs and their activity added to the figures, with `sample: { nodes, note }`
+        metadata. No sign-in is required. `GET /nodes`, `/status`, `/report` and weekly reports
+        behave the same way; `/v1/models` includes the sample fleet in its online counts.
       operationId: getStats
       responses:
         '200':

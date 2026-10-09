@@ -8,7 +8,7 @@ import { microsToUsd, usdToMicros } from '../money.js';
 import { jobStats24h } from '../network.js';
 import { reserveView } from '../reserve-report.js';
 import { NODE_ONLINE_SEC } from '../routing.js';
-import { sampleActivity, sampleConfigured, sampleInfo, sampleNodeCount, sampleUsageShare, sampleViewFor } from '../sample-data.js';
+import { sampleActivity, sampleInfo, sampleNodeCount, sampleUsageShare } from '../sample-data.js';
 import { networkSavingsUsd24h } from '../savings.js';
 import { starterStatsView } from '../starter.js';
 import { usageShareToHolders24hUsd } from '../usage-share.js';
@@ -239,8 +239,8 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
       /** `mock`, `mock (waiting for token)` (MESH_ADAPTER asks for the chain but token/feeVault are not set yet), `evm (pons)`, `evm`, `solana`. */
       adapter: ctx.adapterStatus ?? ctx.env.MESH_ADAPTER,
       adapterRequested: ctx.env.MESH_ADAPTER,
-      /** Test mode (MESH_SAMPLE_NODES): simulated Macs a signed-in operator sees added to the stats; 0 when off. Visitors always get the real figures. */
-      sampleNodes: sampleConfigured(ctx),
+      /** Sample network (MESH_SAMPLE_NODES): simulated Macs included in public stats for every visitor; 0 when off. */
+      sampleNodes: sampleNodeCount(ctx),
       chain: ctx.adapter.chain,
       upstream: ctx.upstream.name,
       upstreamMode: ctx.upstream.name === 'mock' ? 'mock (offline)' : 'live',
@@ -266,10 +266,6 @@ export async function statsRoutes(app: FastifyInstance, ctx: AppContext) {
 
   let cache: { at: number; body: ReturnType<typeof computeStats> } | null = null;
   app.get('/stats', async (req, reply) => {
-    // Test mode: a signed-in operator gets the view with the simulated Macs, uncached and never shared.
-    const view = await sampleViewFor(ctx, req);
-    if (view !== ctx) return reply.header('cache-control', 'private, no-store').send(computeStats(view));
-    if (sampleConfigured(ctx) > 0) reply.header('vary', 'cookie');
     const ttl = ctx.env.STATS_CACHE_MS;
     const t = Date.now();
     if (!cache || ttl === 0 || t - cache.at >= ttl) cache = { at: t, body: computeStats(ctx) };

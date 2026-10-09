@@ -93,10 +93,9 @@ const EnvSchema = z.object({
   /** /stats cache TTL; 0 disables (tests). */
   STATS_CACHE_MS: z.coerce.number().int().nonnegative().default(10_000),
   /**
-   * Test mode for looking at the site with a bigger network: for a browser signed in to the admin
-   * console the stats endpoints add this many simulated Macs, and the activity they would produce, to the
-   * real figures (sample-data.ts). Visitors get the real figures. Nothing is written to the database. It
-   * stays in effect, before the launch and on the live chain, until the setting is removed. 0 = off.
+   * Add this many simulated Macs and their activity to public read endpoints for every visitor
+   * (sample-data.ts), including signed-out browsers. Nothing is written to the database. The admin
+   * console keeps real figures. Stays in effect on mock and live chains until removed. 0 = off.
    */
   MESH_SAMPLE_NODES: z.coerce.number().int().min(0).max(5000).default(0),
   /** Enforce config.geoBlock on /v1 and /auth. Defaults to on in production, off otherwise. */

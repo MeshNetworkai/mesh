@@ -62,7 +62,7 @@ export function guestModelAllowed(ctx: Pick<AppContext, 'config' | 'prices' | 'p
 }
 
 export function catalogueModels(
-  ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'> & { env?: { NODE_ENV?: string; MESH_SAMPLE_NODES?: number }; sampleViewer?: boolean },
+  ctx: Pick<AppContext, 'config' | 'prices' | 'policy' | 'db' | 'broker'> & { env?: { NODE_ENV?: string; MESH_SAMPLE_NODES?: number } },
   now = nowSec(),
 ): CatalogueModel[] {
   const { policy, prices, config } = ctx;

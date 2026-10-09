@@ -4,10 +4,8 @@
 // simulated Macs on top of the real ones, together with the requests, tokens, spend, savings and node
 // rewards that many machines would produce. It is there to see what the site looks like at that scale.
 //
-// Everybody who opens the site sees these figures, so they are always labelled: every response that
-// carries them has a `sample` field, and the web app shows a "test data" label wherever that field is set
-// (the top bar on every page, and next to the figures on the landing, stats, status and node pages).
-// Simulated machines are listed with ids starting `sim_`.
+// Everybody who opens the site sees these figures. Responses carrying simulated figures include
+// `sample: { nodes, note }` metadata. Simulated machines have ids starting `sim_`.
 //
 // Nothing is written to the database: no node, ledger row or reward exists for a simulated Mac, it
 // cannot serve a job, and the admin console's own pages keep the real numbers. Every figure is a pure
@@ -44,10 +42,10 @@ export interface SampleInfo {
   note: string;
 }
 
-/** The `sample` field of a response that includes simulated figures, or null when there are none. The web app labels the page when it is set. */
+/** The `sample` field of a response that includes simulated figures, or null when there are none. */
 export function sampleInfo(ctx: Pick<SampleCtx, 'env'>): SampleInfo | null {
   const nodes = sampleNodeCount(ctx);
-  return nodes > 0 ? { nodes, note: `Test data: these figures include ${nodes} simulated Macs and the activity they would produce. They are not real machines.` } : null;
+  return nodes > 0 ? { nodes, note: `Sample data: these figures include ${nodes} simulated Macs and the activity they would produce. They are not real machines.` } : null;
 }
 
 /** Deterministic value in [0, 1) for an integer seed (a mulberry32 step): the same seed always gives the same number. */
