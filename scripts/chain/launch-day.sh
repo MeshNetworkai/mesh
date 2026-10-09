@@ -200,7 +200,9 @@ CFG="$here/config/deploy.robinhood.json"
 setk() { perl -0pi -e "s/(\"$1\"\s*:\s*)null/\$1\"$2\"/" "$CFG"; }
 setk feeVault "$VAULT"; setk creditPool "$CREDIT_POOL"; setk treasury "$TREASURY"; setk stable "$USDG"
 [[ -n "$ROUTER" ]] && setk swapRouter "$ROUTER"
-if [[ -n "$QUOTE_TOKENS" ]]; then perl -0pi -e 's/("quoteTokens"\s*:\s*)\[[^\]]*\]/$1["0x0000000000000000000000000000000000000000", "'"$QUOTE_TOKENS"'"]/' "$CFG"; fi
+# ${1} not $1: in perl "$1[" reads as an array element and the whole key vanished (launch night, commit 4a884ec).
+if [[ -n "$QUOTE_TOKENS" ]]; then perl -0pi -e 's/("quoteTokens"\s*:\s*)\[[^\]]*\]/${1}["0x0000000000000000000000000000000000000000", "'"$QUOTE_TOKENS"'"]/' "$CFG"; fi
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$CFG" 2>/dev/null || node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$CFG" || die "$CFG is no longer valid JSON — do not push; tell Claude"
 grep -q "\"feeVault\": \"$VAULT\"" "$CFG" || warn "could not write feeVault into $CFG — paste it in Admin → Token instead"
 cd "$here" && git add config/deploy.robinhood.json contracts/evm/deployments/ && git -c user.name="Mesh" -c user.email="dev@mesh-network.ai" commit -q -m "launch: PonsFeeVault $VAULT on Robinhood Chain; credit pool, treasury, USDG and route in deploy.robinhood.json" && ok "committed (push when ready: git push)"
 
