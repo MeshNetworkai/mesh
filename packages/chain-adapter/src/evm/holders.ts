@@ -40,14 +40,24 @@ export async function scanTransfers(
   chunkBlocks: bigint,
 ): Promise<RawTransfer[]> {
   const out: RawTransfer[] = [];
-  for (let start = fromBlock; start <= toBlock; start += chunkBlocks) {
-    const end = start + chunkBlocks - 1n < toBlock ? start + chunkBlocks - 1n : toBlock;
-    const logs = await client.getLogs({
-      address: token,
-      event: erc20Abi[0],
-      fromBlock: start,
-      toBlock: end,
-    });
+  // Public RPCs cap eth_getLogs ranges (dRPC free ≈ 100 blocks, Alchemy free 10, Robinhood's own
+  // endpoint sits behind a bot wall). When a chunk is refused, halve it and retry from the same block;
+  // after a run of successes grow it back towards the configured size. The scan is incremental per
+  // epoch, so a small chunk costs a few hundred cheap calls an hour, never correctness.
+  let chunk = chunkBlocks > 0n ? chunkBlocks : 1n;
+  let streak = 0;
+  let start = fromBlock;
+  while (start <= toBlock) {
+    const end = start + chunk - 1n < toBlock ? start + chunk - 1n : toBlock;
+    let logs: Array<{ blockNumber: bigint | null; logIndex: number | null; args: { from?: unknown; to?: unknown; value?: unknown } }>;
+    try {
+      logs = (await client.getLogs({ address: token, event: erc20Abi[0], fromBlock: start, toBlock: end })) as typeof logs;
+    } catch (err) {
+      if (chunk <= 1n) throw err;
+      chunk = chunk / 2n;
+      streak = 0;
+      continue;
+    }
     for (const l of logs) {
       if (l.blockNumber === null || l.logIndex === null) continue;
       out.push({
@@ -57,6 +67,11 @@ export async function scanTransfers(
         to: (l.args.to as Address).toLowerCase() as Address,
         value: l.args.value as bigint,
       });
+    }
+    start = end + 1n;
+    if (chunk < chunkBlocks && ++streak >= 8) {
+      chunk = chunk * 2n < chunkBlocks ? chunk * 2n : chunkBlocks;
+      streak = 0;
     }
   }
   return out.sort((a, b) => (a.block === b.block ? a.logIndex - b.logIndex : a.block < b.block ? -1 : 1));

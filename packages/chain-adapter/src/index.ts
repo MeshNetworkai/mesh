@@ -143,7 +143,8 @@ export function evmOptionsFrom(d: EvmDeployConfig | null, env: NodeJS.ProcessEnv
     deployBlock: d?.deployBlock,
     decimals: d?.decimals,
     excludeWallets: d?.excludeWallets,
-    logChunkBlocks: d?.logChunkBlocks,
+    // MESH_EVM_LOG_CHUNK overrides the file (free RPC tiers cap eth_getLogs ranges; the scanner also adapts on its own).
+    logChunkBlocks: Number(process.env.MESH_EVM_LOG_CHUNK) > 0 ? Number(process.env.MESH_EVM_LOG_CHUNK) : d?.logChunkBlocks,
     slippageBps: d?.slippageBps,
     privateKey: pk ? ((pk.startsWith('0x') ? pk : `0x${pk}`) as Hex) : undefined,
   };
