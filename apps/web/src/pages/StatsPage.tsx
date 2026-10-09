@@ -5,7 +5,7 @@ import { PairedColumns, ShareColumns } from '../components/MiniChart';
 import { Sparkline } from '../components/Sparkline';
 import { Empty, Notice, Skeleton, Tile } from '../components/ui';
 import { TOKENOMICS } from '../config';
-import { STATS_LOCKED } from '../content/flags';
+import { FLEET_PUBLIC, STATS_LOCKED } from '../content/flags';
 import * as api from '../lib/api';
 import { fmtAgo, fmtCost, fmtDate, fmtDateTime, fmtInt, fmtUsd } from '../lib/format';
 import { useAsync, useEpochs, useNodes, useStats } from '../lib/hooks';
@@ -168,12 +168,14 @@ function StatsBody({ locked }: { locked: boolean }) {
         <div className="tiles">
           <Tile label="Spend · 24h" loading={loading} value={fmtUsd(s?.spendLast24hUsd ?? null)} delta={avg !== null ? `${fmtCost(avg)} avg / reply` : '—'} />
           <Tile label="Eligible holders" loading={loading} value={fmtInt(s?.holdersEligibleLastEpoch ?? null)} delta={`≥ ${fmtInt(T.minHoldTokens)} ${T.ticker}`} />
-          <Tile
+          {FLEET_PUBLIC ? (
+            <Tile
             label="Nodes online"
             loading={loading}
             value={fmtInt(s?.nodesOnline ?? null)}
             delta={nd && nd.online ? `${modelEntries.length} models · ${s ? s.servedByNetworkPercent : 0}% served by network` : 'heartbeat ≤ 90 s'}
           />
+          ) : null}
           <Tile
             label={feesThisEpoch !== null ? 'Fees this epoch' : 'Fees last epoch'}
             loading={loading}

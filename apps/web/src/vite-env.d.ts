@@ -10,4 +10,6 @@ interface ImportMetaEnv {
   readonly VITE_HERO_3D?: string;
   /** '0' unlocks /stats (content/flags.ts). Default locked until launch. */
   readonly VITE_STATS_LOCKED?: string;
+  /** '1' shows Mac/fleet counts on public pages (content/flags.ts). Default hidden until the network has a fleet. */
+  readonly VITE_FLEET_PUBLIC?: string;
 }

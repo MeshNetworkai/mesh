@@ -719,10 +719,11 @@ test.describe('signed-in app', () => {
   test('status page: verdict, six components, 24 hourly bars, node explorer', async ({ page }) => {
     await page.goto('/status');
     await expect(page.locator('h1.status-title')).toContainText(/operating|degraded|down/i);
-    await expect(page.locator('.status-row')).toHaveCount(6);
+    await expect(page.locator('.status-row')).toHaveCount(5); // the 'network' (Macs) component is hidden until FLEET_PUBLIC
     await expect(page.locator('.status-row').filter({ hasText: 'fee feed' })).toContainText('Not live yet');
     await expect(page.locator('.status-bar')).toHaveCount(24);
-    await expect(page.getByText('Node explorer')).toBeVisible();
+    await expect(page.getByText('Node explorer')).toHaveCount(0); // hidden until the network has a fleet (content/flags.ts FLEET_PUBLIC)
+    await expect(page.locator('main')).not.toContainText(/Macs? serving/);
     await expect(page.locator('footer').getByRole('link', { name: 'Status' })).toHaveAttribute('href', '/status');
   });
 });

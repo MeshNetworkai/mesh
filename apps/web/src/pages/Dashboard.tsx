@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FLEET_PUBLIC } from '../content/flags';
 import { Sparkline } from '../components/Sparkline';
 import { Empty, Notice, Skeleton, Spinner, Tile } from '../components/ui';
 import { STORAGE, TOKENOMICS, pctFromBps } from '../config';
@@ -248,12 +249,9 @@ export function Dashboard() {
           }
           deltaKind={feesThisEpoch !== null || feesDelta === null ? '' : feesDelta >= 0 ? 'up' : 'dn'}
         />
-        <Tile
-          label="Nodes online"
-          loading={st.loading && !stats}
-          value={fmtInt(stats?.nodesOnline ?? null)}
-          delta={stats ? `upstream ${stats.upstream}` : '—'}
-        />
+        {FLEET_PUBLIC ? (
+          <Tile label="Nodes online" loading={st.loading && !stats} value={fmtInt(stats?.nodesOnline ?? null)} delta={stats ? `upstream ${stats.upstream}` : '—'} />
+        ) : null}
         {expiry?.enabled ? (
           <Tile
             label="Expires next"

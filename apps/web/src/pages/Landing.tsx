@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { FLEET_PUBLIC } from '../content/flags';
 import { Engines } from '../components/Engines';
 import { GuestChat } from '../components/GuestChat';
 import { Hero3D, hero3dEnabled } from '../components/Hero3D';
@@ -374,9 +375,11 @@ export function Landing() {
             <span className="muted">Live stats unavailable right now.</span>
           ) : (
             <>
-              <span>
-                <b className="num">{fmtInt(stats?.nodesOnline ?? null)}</b> Macs online
-              </span>
+              {FLEET_PUBLIC ? (
+                <span>
+                  <b className="num">{fmtInt(stats?.nodesOnline ?? null)}</b> Macs online
+                </span>
+              ) : null}
               <span>
                 <b className="num">{fmtCompact(stats?.requestsLast24h ?? null)}</b> requests in 24h
               </span>

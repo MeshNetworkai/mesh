@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Skeleton } from '../components/ui';
+import { FLEET_PUBLIC } from '../content/flags';
 import { PUBLIC_API_URL, TOKENOMICS } from '../config';
 import * as api from '../lib/api';
 import { fmtAgo, fmtCompact, fmtInt } from '../lib/format';
@@ -46,7 +47,7 @@ export function StatusPage() {
         )}
         <p className="lede">
           {data
-            ? `${fmtCompact(data.requests24h)} requests in the last 24 hours, ${data.errorTotal24h === 0 ? 'no server errors' : `${fmtInt(data.errorTotal24h)} server error${data.errorTotal24h === 1 ? '' : 's'}`}. ${fmtInt(data.fleetOnline)} Mac${data.fleetOnline === 1 ? '' : 's'} serving right now.`
+            ? `${fmtCompact(data.requests24h)} requests in the last 24 hours, ${data.errorTotal24h === 0 ? 'no server errors' : `${fmtInt(data.errorTotal24h)} server error${data.errorTotal24h === 1 ? '' : 's'}`}.${FLEET_PUBLIC ? ` ${fmtInt(data.fleetOnline)} Mac${data.fleetOnline === 1 ? '' : 's'} serving right now.` : ''}`
             : error
               ? `Could not load status: ${error}`
               : 'Loading…'}
@@ -56,7 +57,7 @@ export function StatusPage() {
       {data ? (
         <>
           <section className="status-components" aria-label="Components">
-            {data.components.map((c) => (
+            {data.components.filter((c) => FLEET_PUBLIC || c.key !== 'network').map((c) => (
               <div className="status-row" key={c.key}>
                 <span className="status-row-main">
                   <Dot state={c.state} />
@@ -88,6 +89,7 @@ export function StatusPage() {
             </div>
           </section>
 
+          {FLEET_PUBLIC ? (
           <section aria-label="Node explorer" className="stack sm">
             <div className="row between">
               <span className="eyebrow">Node explorer</span>
@@ -137,6 +139,7 @@ export function StatusPage() {
               </div>
             )}
           </section>
+          ) : null}
 
           <p className="small muted">
             Raw data: <a href={`${PUBLIC_API_URL}/status`}>/status</a> · <a href={`${PUBLIC_API_URL}/health`}>/health</a> · the ledger is on <Link to="/stats">Stats</Link>.

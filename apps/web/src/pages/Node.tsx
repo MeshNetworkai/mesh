@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FLEET_PUBLIC } from '../content/flags';
 import { Empty, Modal, Notice, Skeleton, Spinner, Terminal } from '../components/ui';
 import { MOCK, NODE_REWARD_CEILING_PER_M, PUBLIC_API_URL, TOKENOMICS, pctFromBps } from '../config';
 import { brewSteps } from './Download';
@@ -463,7 +464,7 @@ export function NodePage() {
       <div className="row between">
         <span className="display d-s">Run a node</span>
         <span className="small muted">
-          {net.data ? `${fmtInt(net.data.online)} nodes online across the network` : ''}
+          {FLEET_PUBLIC && net.data ? `${fmtInt(net.data.online)} nodes online across the network` : ''}
           {MOCK ? ' · mock data' : ''}
         </span>
       </div>
