@@ -383,12 +383,17 @@ export function Landing() {
               <span>
                 <b className="num">{fmtCompact(stats?.requestsLast24h ?? null)}</b> requests in 24h
               </span>
-              <span>
-                <b className="num">{fmtUsd(stats?.totalFeesUsd ?? null, 0)}</b> fees collected
-              </span>
-              <span>
-                <b className="num">{fmtUsd(stats?.creditsDistributedUsd ?? null, 0)}</b> credits issued
-              </span>
+              {/* Fees and credits appear once the first real sweep has happened; "$0" before launch says nothing. */}
+              {(stats?.totalFeesUsd ?? 0) > 0 ? (
+                <span>
+                  <b className="num">{fmtUsd(stats?.totalFeesUsd ?? null, 0)}</b> fees collected
+                </span>
+              ) : null}
+              {(stats?.creditsDistributedUsd ?? 0) > 0 ? (
+                <span>
+                  <b className="num">{fmtUsd(stats?.creditsDistributedUsd ?? null, 0)}</b> credits issued
+                </span>
+              ) : null}
             </>
           )}
           <Link className="arrow-link" to="/stats">
