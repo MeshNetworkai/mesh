@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Switch the gateway from the test feed to the real $MESH token — run on Oliver's Mac after the Pons launch.
 #
-#   bash scripts/chain/go-live.sh <token address> <bonding-curve address> <launch block>
+#   bash scripts/chain/go-live.sh <token address> <excluded contracts, comma-separated> <launch block>
+#   (excluded = the Pons/Uniswap contracts that hold supply: pool manager, launch locker, hook — never holders)
 #
 # The admin API is only reachable on the server itself (Caddy answers 404 for /admin/* from the
 # internet), so this does over ssh what the Admin → Token page would do:
@@ -24,7 +25,8 @@ die() { echo "  ✗ $*" >&2; exit 1; }
 ok() { echo "  ✓ $*"; }
 addr='^0x[0-9a-fA-F]{40}$'
 [[ "$TOKEN" =~ $addr ]] || die "usage: go-live.sh <token 0x…> <curve 0x…> <launch block>   (token address missing or malformed)"
-[[ "$CURVE" =~ $addr ]] || die "bonding-curve address missing or malformed"
+IFS=, read -r -a EXCL <<< "$CURVE"
+for a in "${EXCL[@]}"; do [[ "$a" =~ $addr ]] || die "excluded address malformed: $a"; done
 [[ "$BLOCK" =~ ^[0-9]+$ ]] || die "launch block must be a number"
 [[ -f "$SSH_KEY" ]] || die "ssh key not found at $SSH_KEY"
 
@@ -32,7 +34,8 @@ remote() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=15 "$SERVER" "$@
 
 echo
 echo "1/3 Saving the token in the gateway"
-BODY=$(printf '{"token":"%s","deployBlock":"%s","excludeWallets":["%s"]}' "$TOKEN" "$BLOCK" "$CURVE")
+EXCL_JSON=$(printf '"%s",' "${EXCL[@]}"); EXCL_JSON="[${EXCL_JSON%,}]"
+BODY=$(printf '{"token":"%s","deployBlock":"%s","excludeWallets":%s}' "$TOKEN" "$BLOCK" "$EXCL_JSON")
 remote "T=\$(grep ^ADMIN_TOKEN= /opt/mesh/.env | cut -d= -f2-); curl -sS -X POST -H \"authorization: Bearer \$T\" -H 'content-type: application/json' http://127.0.0.1:$PORT/admin/chain -d '$BODY'" > /tmp/mesh-go-live-save.json
 python3 - /tmp/mesh-go-live-save.json <<'EOF'
 import json, sys
@@ -80,10 +83,10 @@ import json, re, sys
 p, token, curve, block = sys.argv[1:5]
 s = open(p).read()
 s = re.sub(r'"token":\s*null', f'"token": "{token}"', s, 1)
-s = re.sub(r'"curve":\s*null', f'"curve": "{curve}"', s, 1)
+s = re.sub(r'"curve":\s*null', f'"curve": "{curve.split(",")[0]}"', s, 1)
 s = re.sub(r'"deployBlock":\s*null', f'"deployBlock": {int(block)}', s, 1)
 json.loads(s); open(p, 'w').write(s)
 EOF
-( cd "$REPO" && git add config/deploy.robinhood.json && git -c user.name="Mesh" -c user.email="dev@mesh-network.ai" commit -qm "launch: \$MESH $TOKEN live on Robinhood Chain (curve $CURVE, block $BLOCK)" && ok "config committed (push when you like: git push)" ) || true
+( cd "$REPO" && git add config/deploy.robinhood.json && git -c user.name="Mesh" -c user.email="dev@mesh-network.ai" commit -qm "launch: \$MESH $TOKEN live on Robinhood Chain (excluded $CURVE, block $BLOCK)" && ok "config committed (push when you like: git push)" ) || true
 echo
 echo "  Done. Watch the first epoch at the top of the hour (Telegram alerts are on)."
