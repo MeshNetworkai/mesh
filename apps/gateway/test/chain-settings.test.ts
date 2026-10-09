@@ -1,6 +1,8 @@
 import { MockAdapter, PonsEvmAdapter, type PonsCheckReport } from '@mesh/chain-adapter';
 import type { TokenomicsConfig } from '@mesh/config';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildServer } from '../src/server.js';
 import { MockUpstream } from '../src/upstream.js';
 import { effectiveChain, normaliseExclude, readOverrides, resolveAdapter, writeOverrides, ChainSettingsBody } from '../src/chain-settings.js';
@@ -18,6 +20,19 @@ const CHECKSUMMED = '0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e';
 const WRONG_CASE = '0xd3afEB2a57f70eF218Aa82451c51B2fb0416Ac9e';
 
 const evmConfig: TokenomicsConfig = { ...testConfig, chain: 'evm', deployNetwork: 'robinhood' };
+
+// These tests describe the pre-launch state (template without token/feeVault). The real
+// config/deploy.robinhood.json carries the deployed vault, so point effectiveChain at a blank copy.
+const FIXTURE_CONFIG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'config');
+let savedConfigDir: string | undefined;
+beforeAll(() => {
+  savedConfigDir = process.env.MESH_CONFIG_DIR;
+  process.env.MESH_CONFIG_DIR = FIXTURE_CONFIG_DIR;
+});
+afterAll(() => {
+  if (savedConfigDir === undefined) delete process.env.MESH_CONFIG_DIR;
+  else process.env.MESH_CONFIG_DIR = savedConfigDir;
+});
 
 describe('chain settings: validation + persistence', () => {
   it('accepts checksummed / lower-case addresses, rejects a wrong checksum and non-addresses', () => {
@@ -39,7 +54,7 @@ describe('chain settings: validation + persistence', () => {
 
   it('writes, merges with the JSON template and reports readiness', () => {
     const db = memDb();
-    const before = effectiveChain(db, evmConfig, {});
+    const before = effectiveChain(db, evmConfig, process.env);
     expect(before.network).toBe('robinhood');
     expect(before.file.exists).toBe(true);
     expect(before.effective?.chainId).toBe(4663);
@@ -49,7 +64,7 @@ describe('chain settings: validation + persistence', () => {
 
     writeOverrides(db, ChainSettingsBody.parse({ token: TOKEN, feeVault: VAULT, deployBlock: '777', excludeWallets: `${CURVE}` }), 'header');
     expect(readOverrides(db)).toEqual({ token: TOKEN, feeVault: VAULT, deployBlock: 777, excludeWallets: [CURVE] });
-    const after = effectiveChain(db, evmConfig, {});
+    const after = effectiveChain(db, evmConfig, process.env);
     expect(after.ready).toBe(true);
     expect(after.effective?.token).toBe(TOKEN);
     expect(after.effective?.deployBlock).toBe(777);
@@ -62,7 +77,7 @@ describe('chain settings: validation + persistence', () => {
     writeOverrides(db, ChainSettingsBody.parse({ feeVault: null }), 'header');
     expect(readOverrides(db).feeVault).toBeUndefined();
     expect(readOverrides(db).token).toBe(TOKEN);
-    expect(effectiveChain(db, evmConfig, {}).ready).toBe(false);
+    expect(effectiveChain(db, evmConfig, process.env).ready).toBe(false);
   });
 
   it('resolveAdapter: mock when asked, mock (waiting for token) until token + feeVault, then PonsEvmAdapter', () => {

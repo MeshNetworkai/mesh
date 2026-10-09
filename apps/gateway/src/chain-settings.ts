@@ -160,11 +160,13 @@ export interface EffectiveChain {
 
 export function effectiveChain(db: Db, config: TokenomicsConfig, env: NodeJS.ProcessEnv = process.env): EffectiveChain {
   const network = defaultNetworkFor(config.chain, env, config.deployNetwork);
-  const path = deployConfigPath(network);
+  // MESH_CONFIG_DIR points at another config/ directory (tests use a blank pre-launch template).
+  const dir = env.MESH_CONFIG_DIR || undefined;
+  const path = deployConfigPath(network, dir);
   let file: DeployConfig | null = null;
   let error: string | null = null;
   try {
-    file = loadDeployConfig(network);
+    file = loadDeployConfig(network, dir);
   } catch (err) {
     error = (err as Error).message;
   }
