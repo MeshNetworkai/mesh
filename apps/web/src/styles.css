@@ -2473,6 +2473,42 @@ ul.plain {
   padding: 8px 10px;
 }
 
+/* ---------- stats, locked until launch ---------- */
+.stats-locked {
+  position: relative;
+  min-height: 70vh;
+}
+.stats-veil {
+  filter: blur(14px) saturate(0.6);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+  max-height: calc(100svh - 120px);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 50%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent 100%);
+}
+.stats-soon {
+  /* centred in the first screen, not in the blurred page's full height */
+  position: absolute;
+  inset: 0;
+  max-height: calc(100svh - 120px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  padding: 24px 16px;
+}
+.stats-soon .lede {
+  max-width: 44ch;
+  text-align: center;
+}
+.stats-soon .chips {
+  justify-content: center;
+}
+
 /* ---------- report statement ---------- */
 .statement {
   display: flex;

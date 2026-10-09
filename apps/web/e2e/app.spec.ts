@@ -604,15 +604,31 @@ test.describe('signed-in app', () => {
     await expect.poll(async () => (await page.context().cookies()).map((c) => c.name)).not.toContain('mesh_session');
   });
 
-  test('stats page: live tiles, epochs, weekly report, treasury/market/usage-share; /numbers and /report redirect with the hash', async ({ page }) => {
+  test('stats page is locked until launch: blurred, inert, one coming-soon card; ?preview=1 lifts it', async ({ page }) => {
     await page.goto('/stats');
+    const locked = page.getByTestId('stats-locked');
+    await expect(locked).toBeVisible();
+    await expect(locked.locator('.stats-soon')).toContainText('Coming next week');
+    await expect(locked.locator('.stats-veil')).toHaveAttribute('inert', '');
+    await expect(locked.locator('.stats-veil')).toHaveAttribute('aria-hidden', 'true');
+    await expect(locked.locator('.stats-veil')).toHaveCSS('pointer-events', 'none');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Coming next week.'); // the real h1 is hidden from AT
+    await expect(locked.locator('.stats-soon').getByRole('link', { name: 'How it works' })).toHaveAttribute('href', '/docs');
+    await page.goto('/stats?preview=1');
+    await expect(page.getByTestId('stats-locked')).toHaveCount(0);
+    await expect(page.locator('.statement .eyebrow')).toContainText('Stats ·');
+  });
+
+  test('stats page: live tiles, epochs, weekly report, treasury/market/usage-share; /numbers and /report redirect with the hash', async ({ page }) => {
+    await page.goto('/stats?preview=1');
     await expect(page.locator('.statement .eyebrow')).toContainText('Stats ·');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.locator('main')).toContainText(/\$|on the record/);
     for (const id of ['live', 'epochs', 'report', 'treasury']) await expect(page.locator(`section#${id}`)).toBeVisible();
     await expect(page.locator('#live .tile').first()).toBeVisible();
     await expect(page.locator('#live')).toContainText('Fees all time');
-    await expect(page.locator('#epochs table tbody tr')).toHaveCount(1); // the seeded epoch
+    // The seeded epoch, plus the boot-time epoch when the gateway started on an hour boundary (global-setup allows it).
+    await expect.poll(() => page.locator('#epochs table tbody tr').count()).toBeGreaterThanOrEqual(1);
     await expect(page.locator('#report')).toContainText('Weekly report');
     await expect(page.locator('#treasury')).toContainText('Treasury ledger');
     await expect(page.locator('#treasury')).toContainText('Credit marketplace');

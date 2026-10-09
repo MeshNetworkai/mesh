@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import type React from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { PairedColumns, ShareColumns } from '../components/MiniChart';
 import { Sparkline } from '../components/Sparkline';
 import { Empty, Notice, Skeleton, Tile } from '../components/ui';
 import { TOKENOMICS } from '../config';
+import { STATS_LOCKED } from '../content/flags';
 import * as api from '../lib/api';
 import { fmtAgo, fmtCost, fmtDate, fmtDateTime, fmtInt, fmtUsd } from '../lib/format';
 import { useAsync, useEpochs, useNodes, useStats } from '../lib/hooks';
@@ -25,10 +27,10 @@ function pct(n: number) {
 }
 
 /** Jump to the hash once the sections exist (React Router does not scroll to anchors on its own). */
-function useHashScroll() {
+function useHashScroll(off = false) {
   const { hash } = useLocation();
   useEffect(() => {
-    if (!hash) return;
+    if (!hash || off) return;
     const el = document.getElementById(hash.slice(1));
     if (el) window.requestAnimationFrame(() => el.scrollIntoView({ block: 'start' }));
   }, [hash]);
@@ -45,8 +47,45 @@ function SectionHead({ id, title, aside }: { id: string; title: string; aside?: 
   );
 }
 
+/**
+ * Until launch the ledger is empty, so the page sits blurred behind one card. The real page is still
+ * rendered underneath (same data, same anchors) so nothing drifts; `inert` keeps it out of the tab order
+ * and off screen readers. `?preview=1` lifts the veil for a look.
+ */
+function Locked({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="stats-locked" data-testid="stats-locked">
+      <div className="stats-veil" aria-hidden="true" {...{ inert: '' }}>
+        {children}
+      </div>
+      <div className="stats-soon" role="status">
+        <p className="eyebrow">Stats</p>
+        <h1 className="display d-m">Coming next week.</h1>
+        <p className="lede">
+          Every fee, every epoch and every credit goes on the record here once ${T.ticker} is live and the network has users.
+        </p>
+        <div className="chips">
+          <Link className="chip" to="/docs">
+            How it works
+          </Link>
+          <Link className="chip" to="/download">
+            Link a Mac
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function StatsPage() {
-  useHashScroll();
+  const [params] = useSearchParams();
+  const locked = STATS_LOCKED && params.get('preview') !== '1';
+  const body = <StatsBody locked={locked} />;
+  return locked ? <Locked>{body}</Locked> : body;
+}
+
+function StatsBody({ locked }: { locked: boolean }) {
+  useHashScroll(locked);
   const st = useStats();
   const epochs = useEpochs(EPOCH_ROWS);
   const nodes = useNodes();
